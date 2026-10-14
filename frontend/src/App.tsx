@@ -1,8 +1,9 @@
 /**
- * 根组件：宠物占位 + 顶部状态栏（宠物状态 / 情绪）+ 对话面板 + 底部调试状态栏。
+ * 根组件：宠物（部件动画渲染器）+ 顶部状态栏（宠物状态 / 情绪）+ 对话面板 + 底部调试状态栏。
  *
  * P1 打通后：WS 连接与后端状态经 shared/ws-client 与 pet-bridge 接入；
- * Live2D 容器仍为占位（.pet-canvas-mount），后续替换为 Pixi 画布（设计文档 §5.3）。
+ * 宠物本体由 pet 域（§5.3 可插拔渲染器）提供——当前为程序化 SVG 部件动画，
+ * 将来接入 Live2D 渲染器时只替换渲染器实现，本文件不需要改动。
  */
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { getPetBridge } from './shared/pet-bridge'
@@ -10,6 +11,7 @@ import { setupWsFromBridge } from './shared/ws-client/bridge'
 import type { WsClient, WsConnectionState } from './shared/ws-client'
 import { emotionEmoji } from './modules/chat/emotions'
 import ChatPanel from './modules/chat/ChatPanel'
+import { PetView } from './modules/pet'
 import type { BackendState, WindowDebugState } from '../electron/ipc/channels'
 import type { PetState } from './shared/protocol'
 import type { Rect } from '../electron/window'
@@ -236,15 +238,14 @@ export default function App(): ReactElement {
         </span>
       </div>
 
-      {/* Live2D 容器占位：P1 后续在此挂载 Pixi 画布，本阶段放占位物 */}
+      {/* 宠物挂载容器（hitbox）：pet 域在此挂载当前渲染器（SVG 部件动画；将来可换 Live2D 画布）。
+          注意：容器尺寸 = X11 交互形状（setInteractiveRects 上报），调整形象尺寸时需与之匹配 */}
       <div
         ref={hitboxRef}
         className={`pet-canvas-mount${debug.hitboxVisible ? ' debug' : ''}`}
         data-testid="pet-hitbox"
       >
-        <span className="pet-placeholder" role="img" aria-label="宠物占位">
-          🐧
-        </span>
+        <PetView client={wsClient} />
       </div>
 
       {/* 对话域：输入框 + 气泡列表（订阅 WS token/emotion/reply_*） */}
