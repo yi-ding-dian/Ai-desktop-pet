@@ -24,12 +24,14 @@ import uvicorn
 from loguru import logger
 
 from backend import __version__
-from backend.application.chat_pipeline import ChatPipeline, EchoLLMProvider
+from backend.application.chat_pipeline import ChatPipeline
 from backend.application.session import SessionManager
 from backend.interfaces.ws.dispatcher import build_dispatcher
 from backend.interfaces.ws.server import create_app
+from backend.modules.llm.openai_compat import OpenAICompatProvider
 from backend.shared.config import load_config
 from backend.shared.logging import setup_logging
+from backend.shared.secrets import get_llm_key, mask_secret
 
 HOST = "127.0.0.1"
 READY_PREFIX = "PET_READY "
@@ -51,7 +53,21 @@ def main() -> int:
     logger.info("配置已加载：llm.model={} pet.name={}", app_config.llm.model, app_config.pet.name)
 
     sessions = SessionManager()
-    pipeline = ChatPipeline(provider=EchoLLMProvider())
+    # BYOK：base_url/model/采样参数来自 config.toml，key 走 shared.secrets 读取链（惰性）
+    provider = OpenAICompatProvider(
+        base_url=app_config.llm.base_url,
+        model=app_config.llm.model,
+        temperature=app_config.llm.temperature,
+        max_tokens=app_config.llm.max_tokens,
+        key_provider=get_llm_key,
+    )
+    pipeline = ChatPipeline(provider=provider)
+    logger.info(
+        "LLM 装配：base_url={} model={} key={}",
+        app_config.llm.base_url,
+        app_config.llm.model,
+        mask_secret(get_llm_key()),  # 只记掩码，绝不记明文
+    )
     dispatcher = build_dispatcher(
         pipeline=pipeline, sessions=sessions, token=token, app_version=__version__
     )

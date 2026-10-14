@@ -1,7 +1,8 @@
 """LLM provider 抽象接口（设计文档 §4.1）。
 
-本期只定义 Protocol 与数据类型，不实现任何真实调用（等用户 API key）。
-后续实现 openai_compat.py（OpenAI 兼容协议，覆盖 DeepSeek/智谱/通义/Moonshot 等）。
+Protocol 与数据类型定义；真实实现在 ``openai_compat.py``
+（OpenAI 兼容协议，覆盖 DeepSeek/智谱/通义/Moonshot/本地网关等）。
+测试替身见 ``tests/fakes.py``。
 """
 
 from __future__ import annotations

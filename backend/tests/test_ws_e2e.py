@@ -14,10 +14,11 @@ import pytest
 import uvicorn
 import websockets
 
-from backend.application.chat_pipeline import ChatPipeline, EchoLLMProvider
+from backend.application.chat_pipeline import ChatPipeline
 from backend.application.session import SessionManager
 from backend.interfaces.ws.dispatcher import build_dispatcher
 from backend.interfaces.ws.server import create_app
+from fakes import EchoLLMProvider
 
 TOKEN = "test-token-123"
 RECV_TIMEOUT = 8.0

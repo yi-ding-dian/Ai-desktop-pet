@@ -134,7 +134,7 @@ def build_dispatcher(
             return
         session = sessions.start(data.session_id or ctx.session_id)
         ctx.session_id = session.id
-        await ctx.spawn_reply(pipeline.run_turn(ctx, session_id=session.id, user_text=text))
+        await ctx.spawn_reply(pipeline.run_turn(ctx, session=session, user_text=text))
 
     async def on_interrupt(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """打断：取消当前流式回复（reply_end{interrupted}/state:idle 由流水线收尾推送）。"""

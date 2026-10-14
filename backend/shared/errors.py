@@ -1,6 +1,8 @@
-"""错误码与协议层异常。
+"""错误码与异常定义。
 
-错误码对应 WS 协议 error 事件的 code 字段（设计文档 §3.3）。
+- ``ErrorCode``：WS 协议错误码，对应 error 事件的 code 字段（设计文档 §3.3）；
+- ``LlmErrorCode``：LLM 调用错误码（§4.1 要求"超时/重试/错误码翻译统一在 llm 层，
+  对上层只暴露业务化错误"），同样走 error 事件的 code 字段。
 """
 
 from __future__ import annotations
@@ -20,6 +22,18 @@ class ErrorCode(StrEnum):
     INTERNAL = "INTERNAL"                  # 服务端内部错误
 
 
+class LlmErrorCode(StrEnum):
+    """LLM 调用错误码（经 error 事件透传给前端展示）。"""
+
+    LLM_NO_KEY = "LLM_NO_KEY"            # 未配置 API key（引导用户去设置面板）
+    LLM_AUTH = "LLM_AUTH"                # key 无效 / 无权限（401/403）
+    LLM_TIMEOUT = "LLM_TIMEOUT"          # 请求超时
+    LLM_NETWORK = "LLM_NETWORK"          # 网络不可达 / 连接失败
+    LLM_RATE_LIMIT = "LLM_RATE_LIMIT"    # 触发限流（429）
+    LLM_BAD_REQUEST = "LLM_BAD_REQUEST"  # 请求被拒（模型名不存在 / 参数不合法，400/404）
+    LLM_UPSTREAM = "LLM_UPSTREAM"        # 上游服务错误（5xx / 其它未分类）
+
+
 class ProtocolError(Exception):
     """协议层错误：interfaces/ws 解析或处理消息时抛出，统一转成 error 事件。
 
@@ -31,3 +45,14 @@ class ProtocolError(Exception):
         self.code = code
         self.message = message
         self.fatal = fatal
+
+
+class LlmError(Exception):
+    """LLM 业务化错误：provider 层把 SDK 异常翻译成它，上层（chat_pipeline）
+    捕获后以 error 事件透传；message 必须已脱敏（不含 key 明文）。
+    """
+
+    def __init__(self, code: LlmErrorCode, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message

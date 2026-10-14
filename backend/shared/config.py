@@ -19,9 +19,12 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # 注意：API key 不写入本文件（存系统 keyring）。
 
 [llm]
-base_url    = "https://api.deepseek.com/v1"
-model       = "deepseek-chat"
+# OpenAI 兼容端点（默认指向本地网关；换服务商时改这里，如 https://api.deepseek.com/v1）
+base_url    = "http://192.168.0.8:3000/v1"
+model       = "deepseek-flash"
 temperature = 0.8
+# 最大回复长度：推理型模型（如 deepseek-flash）的思考过程也消耗 token，需给足
+max_tokens  = 768
 
 [embedding]
 mode  = "follow"   # follow=复用对话服务商 / custom=单独配置
@@ -46,9 +49,11 @@ greeting          = true
 class LlmConfig(BaseModel):
     """对话模型配置（BYOK：key 在 keyring，不在此处）。"""
 
-    base_url: str = "https://api.deepseek.com/v1"
-    model: str = "deepseek-chat"
+    base_url: str = "http://192.168.0.8:3000/v1"
+    model: str = "deepseek-flash"
     temperature: float = 0.8
+    # 推理型模型思考也占 token，默认给足 768，避免思考吃光导致空回复
+    max_tokens: int = 768
 
 
 class EmbeddingConfig(BaseModel):

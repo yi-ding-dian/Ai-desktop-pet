@@ -30,7 +30,7 @@ class ConnectionContext:
     """一条 WS 连接的运行时上下文。
 
     实现 application.chat_pipeline.ReplySink 出站端口（state / reply_start / token /
-    emotion / reply_end），并提供通用 send_event / send_error 与回复任务的生命周期管理。
+    emotion / reply_end / error），并提供通用 send_event / send_error 与回复任务的生命周期管理。
     """
 
     def __init__(self, ws: WebSocket) -> None:
@@ -65,6 +65,10 @@ class ConnectionContext:
         if interrupted:
             data["interrupted"] = True
         await self.send_event("reply_end", data)
+
+    async def error(self, code: str, message: str) -> None:
+        """ReplySink 端口：把流水线的业务错误（如 LlmError）推给前端。"""
+        await self.send_error(code, message)
 
     # ---------- 通用发送 ----------
 

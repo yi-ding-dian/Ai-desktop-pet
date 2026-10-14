@@ -1,14 +1,22 @@
-"""会话生命周期管理（P1 单会话简版）。
+"""会话生命周期管理（P1：内存态多轮历史）。
 
-维护 session_id 的生成与续期；历史落库（SQLite）在后续步骤接入，
-届时由本模块统一承担会话数据的所有权（高内聚原则）。
+- 会话表：创建 / 查询 / 续期（进程内，单事件循环访问，无锁需求）；
+- 对话历史：每个会话保留最近 N 轮（user + assistant 成对计一轮），
+  供 chat_pipeline 组装上下文——SQLite 落库（§6.2 messages 表）为后续步骤，
+  届时由本模块统一承担会话数据的所有权（高内聚原则）。
 """
 
 from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
+
+from backend.modules.llm.provider import ChatMessage
+
+HISTORY_MAX_TURNS = 10  # 上下文注入的"最近 N 轮"上限（§4.2）
+_HISTORY_MAX_MESSAGES = HISTORY_MAX_TURNS * 2  # user + assistant 各一条 / 轮
 
 
 def _now_ms() -> int:
@@ -17,15 +25,27 @@ def _now_ms() -> int:
 
 @dataclass
 class Session:
-    """一个会话。"""
+    """一个会话（含内存态对话历史）。"""
 
     id: str
     created_at: int
     last_active_at: int
+    # 最近 N 轮消息（超出上限自动淘汰最旧）；deque 左端为最旧消息
+    history: deque[ChatMessage] = field(
+        default_factory=lambda: deque(maxlen=_HISTORY_MAX_MESSAGES)
+    )
 
     def touch(self) -> None:
         """更新活跃时间。"""
         self.last_active_at = _now_ms()
+
+    def append_message(self, role: str, content: str) -> None:
+        """追加一条对话消息（role: user / assistant / system）。"""
+        self.history.append(ChatMessage(role=role, content=content))
+
+    def recent_messages(self) -> list[ChatMessage]:
+        """取最近 N 轮消息（时间顺序，注入 LLM 上下文用）。"""
+        return list(self.history)
 
 
 class SessionManager:
