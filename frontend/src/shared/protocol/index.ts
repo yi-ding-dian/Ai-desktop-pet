@@ -182,8 +182,39 @@ export interface ErrorData {
 /** 心跳应答 */
 export interface PongData {}
 
-/** Phase 2：TTS 音频走二进制帧（§3.5），文本帧侧仅占位 */
-export interface AudioData {}
+// ---------------------------------------------------------------- §3.5 二进制音频帧
+// 音频不走 JSON 文本帧：一句话一帧，线上格式 [4字节大端 JSON头长度 N][JSON头 N字节][音频数据]。
+// 解析实现见 shared/ws-client/binary-frame.ts（parseAudioFrame）。
+
+/**
+ * 二进制音频帧的 JSON 头（§3.5）。
+ * 与后端 interfaces/ws/protocol.py 的 `pack_audio_frame` / `make_audio_header` 逐字段对齐
+ * （2026-10-14 已核对：4 字节大端头长；字段 type/message_id/seq/format/sample_rate/final）。
+ */
+export interface AudioFrameHeader {
+  /** 固定 'audio'（frontend 解析时校验） */
+  type: 'audio'
+  /** 该帧所属回复的 message_id（前端按它分组、与 reply_* 事件配对） */
+  message_id: string
+  /** 同一消息内的帧序号（从 0 递增；前端组内按 seq 升序播放） */
+  seq: number
+  /** 音频编码：'mp3'（Edge TTS 输出）；调试自测入口可能为 'wav' */
+  format: string
+  /** 采样率（Hz），当前 24000 */
+  sample_rate: number
+  /** 是否该消息的最后一帧（前端清队列不依赖它，仅日志） */
+  final: boolean
+}
+
+/**
+ * 解析后的二进制音频帧：JSON 头 + 音频体。
+ * 注：`audio` 事件由二进制帧承载（非信封文本帧），WsClient 派发时 envelope 为 null。
+ */
+export interface AudioFramePacket {
+  header: AudioFrameHeader
+  /** 未解码的音频体（独立 ArrayBuffer；Blob 构造时浏览器会再复制一次，属预期） */
+  payload: ArrayBuffer
+}
 
 // ---------------------------------------------------------------- 事件注册表（type → 载荷）
 
@@ -196,7 +227,8 @@ export interface ServerEventMap {
   token: TokenData
   sentence: SentenceData
   emotion: EmotionData
-  audio: AudioData
+  /** 二进制音频帧（§3.5）：载荷为 {header, payload}（WsClient 二进制派发），信封模型仅为占位 */
+  audio: AudioFramePacket
   reply_end: ReplyEndData
   proactive: ProactiveData
   history: HistoryData

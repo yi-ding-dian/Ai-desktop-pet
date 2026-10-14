@@ -199,6 +199,22 @@ body,
   cursor: default;
 }
 
+/* 停止（打断）按钮：思考/说话中出现的红色小按钮（P2 打断，§7.2） */
+.chat-stop {
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 92, 92, 0.92);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-stop:hover {
+  background: rgba(255, 72, 72, 1);
+}
+
 /* 状态栏：窗口底部调试/连接信息（两行紧凑展示） */
 .status-bar {
   position: absolute;
@@ -219,4 +235,9 @@ body,
 
 .status-error {
   color: #ff9b9b;
+}
+
+/* 状态栏"🔊 说话中"提示（P2 语音） */
+.status-speaking {
+  color: #9fd8ff;
 }

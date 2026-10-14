@@ -12,6 +12,12 @@ import type { WsClient, WsConnectionState } from './shared/ws-client'
 import { emotionEmoji } from './modules/chat/emotions'
 import ChatPanel from './modules/chat/ChatPanel'
 import { PetView } from './modules/pet'
+import {
+  setupVoice,
+  subscribeVoiceSpeaking,
+  playDebugTone,
+  installVoiceDebugHook
+} from './modules/voice'
 import type { BackendState, WindowDebugState } from '../electron/ipc/channels'
 import type { PetState } from './shared/protocol'
 import type { Rect } from '../electron/window'
@@ -59,6 +65,8 @@ export default function App(): ReactElement {
   const [emotion, setEmotion] = useState<string>('neutral')
   const [backendState, setBackendState] = useState<BackendState | 'unknown'>('unknown')
   const [lastError, setLastError] = useState<string | null>(null)
+  /** 本地语音是否在播（voice 域 §4.4；状态栏"🔊 说话中"提示） */
+  const [voiceSpeaking, setVoiceSpeaking] = useState(false)
   const hitboxRef = useRef<HTMLDivElement | null>(null)
   const statusBarRef = useRef<HTMLDivElement | null>(null)
   const chatPanelRef = useRef<HTMLDivElement | null>(null)
@@ -67,6 +75,27 @@ export default function App(): ReactElement {
 
   // WS 连接（幂等单例；订阅 backend ready 后自动建连）
   const wsClient: WsClient = useMemo(() => setupWsFromBridge(), [])
+
+  // ---- voice 域接线（P2 §4.4）：audio 二进制帧 → 播放队列 + 口型驱动；打断随 reply_end ----
+  useEffect(() => setupVoice(wsClient), [wsClient])
+
+  // 本地"说话中"状态（状态栏提示）
+  useEffect(() => subscribeVoiceSpeaking(setVoiceSpeaking), [])
+
+  // ---- dev 调试：V 键播放合成测试音（验证"帧→播放→口型→清理"全链路；输入框内不拦截） ----
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    installVoiceDebugHook()
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.repeat || e.key.toLowerCase() !== 'v') return
+      const el = e.target as HTMLElement | null
+      const tag = el?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || el?.isContentEditable) return
+      playDebugTone()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   // ---- 主进程/后端状态订阅 ----
   useEffect(() => {
@@ -254,6 +283,7 @@ export default function App(): ReactElement {
       <div className="status-bar" ref={statusBarRef}>
         <div>
           后端：{BACKEND_LABEL[backendState]} · WS：{WS_LABEL[wsState]}
+          {voiceSpeaking ? <span className="status-speaking"> · 🔊 说话中</span> : null}
           {lastError ? <span className="status-error"> · ⚠ {lastError}</span> : null}
         </div>
         <div>

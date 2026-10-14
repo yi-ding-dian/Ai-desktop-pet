@@ -13,6 +13,7 @@ import { useEffect, useRef, type ReactElement } from 'react'
 import type { WsClient } from '../../shared/ws-client'
 import { EMOTION_VALUES } from '../../shared/protocol'
 import { createPetRenderer, type PetRenderer } from './renderers'
+import { setActivePetRenderer } from './controller'
 
 /** dev 态日志（转发到主进程日志，便于无 devtools 验证）；生产构建自动剔除 */
 const devLog = (msg: string): void => {
@@ -54,8 +55,11 @@ export default function PetView({ client }: PetViewProps): ReactElement {
     const renderer = createPetRenderer('part-animation')
     renderer.mount(host)
     rendererRef.current = renderer
+    // 注册到 pet 域控制器：voice 域口型驱动（setPetMouth）经此转发到当前渲染器
+    setActivePetRenderer(renderer)
     return () => {
       rendererRef.current = null
+      setActivePetRenderer(null)
       renderer.dispose()
     }
   }, [])

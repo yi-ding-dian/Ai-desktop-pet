@@ -116,6 +116,8 @@ export class PartAnimationRenderer implements PetRenderer {
   private rafId: number | null = null
   private lastTs: number | null = null
   private disposed = false
+  /** 口型日志节流状态（P2 口型驱动逐帧调用 setMouth，不能每帧打日志） */
+  private lastMouthLog = { ts: 0, level: -1 }
 
   constructor(cfg: PenguinConfig = PENGUIN_CONFIG) {
     this.cfg = cfg
@@ -169,7 +171,13 @@ export class PartAnimationRenderer implements PetRenderer {
 
   setMouth(level: number): void {
     this.animator.setMouth(level)
-    devLog(`mouth -> ${level.toFixed(2)}`)
+    // 日志节流：口型驱动（voice 域 Web Audio 包络）逐帧调用；仅在变化 >0.12 或距上次 >500ms 时打印，
+    // 调试键 M（0↔1 切换）仍能即时看到日志
+    const now = Date.now()
+    if (Math.abs(level - this.lastMouthLog.level) > 0.12 || now - this.lastMouthLog.ts > 500) {
+      this.lastMouthLog = { ts: now, level }
+      devLog(`mouth -> ${level.toFixed(2)}`)
+    }
   }
 
   playReaction(kind: PetReactionKind): void {

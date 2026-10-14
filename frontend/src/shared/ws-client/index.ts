@@ -1,12 +1,14 @@
 /**
- * WS 客户端 SDK（设计文档 §5.5）：连接管理（重连/心跳）+ 事件分发（type → 订阅者）。
+ * WS 客户端 SDK（设计文档 §5.5）：连接管理（重连/心跳）+ 事件分发（type → 订阅者）+ 二进制音频帧分帧。
  *
  * 运行在渲染进程：只用浏览器原生 WebSocket（无 Node ws 库）。
  * URL 由主进程经 pet-bridge 下发（见 ./bridge.ts），本文件不感知 IPC。
+ * 二进制帧（§3.5 音频）解析见 ./binary-frame.ts，派发为 `audio` 事件（订阅者拿到 {header, payload}）。
  */
 import {
   PROTOCOL_VERSION,
   serializeEnvelope,
+  type AudioFramePacket,
   type ClientEventMap,
   type ClientEventType,
   type Envelope,
@@ -14,6 +16,7 @@ import {
   type ServerEventMap,
   type ServerEventType
 } from '../protocol'
+import { parseAudioFrame } from './binary-frame'
 
 /** 连接生命周期状态（供 UI 展示） */
 export type WsConnectionState =
@@ -46,8 +49,11 @@ export interface WsClientOptions {
   reconnectMaxMs?: number
 }
 
-/** 事件处理器：数据载荷 + 原始信封（reply_to 等配对信息在信封里） */
-type EventHandler<T> = (data: T, envelope: Envelope) => void
+/**
+ * 事件处理器：数据载荷 + 原始信封（reply_to 等配对信息在信封里）。
+ * 二进制帧（audio）没有信封 → envelope 为 null。
+ */
+type EventHandler<T> = (data: T, envelope: Envelope | null) => void
 
 export class WsClient {
   private ws: WebSocket | null = null
@@ -64,6 +70,8 @@ export class WsClient {
   private awaitingPong = false
   /** 手动断开标志：置位后不再自动重连 */
   private manualClose = false
+  /** 音频帧无订阅者只警告一次（避免每帧刷日志） */
+  private warnedNoAudioSubscriber = false
 
   private readonly pingIntervalMs: number
   private readonly pongTimeoutMs: number
@@ -158,6 +166,9 @@ export class WsClient {
     }
     this.ws = ws
 
+    // 二进制帧按 ArrayBuffer 交付（§3.5 音频帧解析依赖；浏览器默认是 'blob'）
+    ws.binaryType = 'arraybuffer'
+
     ws.onopen = (): void => {
       if (ws !== this.ws) return
       console.log(`[ws] 已连接 ${target.url}，发送 hello（app_version=${target.appVersion}）`)
@@ -201,9 +212,14 @@ export class WsClient {
   }
 
   private handleMessage(raw: unknown): void {
+    // 二进制帧（§3.5 音频）：binaryType='arraybuffer'，走独立解析/派发路径
+    if (raw instanceof ArrayBuffer) {
+      this.handleBinaryFrame(raw)
+      return
+    }
     if (typeof raw !== 'string') {
-      // 二进制帧 = Phase 2 音频（§3.5）；P1 不解析，但绝不静默崩溃
-      console.warn('[ws] 收到二进制帧（Phase 2 音频，P1 暂未消费），已忽略')
+      // 未知类型兜底（如 binaryType 被改回 'blob'）：忽略但不崩
+      console.warn('[ws] 收到未知类型帧，已忽略:', Object.prototype.toString.call(raw))
       return
     }
     let envelope: Envelope
@@ -236,7 +252,36 @@ export class WsClient {
         this.pongTimer = null
       }
     }
+    // audio 必须走二进制帧（§3.5）：文本帧出现 audio 属异常（如旧后端占位事件），忽略而非误派发
+    if (envelope.type === 'audio') {
+      console.warn('[ws] 收到文本帧 audio（应为二进制帧，见设计文档 §3.5），已忽略')
+      return
+    }
     this.dispatch(envelope)
+  }
+
+  /**
+   * 二进制帧处理（§3.5）：解析出 {header, payload} 后派发给 `audio` 订阅者（voice 域）。
+   * 坏帧由 parseAudioFrame 记日志并返回 null，连接与后续帧不受影响。
+   */
+  private handleBinaryFrame(buf: ArrayBuffer): void {
+    const packet = parseAudioFrame(buf)
+    if (!packet) return
+    const set = this.handlers.get('audio')
+    if (!set || set.size === 0) {
+      if (!this.warnedNoAudioSubscriber) {
+        this.warnedNoAudioSubscriber = true
+        console.warn('[ws] 收到音频帧但无订阅者（voice 域未接线？），已忽略')
+      }
+      return
+    }
+    for (const handler of set) {
+      try {
+        ;(handler as EventHandler<AudioFramePacket>)(packet, null)
+      } catch (err) {
+        console.error('[ws] audio 帧订阅者抛错：', err)
+      }
+    }
   }
 
   private dispatch(envelope: Envelope): void {
