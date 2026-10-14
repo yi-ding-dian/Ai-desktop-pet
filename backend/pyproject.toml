@@ -1,0 +1,44 @@
+# AI 桌面宠物后端（FastAPI + WebSocket）
+# 安装：python3 -m venv .venv && .venv/bin/pip install -e ".[dev]" -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-desktop-pet-backend"
+version = "0.1.0"
+description = "AI 桌面宠物后端：FastAPI + 本机 WebSocket"
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "loguru",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "websockets",
+]
+
+# 包名 backend 映射到本目录（项目根下 `python -m backend.main` 可运行）
+[tool.setuptools]
+package-dir = { backend = "." }
+packages = [
+    "backend",
+    "backend.application",
+    "backend.interfaces",
+    "backend.interfaces.ws",
+    "backend.modules",
+    "backend.modules.chat",
+    "backend.modules.llm",
+    "backend.shared",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# fail-safe：tests/conftest.py 也会把项目根加入 sys.path
+pythonpath = [".."]
