@@ -16,6 +16,7 @@ dependencies = [
     "uvicorn[standard]",
     "pydantic",
     "loguru",
+    "edge-tts",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +36,9 @@ packages = [
     "backend.modules",
     "backend.modules.chat",
     "backend.modules.llm",
+    "backend.modules.llm.prompts",
+    "backend.modules.voice",
+    "backend.modules.voice.tts",
     "backend.shared",
 ]
 

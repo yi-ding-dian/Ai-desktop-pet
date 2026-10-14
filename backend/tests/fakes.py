@@ -1,10 +1,11 @@
-"""测试替身（LLMProvider 的假实现）。
+"""测试替身（LLMProvider / TTSProvider 的假实现）。
 
 - EchoLLMProvider：固定回复 + 固定分片。第一个情绪标签会被"故意"切在
   分片中间（跨片段解析验证，§10 风险 #5）；从 chat_pipeline 迁入（生产路径
   已改用 OpenAICompatProvider，本替身仅供测试）。
 - ScriptedProvider：可编程替身。按脚本产出片段，可选在流开始前 / 结束后
   抛 LlmError，并记录每次收到的 messages（供上下文组装断言）。
+- FakeTTSProvider：可编程 TTS 替身（记录合成文本、可注入延迟/失败）。
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import asyncio
 from typing import Any, AsyncIterator, Sequence
 
 from backend.modules.llm.provider import ChatMessage, Chunk
-from backend.shared.errors import LlmError
+from backend.shared.errors import LlmError, TtsError, TtsErrorCode
 
 # —— Echo：固定回复替身 ——
 
@@ -94,3 +95,43 @@ class ScriptedProvider:
         if self._mid_error is not None:
             raise self._mid_error
         yield Chunk(text="", finished=True)
+
+
+# —— TTS 替身 ——
+
+#: 假 mp3 载荷（头部用 MPEG 帧同步字节，仅校验字节搬运，不要求可播放）
+FAKE_MP3 = b"\xff\xf3\x64\xc4" + b"\x00" * 124
+
+
+class FakeTTSProvider:
+    """可编程 TTS 替身。
+
+    - audio：成功时返回的假音频字节；
+    - delay：每次合成耗时（模拟真实合成节奏，供取消 / 超时测试）；
+    - fail_calls：指定"第 n 次调用（1-based）失败"（其余成功）；
+    - fail_always：每次调用都失败；
+    - calls：已收到的合成文本（按序，供保序 / 跳过断言）。
+    """
+
+    def __init__(
+        self,
+        *,
+        audio: bytes = FAKE_MP3,
+        delay: float = 0.0,
+        fail_calls: set[int] | None = None,
+        fail_always: bool = False,
+    ) -> None:
+        self._audio = audio
+        self._delay = delay
+        self._fail_calls = fail_calls or set()
+        self._fail_always = fail_always
+        self.calls: list[str] = []
+
+    async def synthesize(self, text: str) -> bytes:
+        self.calls.append(text)
+        call_no = len(self.calls)
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        if self._fail_always or call_no in self._fail_calls:
+            raise TtsError(TtsErrorCode.TTS_NETWORK, "模拟合成失败（测试）")
+        return self._audio

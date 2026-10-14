@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Any, Coroutine
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from fastapi import FastAPI, WebSocket
 from loguru import logger
@@ -23,6 +23,7 @@ from backend.interfaces.ws.protocol import (
 from backend.shared.errors import ErrorCode, ProtocolError
 
 if TYPE_CHECKING:  # 避免与 dispatcher 运行时循环 import（类型注解专用）
+    from backend.application.voice import VoiceOut
     from backend.interfaces.ws.dispatcher import Dispatcher
 
 
@@ -30,11 +31,16 @@ class ConnectionContext:
     """一条 WS 连接的运行时上下文。
 
     实现 application.chat_pipeline.ReplySink 出站端口（state / reply_start / token /
-    emotion / reply_end / error），并提供通用 send_event / send_error 与回复任务的生命周期管理。
+    emotion / sentence / reply_end / error / send_binary），并提供通用 send_event /
+    send_error 与回复任务的生命周期管理。
+
+    ``voice``（可选）：连接级语音出站（application.voice.VoiceOut），由装配层
+    注入——失败降级状态跨轮存活于连接上（"本次连接内禁用 TTS"，任务书第 5 条）。
     """
 
-    def __init__(self, ws: WebSocket) -> None:
+    def __init__(self, ws: WebSocket, *, voice: VoiceOut | None = None) -> None:
         self.ws = ws
+        self.voice = voice
         self.id = f"c_{uuid.uuid4().hex[:8]}"
         self.authed = False
         self.session_id: str | None = None
@@ -53,6 +59,12 @@ class ConnectionContext:
     async def token(self, message_id: str, text: str) -> None:
         await self.send_event("token", {"message_id": message_id, "text": text})
 
+    async def sentence(self, message_id: str, index: int, text: str) -> None:
+        """ReplySink 端口：一句完整文本（供 TTS 流水线/断句展示，§3.3）。"""
+        await self.send_event(
+            "sentence", {"message_id": message_id, "index": index, "text": text}
+        )
+
     async def emotion(self, message_id: str, emotion: str, intensity: float) -> None:
         await self.send_event(
             "emotion", {"message_id": message_id, "emotion": emotion, "intensity": intensity}
@@ -67,8 +79,17 @@ class ConnectionContext:
         await self.send_event("reply_end", data)
 
     async def error(self, code: str, message: str) -> None:
-        """ReplySink 端口：把流水线的业务错误（如 LlmError）推给前端。"""
+        """ReplySink 端口：把流水线的业务错误（如 LlmError / TTS_FAILED）推给前端。"""
         await self.send_error(code, message)
+
+    async def send_binary(self, frame: bytes) -> None:
+        """ReplySink 端口：发送一条二进制帧（音频，§3.5；与文本帧共用连接）。"""
+        async with self._send_lock:
+            try:
+                await self.ws.send_bytes(frame)
+            except Exception:
+                # 下行尽力而为：连接已关闭时由消息循环统一感知并清理
+                logger.debug("发送二进制帧失败（连接可能已关闭），{} 字节", len(frame))
 
     # ---------- 通用发送 ----------
 
@@ -144,14 +165,23 @@ class ConnectionContext:
             await self.send_error(ErrorCode.INTERNAL, "对话处理失败")
 
 
-def create_app(*, dispatcher: Dispatcher, app_version: str) -> FastAPI:
-    """创建 FastAPI 应用（目前仅 /ws 端点）。"""
+def create_app(
+    *,
+    dispatcher: Dispatcher,
+    app_version: str,
+    voice_factory: Callable[[], VoiceOut] | None = None,
+) -> FastAPI:
+    """创建 FastAPI 应用（目前仅 /ws 端点）。
+
+    ``voice_factory``：每条连接构造一个连接级语音出站（VoiceOut）——失败降级
+    状态随连接存活；None 表示本进程未启用语音（对话链路行为与 Phase 1 一致）。
+    """
     app = FastAPI(title="AI Desktop Pet Backend", version=app_version)
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:
         await ws.accept()
-        ctx = ConnectionContext(ws)
+        ctx = ConnectionContext(ws, voice=voice_factory() if voice_factory else None)
         logger.info("WS 连接建立 {}", ctx.id)
         try:
             await _message_loop(ws, ctx, dispatcher)

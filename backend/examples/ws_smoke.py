@@ -1,4 +1,4 @@
-"""WS 冒烟测试：真实跑通全链路（真 LLM 版）。
+"""WS 冒烟测试：真实跑通全链路（真 LLM 版 + 语音帧兼容）。
 
 流程：拉起后端子进程 → 逐行解析 stdout 的 PET_READY 握手行 → WS 连接 →
 hello 鉴权 → ping/pong 心跳 → 三轮真实对话（第 3 轮验证多轮记忆）→
@@ -9,7 +9,9 @@ hello 鉴权 → ping/pong 心跳 → 三轮真实对话（第 3 轮验证多轮
 - 流式回复非空；token 拼接 == full_text；无 ``<emo:`` 标签残渣；
 - emotion 事件存在且取值在 v1 集合内（模型不输出标签时后端补默认 neutral）；
 - 对话中无 error 事件；
-- 多轮记忆：第 1 轮告诉它的名字/喜好，第 3 轮能被正确接上。
+- 多轮记忆：第 1 轮告诉它的名字/喜好，第 3 轮能被正确接上；
+- Phase 2 起语音默认开启：本脚本容忍二进制音频帧（只计数；帧格式的逐字节
+  校验见 ``voice_smoke.py``）与 ``sentence`` 事件。
 
 前置：已配置 LLM key（shared.secrets 读取链：env > keyring > 600 文件）
 且 config.toml 的 base_url 可达。
@@ -108,6 +110,8 @@ def print_event(evt: dict) -> None:
     data = evt.get("data") or {}
     if msg_type == "token":
         print(f"  token       {data['text']!r}")
+    elif msg_type == "sentence":
+        print(f"  sentence    #{data['index']} {data['text']!r}")
     elif msg_type == "emotion":
         print(f"  emotion     {data['emotion']} (intensity={data['intensity']})")
     elif msg_type == "state":
@@ -130,7 +134,7 @@ def print_event(evt: dict) -> None:
         print(f"  {msg_type:11s} {json.dumps(data, ensure_ascii=False)}")
 
 
-def assert_turn(events: list[dict], *, name: str) -> str:
+def assert_turn(events: list[dict], *, name: str, audio_frames: int = 0) -> str:
     """校验一轮对话的 §7.1 时序 / 标签剥离 / 情绪合法性；返回拼接后的正文。"""
     types = [e["type"] for e in events]
     assert types[0] == "state" and events[0]["data"]["state"] == "thinking", (
@@ -143,7 +147,8 @@ def assert_turn(events: list[dict], *, name: str) -> str:
     )
     assert types[-2] == "reply_end", f"[{name}] 倒数第二事件应为 reply_end，实际：{types[-3:]}"
     assert types[-1] == "state" and events[-1]["data"]["state"] == "idle", f"[{name}] 收尾应为 state:idle"
-    assert set(types[2:-2]) <= {"token", "emotion"}, f"[{name}] 流式阶段出现意外事件：{types[2:-2]}"
+    # 语音启用时流式阶段还有 sentence 事件（供 TTS），二进制帧不在 events 内
+    assert set(types[2:-2]) <= {"token", "emotion", "sentence"}, f"[{name}] 流式阶段出现意外事件：{types[2:-2]}"
 
     tokens = "".join(e["data"]["text"] for e in events if e["type"] == "token")
     reply_end = next(e for e in events if e["type"] == "reply_end")
@@ -155,9 +160,21 @@ def assert_turn(events: list[dict], *, name: str) -> str:
     assert emotions, f"[{name}] 没有任何 emotion 事件（后端应至少补默认 neutral）"
     assert set(emotions) <= EMOTION_VALUES, f"[{name}] 情绪取值越界：{emotions}"
 
+    sentences = [e for e in events if e["type"] == "sentence"]
+    # 语音启用时：有分句就必须有音频帧；单句合成失败允许被跳过（降级设计，
+    # 详见任务书第 5 条——偶发失败在真实 Edge TTS 上实测出现，属预期降级）
+    if sentences:
+        assert audio_frames > 0, f"[{name}] 有 sentence 事件却没有任何音频帧"
+        assert audio_frames <= len(sentences), (
+            f"[{name}] 音频帧数 {audio_frames} 超过 sentence 数 {len(sentences)}"
+        )
+        if audio_frames < len(sentences):
+            print(f"  ⚠ {len(sentences) - audio_frames} 句合成失败被跳过（降级按设计工作）")
+
     print(
         f"\n[校验-{name}] 事件数={len(events)} 情绪序列={emotions} "
-        f"文本长度={len(tokens)}（token 拼接 == full_text，无标签残渣）"
+        f"文本长度={len(tokens)}（token 拼接 == full_text，无标签残渣） "
+        f"sentence={len(sentences)} 音频帧={audio_frames}"
     )
     return tokens
 
@@ -189,13 +206,18 @@ async def run_smoke(port: int, token: str) -> None:
             print(f"\n[对话-{name}] 用户：{text}")
             await ws.send(make_msg("user_message", {"text": text}))
             events: list[dict] = []
+            audio_frames = 0  # Phase 2：二进制音频帧只计数（格式校验见 voice_smoke.py）
             while True:
-                evt = json.loads(await asyncio.wait_for(ws.recv(), RECV_TIMEOUT))
+                raw = await asyncio.wait_for(ws.recv(), RECV_TIMEOUT)
+                if isinstance(raw, bytes):
+                    audio_frames += 1
+                    continue
+                evt = json.loads(raw)
                 print_event(evt)
                 events.append(evt)
                 if evt["type"] == "state" and evt["data"]["state"] == "idle":
                     break
-            return assert_turn(events, name=name)
+            return assert_turn(events, name=name, audio_frames=audio_frames)
 
         # 3) 第一轮：问名字（任务书指定的冒烟问句）
         text1 = await one_turn("你好，你叫什么名字", name="第一轮")

@@ -134,10 +134,17 @@ def build_dispatcher(
             return
         session = sessions.start(data.session_id or ctx.session_id)
         ctx.session_id = session.id
-        await ctx.spawn_reply(pipeline.run_turn(ctx, session=session, user_text=text))
+        await ctx.spawn_reply(
+            pipeline.run_turn(ctx, session=session, user_text=text, voice=ctx.voice)
+        )
 
     async def on_interrupt(ctx: ConnectionContext, msg: ClientMessage) -> None:
-        """打断：取消当前流式回复（reply_end{interrupted}/state:idle 由流水线收尾推送）。"""
+        """打断（§7.2）：取消当前回复任务。
+
+        LLM 流与 TTS 合成同属该任务的取消链——流水线收到取消后先清空 TTS
+        队列、停止推帧（已合成的帧不再推），再推 reply_end{interrupted} 与
+        state:idle。因此本处只需取消回复任务本身。
+        """
         await ctx.cancel_reply()
 
     dispatcher.register("ping", on_ping)

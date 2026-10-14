@@ -20,6 +20,7 @@ class ErrorCode(StrEnum):
     AUTH_FAILED = "AUTH_FAILED"            # token 校验失败
     VERSION_MISMATCH = "VERSION_MISMATCH"  # 协议版本不匹配
     INTERNAL = "INTERNAL"                  # 服务端内部错误
+    TTS_FAILED = "TTS_FAILED"              # 语音合成连续失败，本次连接内已停用 TTS（非 fatal）
 
 
 class LlmErrorCode(StrEnum):
@@ -53,6 +54,27 @@ class LlmError(Exception):
     """
 
     def __init__(self, code: LlmErrorCode, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class TtsErrorCode(StrEnum):
+    """TTS 合成错误码（在日志与降级判定中使用；不透传单句错误到前端）。"""
+
+    TTS_NETWORK = "TTS_NETWORK"  # 网络不可达 / 连接失败 / 上游异常
+    TTS_TIMEOUT = "TTS_TIMEOUT"  # 单句合成超时
+    TTS_EMPTY = "TTS_EMPTY"      # 合成结果为空（上游异常返回）
+
+
+class TtsError(Exception):
+    """TTS 业务化错误：provider 层把 edge-tts / 网络异常翻译成它。
+
+    单句失败由语音编排层（application/voice.py）降级处理：跳过该句、累计
+    连续失败次数，不向上抛（不打断对话）。
+    """
+
+    def __init__(self, code: TtsErrorCode, message: str) -> None:
         super().__init__(message)
         self.code = code
         self.message = message

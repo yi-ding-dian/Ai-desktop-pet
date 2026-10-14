@@ -35,8 +35,8 @@ name     = "小豆"
 scale    = 1.0
 idle_fps = 10
 
-[voice]            # Phase 2
-enabled  = false
+[voice]            # Phase 2：语音播报（TTS）
+enabled  = true
 provider = "edge"
 voice    = "zh-CN-XiaoxiaoNeural"
 
@@ -72,9 +72,9 @@ class PetConfig(BaseModel):
 
 
 class VoiceConfig(BaseModel):
-    """语音配置（Phase 2）。"""
+    """语音配置（Phase 2：TTS 播报，默认开启——免费零配置，失败自动降级）。"""
 
-    enabled: bool = False
+    enabled: bool = True
     provider: str = "edge"
     voice: str = "zh-CN-XiaoxiaoNeural"
 

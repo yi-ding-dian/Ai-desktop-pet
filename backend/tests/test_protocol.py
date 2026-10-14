@@ -1,20 +1,26 @@
-"""interfaces/ws/protocol.py 单测：信封序列化/反序列化、版本校验、错误分支。"""
+"""interfaces/ws/protocol.py 单测：信封序列化/反序列化、版本校验、错误分支、
+二进制音频帧封装（§3.5，字节级断言）。"""
 
 from __future__ import annotations
 
 import json
+import struct
 
 import pytest
 
 from backend.interfaces.ws.protocol import (
+    AUDIO_SAMPLE_RATE,
     CLIENT_EVENT_MODELS,
     SERVER_EVENT_MODELS,
     PROTOCOL_VERSION,
     HelloData,
     UserMessageData,
+    make_audio_header,
     make_envelope,
+    pack_audio_frame,
     parse_client_message,
     serialize_envelope,
+    unpack_audio_frame,
 )
 from backend.shared.errors import ErrorCode, ProtocolError
 
@@ -176,3 +182,63 @@ def test_all_server_events_serializable() -> None:
         payload = model_cls.model_validate(data)
         obj = json.loads(serialize_envelope(make_envelope(type_name, payload)))
         assert obj["type"] == type_name
+
+
+# ---------------------------------------------------------------- 二进制音频帧（§3.5）
+
+
+def test_audio_header_fields_follow_design() -> None:
+    """JSON 头字段与 §3.5 冻结格式一致。"""
+    header = make_audio_header("m_abc", 2, final=True)
+    assert header == {
+        "type": "audio",
+        "message_id": "m_abc",
+        "seq": 2,
+        "format": "mp3",
+        "sample_rate": 24000,
+        "final": True,
+    }
+    assert AUDIO_SAMPLE_RATE == 24000
+
+
+def test_pack_audio_frame_byte_layout() -> None:
+    """字节级断言：4 字节大端头长 + UTF-8 JSON 头 + 音频数据。"""
+    header = make_audio_header("m_1", 0, final=False)
+    payload = b"\xff\xf3\x64\xc4" + b"\xab" * 300
+    frame = pack_audio_frame(header, payload)
+
+    head_json = json.dumps(header, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    assert frame[:4] == struct.pack(">I", len(head_json))  # 大端 4 字节长度
+    assert frame[:3] == b"\x00\x00\x00"  # 小长度时高位为 0（大端特征）
+    assert frame[4 : 4 + len(head_json)] == head_json
+    assert frame[4 + len(head_json) :] == payload  # body 原样拼接，无任何转码
+    assert len(frame) == 4 + len(head_json) + len(payload)
+    # 头长只需 1 字节的样本：验证不是小端打包（小端时 frame[:4]==b"\x5c\x00\x00\x00"）
+    assert frame[0] == 0 and frame[3] == len(head_json)
+
+
+def test_pack_audio_frame_roundtrip_with_unicode_header() -> None:
+    """头里含非 ASCII 字符时按 UTF-8 编码（长度按字节计）。"""
+    header = make_audio_header("m_2", 9, final=True) | {"note": "中文备注"}
+    payload = b"\xff\xfb\x90\x64" * 10
+    decoded, body = unpack_audio_frame(pack_audio_frame(header, payload))
+    assert decoded == header
+    assert body == payload
+
+
+def test_unpack_empty_payload_ok() -> None:
+    header = make_audio_header("m_3", 1, final=True)
+    decoded, body = unpack_audio_frame(pack_audio_frame(header, b""))
+    assert decoded["seq"] == 1
+    assert body == b""
+
+
+def test_unpack_rejects_malformed_frames() -> None:
+    with pytest.raises(ValueError):
+        unpack_audio_frame(b"\x00\x00")  # 不足 4 字节
+    with pytest.raises(ValueError):
+        unpack_audio_frame(struct.pack(">I", 99) + b"{short")  # 头长越界
+    with pytest.raises(ValueError):
+        unpack_audio_frame(struct.pack(">I", 3) + b"abc" + b"x")  # JSON 不可解析
+    with pytest.raises(ValueError):
+        unpack_audio_frame(struct.pack(">I", 2) + b"[]" + b"x")  # JSON 非对象

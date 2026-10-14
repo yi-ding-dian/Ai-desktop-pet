@@ -332,6 +332,58 @@ def serialize_envelope(envelope: Envelope) -> str:
     return json.dumps(envelope.model_dump(mode="json"), ensure_ascii=False)
 
 
+# ---------------------------------------------------------------- 二进制帧（§3.5，v1 冻结）
+
+
+#: 音频帧类型（JSON 头 type 字段取值）
+AUDIO_FRAME_TYPE = "audio"
+#: 音频格式与采样率（Edge TTS 默认输出 24kHz 单声道 mp3，与 §3.5 示例一致）
+AUDIO_FORMAT = "mp3"
+AUDIO_SAMPLE_RATE = 24000
+
+
+def make_audio_header(message_id: str, seq: int, *, final: bool) -> dict[str, Any]:
+    """构造 §3.5 音频帧 JSON 头（字段顺序固定，便于前端/测试比对）。"""
+    return {
+        "type": AUDIO_FRAME_TYPE,
+        "message_id": message_id,
+        "seq": seq,
+        "format": AUDIO_FORMAT,
+        "sample_rate": AUDIO_SAMPLE_RATE,
+        "final": final,
+    }
+
+
+def pack_audio_frame(json_header: dict[str, Any], payload: bytes) -> bytes:
+    """打包二进制音频帧：``[4字节大端 JSON 头长度 N][JSON头 N字节][音频数据]``（§3.5）。
+
+    音频不走 base64——直接二进制帧（对比 base64 内嵌 JSON 体积膨胀 33%）。
+    """
+    head = json.dumps(json_header, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(head) > 0xFFFFFFFF:
+        raise ValueError(f"音频帧头过大：{len(head)} 字节")
+    return len(head).to_bytes(4, "big") + head + payload
+
+
+def unpack_audio_frame(frame: bytes) -> tuple[dict[str, Any], bytes]:
+    """解析二进制音频帧，返回 ``(JSON头, 音频数据)``；格式非法抛 ValueError。
+
+    供测试与冒烟脚本校验使用（后端下行路径只打包不解析）。
+    """
+    if len(frame) < 4:
+        raise ValueError(f"音频帧过短：{len(frame)} 字节（不足 4 字节头长字段）")
+    head_len = int.from_bytes(frame[:4], "big")
+    if len(frame) < 4 + head_len:
+        raise ValueError(f"音频帧头长越界：声明 {head_len} 字节，实际仅 {len(frame) - 4} 字节")
+    try:
+        header = json.loads(frame[4 : 4 + head_len].decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"音频帧 JSON 头不可解析：{exc}") from exc
+    if not isinstance(header, dict):
+        raise ValueError("音频帧 JSON 头必须是对象")
+    return header, frame[4 + head_len :]
+
+
 def _brief(exc: ValidationError, limit: int = 3) -> str:
     """把 Pydantic 校验错误压缩成一行短摘要。"""
     items = [

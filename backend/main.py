@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import secrets
@@ -26,9 +27,11 @@ from loguru import logger
 from backend import __version__
 from backend.application.chat_pipeline import ChatPipeline
 from backend.application.session import SessionManager
+from backend.application.voice import VoiceOut
 from backend.interfaces.ws.dispatcher import build_dispatcher
 from backend.interfaces.ws.server import create_app
 from backend.modules.llm.openai_compat import OpenAICompatProvider
+from backend.modules.voice.tts import create_tts_provider
 from backend.shared.config import load_config
 from backend.shared.logging import setup_logging
 from backend.shared.secrets import get_llm_key, mask_secret
@@ -68,10 +71,34 @@ def main() -> int:
         app_config.llm.model,
         mask_secret(get_llm_key()),  # 只记掩码，绝不记明文
     )
+
+    # 语音链路（Phase 2）：按配置装配 TTS provider；未知 provider 记日志降级，
+    # 不阻断启动（语音是旁路能力，失败不影响对话主链路）
+    tts_provider = None
+    if app_config.voice.enabled:
+        try:
+            tts_provider = create_tts_provider(
+                provider=app_config.voice.provider, voice=app_config.voice.voice
+            )
+        except ValueError as exc:
+            logger.warning("语音装配失败，本次运行不启用 TTS：{}", exc)
+    # 每条连接一个连接级语音出站（失败降级状态随连接存活，任务书第 5 条）
+    voice_factory = functools.partial(VoiceOut, tts_provider) if tts_provider else None
+    if voice_factory is not None:
+        logger.info(
+            "TTS 装配：provider={} voice={}",
+            app_config.voice.provider,
+            app_config.voice.voice,
+        )
+    else:
+        logger.info("语音未启用（config.toml [voice].enabled=false 或装配失败）")
+
     dispatcher = build_dispatcher(
         pipeline=pipeline, sessions=sessions, token=token, app_version=__version__
     )
-    app = create_app(dispatcher=dispatcher, app_version=__version__)
+    app = create_app(
+        dispatcher=dispatcher, app_version=__version__, voice_factory=voice_factory
+    )
 
     config = uvicorn.Config(
         app,
