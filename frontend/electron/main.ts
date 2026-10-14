@@ -1,12 +1,14 @@
 /**
- * 主进程入口：生命周期、单例锁、窗口创建、调试快捷键。
+ * 主进程入口：生命周期、单例锁、窗口创建、调试快捷键、后端子进程接线。
  *
- * 职责边界：本文件不直接写平台特化代码——窗口创建与能力一律经 window/registry 解析平台实现（设计文档 §5.1）。
+ * 职责边界：本文件不直接写平台特化代码——窗口创建与能力一律经 window/registry 解析平台实现（设计文档 §5.1）；
+ * Python 子进程管理一律经 backend-process 域（设计文档 §5.2）。
  */
 import { app, globalShortcut } from 'electron'
 import { join } from 'node:path'
 import { resolveWindowImpl } from './window/registry'
 import { registerIpcHandlers, pushDebugState, type IpcContext } from './ipc'
+import { backendManager } from './backend-process'
 import type { PlatformWindow } from './window'
 
 /** 宠物窗口尺寸（逻辑基准 400x400；渲染侧按 100vw/100vh 自适应） */
@@ -113,11 +115,26 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     pet = createPetWindow()
     registerDebugShortcuts()
+    // 后端子进程与窗口并行启动（design §3.4）；就绪后经 IPC 下发 port/token
+    backendManager.start()
   })
 
   // 桌宠为单窗口应用：窗口关闭即退出（Linux/Windows 惯例）
   app.on('window-all-closed', () => {
     app.quit()
+  })
+
+  // 退出清理：先拦下退出，SIGTERM 后端子进程（3s 未退 SIGKILL），完成后真正退出（防僵尸）
+  let backendCleanupStarted = false
+  app.on('before-quit', (event) => {
+    if (backendCleanupStarted) return
+    backendCleanupStarted = true
+    event.preventDefault()
+    console.log('[main] 应用退出：清理后端子进程…')
+    backendManager
+      .stop()
+      .catch((err: unknown) => console.error('[main] 后端清理异常：', err))
+      .finally(() => app.quit())
   })
 
   app.on('will-quit', () => {

@@ -6,6 +6,7 @@
  */
 import { ipcMain, type BrowserWindow } from 'electron'
 import { IPC, IPC_EVENTS, type WindowDebugState } from './channels'
+import { backendManager } from '../backend-process'
 import type { Point, Rect, WindowCapability } from '../window'
 
 export interface IpcContext {
@@ -55,4 +56,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   })
 
   ipcMain.handle(IPC.WINDOW_GET_DEBUG_STATE, () => buildDebugState(ctx))
+
+  // 后端状态快照：渲染进程晚于 ready 订阅时补状态（否则会漏掉一次性 ready 事件）
+  ipcMain.handle(IPC.BACKEND_GET_SNAPSHOT, () => backendManager.getSnapshot())
 }

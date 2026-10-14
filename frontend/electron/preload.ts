@@ -3,7 +3,15 @@
  * 渲染进程只能访问 window.pet，无法触达 Node / Electron 原生能力。
  */
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC, IPC_EVENTS, type PetBridgeApi, type WindowDebugState } from './ipc/channels'
+import {
+  IPC,
+  IPC_EVENTS,
+  type BackendReadyPayload,
+  type BackendSnapshot,
+  type BackendStatusPayload,
+  type PetBridgeApi,
+  type WindowDebugState
+} from './ipc/channels'
 import type { Point, Rect } from './window'
 
 const api: PetBridgeApi = {
@@ -39,6 +47,30 @@ const api: PetBridgeApi = {
       ipcRenderer.on(IPC_EVENTS.WINDOW_DEBUG_STATE_CHANGED, listener)
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.WINDOW_DEBUG_STATE_CHANGED, listener)
+      }
+    }
+  },
+
+  backend: {
+    getSnapshot(): Promise<BackendSnapshot> {
+      return ipcRenderer.invoke(IPC.BACKEND_GET_SNAPSHOT)
+    },
+
+    onStatusChanged(cb: (status: BackendStatusPayload) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, status: BackendStatusPayload): void =>
+        cb(status)
+      ipcRenderer.on(IPC_EVENTS.BACKEND_STATUS_CHANGED, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.BACKEND_STATUS_CHANGED, listener)
+      }
+    },
+
+    onReady(cb: (payload: BackendReadyPayload) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, payload: BackendReadyPayload): void =>
+        cb(payload)
+      ipcRenderer.on(IPC_EVENTS.BACKEND_READY, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.BACKEND_READY, listener)
       }
     }
   }

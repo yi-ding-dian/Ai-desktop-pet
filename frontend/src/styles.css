@@ -60,25 +60,168 @@ body,
   }
 }
 
-/* 状态栏：窗口底部一行调试信息 */
+/* 顶部状态栏：宠物状态 + 当前情绪（emotion 事件占位展示） */
+.pet-status-bar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  padding: 4px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.pet-state {
+  font-weight: 600;
+}
+
+.pet-emotion {
+  opacity: 0.9;
+}
+
+/* 对话面板：气泡列表 + 输入框（设计文档 §5.4） */
+.chat-panel {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 96px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.4) transparent;
+}
+
+.chat-messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 2px;
+}
+
+.chat-bubble {
+  max-width: 88%;
+  padding: 4px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.chat-bubble.user {
+  align-self: flex-end;
+  background: rgba(64, 158, 255, 0.92);
+  color: #fff;
+}
+
+.chat-bubble.assistant {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.92);
+  color: #222;
+}
+
+.chat-bubble.error {
+  align-self: flex-start;
+  background: rgba(220, 80, 80, 0.94);
+  color: #fff;
+}
+
+.chat-bubble-emotion {
+  margin-right: 4px;
+}
+
+.chat-caret {
+  opacity: 0.7;
+  animation: chat-caret-blink 1s steps(1) infinite;
+}
+
+@keyframes chat-caret-blink {
+  50% {
+    opacity: 0.1;
+  }
+}
+
+.chat-interrupted {
+  margin-left: 4px;
+  opacity: 0.6;
+  font-size: 11px;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.chat-input {
+  flex: 1;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #222;
+  font-size: 12px;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.chat-input:disabled {
+  opacity: 0.6;
+}
+
+.chat-send {
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(64, 158, 255, 0.92);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 状态栏：窗口底部调试/连接信息（两行紧凑展示） */
 .status-bar {
   position: absolute;
   left: 50%;
   bottom: 10px;
   transform: translateX(-50%);
-  padding: 6px 12px;
+  padding: 5px 12px;
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.5);
   color: #fff;
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 11px;
+  line-height: 1.5;
   text-align: center;
-  white-space: nowrap;
   /* 状态栏不参与鼠标交互，避免影响 hitbox 判定 */
   pointer-events: none;
+  max-width: 94vw;
 }
 
-.status-hint {
-  opacity: 0.7;
-  font-size: 11px;
+.status-error {
+  color: #ff9b9b;
 }

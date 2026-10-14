@@ -18,14 +18,47 @@ export const IPC = {
   /** 渲染侧上报窗口可交互矩形（payload: Rect[]，相对窗口左上角，DIP） */
   WINDOW_REPORT_INTERACTIVE_RECTS: 'window:report-interactive-rects',
   /** 查询窗口调试状态（invoke → WindowDebugState） */
-  WINDOW_GET_DEBUG_STATE: 'window:get-debug-state'
+  WINDOW_GET_DEBUG_STATE: 'window:get-debug-state',
+  /** 查询后端状态快照（invoke → BackendSnapshot；渲染进程晚订阅时补状态） */
+  BACKEND_GET_SNAPSHOT: 'backend:get-snapshot'
 } as const
 
 /** 通道名：主 → 渲染（webContents.send 广播） */
 export const IPC_EVENTS = {
   /** 调试状态变化（调试快捷键触发后推送） */
-  WINDOW_DEBUG_STATE_CHANGED: 'window:debug-state-changed'
+  WINDOW_DEBUG_STATE_CHANGED: 'window:debug-state-changed',
+  /** 后端子进程状态变化（payload: BackendStatusPayload） */
+  BACKEND_STATUS_CHANGED: 'backend:status-changed',
+  /** 后端就绪（payload: BackendReadyPayload，含 WS 端口与 hello token） */
+  BACKEND_READY: 'backend:ready'
 } as const
+
+/** 后端子进程状态（设计文档 §5.2 状态机；IPC 广播取值） */
+export type BackendState = 'starting' | 'ready' | 'failed' | 'stopped'
+
+/** backend:status-changed 推送载荷（不含端口/token，连接信息只随 ready 事件下发） */
+export interface BackendStatusPayload {
+  state: BackendState
+  /** 失败/重启等补充说明（供 UI 展示与排障） */
+  message?: string
+}
+
+/** backend:ready 推送载荷：渲染侧据此建立 WS 连接（port + token） */
+export interface BackendReadyPayload {
+  port: number
+  token: string
+  pid: number
+  /** 应用版本（app.getVersion()），hello.app_version 使用，与后端做版本握手 */
+  appVersion: string
+}
+
+/** 后端状态快照（invoke backend:get-snapshot；覆盖渲染进程晚于 ready 订阅的场景） */
+export interface BackendSnapshot extends BackendStatusPayload {
+  port?: number
+  token?: string
+  pid?: number
+  appVersion: string
+}
 
 /** 窗口调试状态快照（渲染侧状态栏展示） */
 export interface WindowDebugState {
@@ -56,5 +89,14 @@ export interface PetBridgeApi {
     getDebugState(): Promise<WindowDebugState>
     /** 订阅调试状态变化；返回取消订阅函数 */
     onDebugStateChanged(cb: (state: WindowDebugState) => void): () => void
+  }
+  /** 后端子进程（设计文档 §5.2）：状态订阅 + 快照查询；渲染进程不直接管理进程 */
+  backend: {
+    /** 查询当前状态快照（含 ready 时的 port/token，用于渲染进程晚订阅的补状态） */
+    getSnapshot(): Promise<BackendSnapshot>
+    /** 订阅后端状态变化；返回取消订阅函数 */
+    onStatusChanged(cb: (status: BackendStatusPayload) => void): () => void
+    /** 订阅后端就绪（port + token 下发，渲染侧据此建立 WS 连接）；返回取消订阅函数 */
+    onReady(cb: (payload: BackendReadyPayload) => void): () => void
   }
 }
