@@ -1,15 +1,18 @@
 /**
- * 主进程入口：生命周期、单例锁、窗口创建、调试快捷键、后端子进程接线。
+ * 主进程入口：生命周期、单例锁、窗口创建、系统托盘、调试快捷键、后端子进程接线。
  *
  * 职责边界：本文件不直接写平台特化代码——窗口创建与能力一律经 window/registry 解析平台实现（设计文档 §5.1）；
- * Python 子进程管理一律经 backend-process 域（设计文档 §5.2）。
+ * Python 子进程管理一律经 backend-process 域（设计文档 §5.2）；托盘一律经 tray 域。
  */
-import { app, globalShortcut } from 'electron'
+import { app, globalShortcut, type Tray } from 'electron'
 import { join } from 'node:path'
 import { resolveWindowImpl } from './window/registry'
 import { registerIpcHandlers, pushDebugState, type IpcContext } from './ipc'
 import { IPC_EVENTS } from './ipc/channels'
 import { backendManager } from './backend-process'
+import { createTray } from './tray'
+import { runHideAnimation, runShowAnimation, destroyFx } from './fx'
+import { runAnchorSelfTest } from './fx/anchor'
 import type { PlatformWindow } from './window'
 
 /** 宠物窗口尺寸（逻辑基准 400x400；渲染侧按 100vw/100vh 自适应） */
@@ -29,6 +32,8 @@ const isDev = !app.isPackaged
 
 let pet: PlatformWindow | null = null
 let ipcCtx: IpcContext | null = null
+/** 托盘实例（必须持有引用，否则会被 GC 回收导致图标消失，见 tray/index.ts 备忘） */
+let tray: Tray | null = null
 /** 调试态：hitbox 边框显示开关（主进程持有，渲染侧只渲染） */
 let hitboxVisible = false
 
@@ -120,24 +125,46 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    pet?.window.show()
+    // 二次启动 = 叫宠物出来（窗口已可见则什么都不做；隐藏中走显示动画）
+    const w = pet?.window
+    if (w && !w.isDestroyed() && !w.isVisible()) void runShowAnimation(w)
   })
 
   app.whenReady().then(() => {
+    // dev/排障：托盘锚点定位自检（PET_ANCHOR_SELFTEST=1 → 抓屏定位；
+    // =/path/shot.png → 对该截图跑模板匹配；不影响正常流程）
+    const anchorSelfTest = process.env['PET_ANCHOR_SELFTEST']
+    if (anchorSelfTest) void runAnchorSelfTest(anchorSelfTest)
+
     pet = createPetWindow()
+    const petWin = pet.window
+    // 关窗=躲进托盘（用户确认的行为）：Alt+F4 等关闭动作只隐藏窗口，且走魔法球捕获动画
+    // （fx 域负责时序；动画异常/超时有兜底，结果语义"躲进托盘"一定生效）；
+    // 真正退出走托盘菜单/系统退出（经 app.quit → before-quit 置 quitting=true 放行）
+    petWin.on('close', (event) => {
+      if (quitting) return
+      event.preventDefault()
+      console.log('[main] 关闭窗口 → 躲进托盘（退出请用托盘菜单）')
+      void runHideAnimation(petWin)
+    })
+    // 系统托盘：常驻入口（显示/隐藏、退出）；窗口显隐状态驱动其菜单文案
+    tray = createTray(petWin)
     registerDebugShortcuts()
     // 后端子进程与窗口并行启动（design §3.4）；就绪后经 IPC 下发 port/token
     backendManager.start()
   })
 
-  // 桌宠为单窗口应用：窗口关闭即退出（Linux/Windows 惯例）
+  // 单窗口应用兜底：窗口被真关闭（仅退出流程中）后走应用退出；平时 close 已被"躲进托盘"拦截
   app.on('window-all-closed', () => {
     app.quit()
   })
 
   // 退出清理：先拦下退出，SIGTERM 后端子进程（3s 未退 SIGKILL），完成后真正退出（防僵尸）
   let backendCleanupStarted = false
+  /** 真实退出流程已发起（任何 app.quit 都会先经过 before-quit）——窗口 close 不再拦截 */
+  let quitting = false
   app.on('before-quit', (event) => {
+    quitting = true
     if (backendCleanupStarted) return
     backendCleanupStarted = true
     event.preventDefault()
@@ -150,5 +177,9 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll()
+    tray?.destroy()
+    tray = null
+    // 魔法球动画窗（若存在）随退出直接销毁——退出链路不播动画、不做等待
+    destroyFx()
   })
 }

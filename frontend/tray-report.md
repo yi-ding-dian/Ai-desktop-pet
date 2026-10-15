@@ -1,0 +1,105 @@
+# 系统托盘 + Dock 隐藏 —— 实施与验证报告
+
+日期：2026-10-15 ｜ 环境：Deepin DDE + X11（KWin）、双屏 1920x1080x2、DPR=1
+范围：`frontend/electron/`（tray 新域 + main.ts + window/linux.ts）、`frontend/electron-builder.yml`、`frontend/resources/`
+
+---
+
+## 1. 实现
+
+### 1.1 托盘域（新增 `frontend/electron/tray/index.ts`）
+
+- `createTray(win)`：`new Tray(nativeImage)` + 中文菜单；main.ts 在 `app.whenReady` 后调用并**持有引用**（防 GC 导致图标消失），`will-quit` 时 `destroy()`。
+- 图标加载（dev/生产双路径，模式同 `backend-process/locate.ts`）：
+  - 开发态：`frontend/build/icon.png` 优先（设计素材单一来源，素材更新即时生效），回退 `frontend/resources/tray-icon.png`；
+  - 生产态：`process.resourcesPath/tray-icon.png` —— 由 electron-builder `extraResources` 从 `frontend/resources/tray-icon.png` 拷入（`build/` 目录默认不进安装包，绝不能引用）。
+- 尺寸：`resize` 到 22px；按主屏 `scaleFactor` 放大（上限 44px@2x），本机 DPR=1 → 实际 22px（日志：`512px → 22px, scale=1`）。
+- 菜单（中文，文案随窗口显隐态自动刷新，`win.on('show'/'hide')` 驱动）：
+  - `隐藏宠物` / `显示宠物`（`win.show()/hide()` 切换）
+  - `退出`（`app.quit()` → 既有 before-quit 清理链路）
+- 单击切换显隐：`tray.on('click')`。**DDE 实测左键单击会派发 click 事件**（每次点击恰好触发 1 次切换，无重复），此"尽力而为"项在本环境完全可用；DDE 左键=activate、右键=弹 DBusMenu（我们的菜单）。
+
+### 1.2 主进程集成（`electron/main.ts`）
+
+- 新增 `tray` 变量 + `createTray(pet.window)` 调用 + `will-quit` 销毁；文件头注释补充托盘职责。
+- 未改「窗口关闭即退出」既有行为（见 §4 待确认）。
+
+### 1.3 打包配置（`electron-builder.yml`）
+
+```yaml
+extraResources:
+  - from: resources/tray-icon.png
+    to: tray-icon.png
+```
+
+配套产出 `frontend/resources/tray-icon.png`（当前为 `build/icon.png` 的精修版快照，md5 一致）。**注意：这是一份快照**，`build/icon.png` 再次更新后需重新同步（见 §4）。
+
+### 1.4 生产态打包实测（dir 模式，输出到 /tmp，不污染 deploy/release）
+
+- `npm run build` + `npx electron-builder --linux dir -c.directories.output=/tmp/pet-pack-test`：
+  - 打包产物 `resources/tray-icon.png` 就位，md5 与源文件一致（`e857c1ec…`）；
+- 直接运行打包产物（`/tmp/pet-pack-test/linux-unpacked/ai-desktop-pet`）：
+  - 日志 `[tray] 图标：.../resources/tray-icon.png（512px → 22px, scale=1）` —— **生产态路径解析正确读到 extraResources 图标**；
+  - 托盘兔子图标正常显示（截图 `/tmp/pack-tray-zoom.png`）；
+  - 后端经生产路径拉起并就绪（`resources/backend/backend（生产态）` → `状态 -> ready`）。
+
+### 1.5 Dock 隐藏（`electron/window/linux.ts`）
+
+- 背景确认：DDE 忽略 `skipTaskbar` —— 默认（NORMAL 类型）下 Dock 显示宠物窗口格（无 .desktop，呈现为 fallback 图标；实测：窗口显示→有格，hide→格消失，show→格重现）。
+- **实验结论：`type: 'toolbar'` 有效**，Dock 中窗口格消失，且副作用全套复测无破坏（明细见 §3）；
+- 已启用（构造参数 `type: 'toolbar'`），并把实验结论写入 linux.ts 顶部注释块（替换原"实测副作用未验证"的旧备忘）。
+- Wayland：type 是 X11 概念（xdg-shell 无对应物），在 Wayland 下静默无效，不影响既有降级路径。
+
+---
+
+## 2. 验证结果（dev 实测，2026-10-15 14:0x–14:1x）
+
+| # | 项 | 结果 | 证据 |
+|---|----|------|------|
+| ① | 托盘图标出现在 DDE 托盘区 | ✅ | 截图 `/tmp/final-tray.png`（兔子头像在微信/云盘与 QQ 之间）；DBus 旁证：StatusNotifierWatcher 注册项新增 `:1.33929/StatusNotifierItem` |
+| ②a | 右键菜单两项可用 | ✅ | 截图 `/tmp/exit-menu-zoom.png`（隐藏宠物/分隔/退出）；隐藏态下文案自动变为"显示宠物"（`/tmp/menu-hidden.png`） |
+| ②b | 显示/隐藏切换有实际效果 | ✅ | `xwininfo` Map State：Viewable↔UnMapped 随点击切换；日志 `[tray] 隐藏/显示宠物窗口` |
+| ②c | 退出走干净清理 | ✅ | 日志 `应用退出：清理后端子进程… → SIGTERM → 后端进程已退出 → 状态 stopped`；进程残留 0；托盘图标随退出消失（`/tmp/tray-after-exit.png`） |
+| ③ | Dock 中宠物格消失 | ✅ | 启用 toolbar 前后对照截图 `/tmp/tail-vis.png`（有格）vs `/tmp/final-tail.png`（无格） |
+| ④ | 副作用全套（toolbar 下） | ✅ | 见 §3 |
+| ⑤ | 后端与 WS 不受影响 | ✅ | `hello_ack ok=true session=… server_version=0.1.0`（每次重启后均正常） |
+
+单击切换专项：连续 3 次单击 → 状态 Viewable→UnMapped→Viewable→UnMapped，每次日志恰好 1 条（无重复触发）。
+
+---
+
+## 3. 副作用全套复测（type:'toolbar' 下，全部通过）
+
+| 项 | 方法 | 结果 |
+|----|------|------|
+| 透明渲染 | 截图目视 | ✅ 兔子周围透出终端文字，透明背景完好 |
+| 置顶 | X 属性 + F10 | ✅ 初始 `_NET_WM_STATE_ABOVE, _NET_WM_STATE_STAYS_ON_TOP`；F10 可关（属性清空）可再开 |
+| 点击穿透（setShape） | 鼠标移入/移出宠物 | ✅ 日志 `hitbox enter` + `clickThrough -> false` / `hitbox leave` + `clickThrough -> true` 正常 |
+| 拖拽 | xdotool 模拟拖拽 +50,+30 | ✅ 日志 `drag start @ 730,750` / `drag end`；窗口位置 539,592 → 589,622 精确跟随 |
+| F9/F10/F11 | 全局快捷键 | ✅ 日志 `clickThrough -> true` / `alwaysOnTop -> false` / `hitbox 边框 -> 显示` |
+| Ctrl+Shift+D | 全局快捷键 | ✅ 日志 `调试栏显隐切换 → 通知渲染侧` |
+| 托盘本身（toolbar 下） | 单击/右键 | ✅ 切换与菜单均正常（同上） |
+
+结论：**toolbar 无任何破坏**，未触发"换 utility 类型"的备选路径；Dock 图标按方案消失，托盘交付。
+
+---
+
+## 4. 待用户确认清单
+
+1. **窗口关闭行为**：现状保持「窗口关闭（Alt+F4 / Dock 关闭）＝应用整体退出、托盘一并消失」。若希望"关闭即隐藏到托盘、应用常驻"，需另行改 `window-all-closed` 逻辑（本次未动，避免超范围）。
+2. **托盘图标素材同步**：`resources/tray-icon.png` 是 `build/icon.png` 的快照副本。更稳的方案是 yml 直接 `from: build/icon.png to: tray-icon.png`（打包时自动取最新素材），或打包脚本加 cp 步骤——两者都改变了你指定的结构，等你拍板。
+3. **单击行为**：当前单击=切换显隐（DDE 实测支持）。是否保持？（部分桌面环境 click 事件不派发，菜单项为保底路径。）
+4. **DPR≠1 的效果未实测**（本机 scaleFactor=1，代码已按 22*DPR、上限 44 处理）；**Wayland 未实测**（type 在 Wayland 无效，Dock 隐藏效果未知）。
+5. 旧备忘勘误：linux.ts 原注释引用"见 main.ts 的 icon 配置"，但 main.ts 从未配置窗口 icon（DDE 对无 .desktop 窗口显示 fallback 图标）。该不实引用已随本次注释重写清理；若需要窗口图标=兔子头像，需另行给 BrowserWindow 传 icon（本次未做）。
+
+---
+
+## 5. 坑与操作备忘
+
+1. **`pkill -f "electron/dist/electron"` 会杀掉自己**（命令行自匹配 → bash exit 144）。必须用方括号技巧：`pkill -f "[e]lectron/dist/electron"`。
+2. **重启 dev 的正确顺序**：只 `pkill -f "[e]lectron-vite dev"` 会留下**孤儿 Electron 主进程**（窗口/托盘仍显示，新实例拿不到单例锁）；应先杀 Electron 主进程（走 before-quit 清理后端），再杀掉 dev server 进程。
+3. Electron 主进程被 SIGTERM 时 GPU 子进程会连锁报 `GPU process isn't usable. Goodbye.`（子进程退出的噪音日志，非故障）。
+4. **主进程改动不会热生效**：electron-vite dev 对 `electron/` 改动不自动重启（实测改注释后无重启），验证必须手动重启 dev（任务既定步骤）。
+5. 截图对比法在本机受其它桌面活动干扰（如同屏的图片编辑器、画板等），最干净的验证姿势是「窗口 hide/show 前后对比 Dock 尾部区域」。
+6. DDE 托盘右键=DBusMenu；Electron `setContextMenu` 生成的菜单能正常被 DDE 渲染（中文文案正常）。
+7. dev 态 `app.getAppPath()` = `frontend/`，据此做双路径解析（与 backend locate.ts 一致）。

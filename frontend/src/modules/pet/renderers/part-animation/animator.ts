@@ -37,6 +37,10 @@ const NUMERIC_KEYS = (Object.keys(NEUTRAL_POSE) as Array<keyof PetPose>).filter(
 const BLINK_DURATION = 0.16 // 一次眨眼总时长（秒）
 const PET_REACTION_DURATION = 0.9 // 摸头反应时长（秒）
 const LOOK_AROUND_DURATION = 2.8 // 张望反应时长（秒；执行器按此循环播放以覆盖行为 duration）
+/** 被魔法球抓住（fx 域隐藏动画）反应时长（秒）：覆盖主进程捕获段（≈0.42s），被窗口 hide 截断属预期 */
+const CAPTURED_REACTION_DURATION = 0.6
+/** 被魔法球放回（fx 域显示动画）反应时长（秒）：弹性回弹 + 落地 Q 弹余韵 */
+const RELEASED_REACTION_DURATION = 0.95
 const HEART_DURATION_MS = 1100 // 单颗心形粒子飘出时长
 const BLUSH_MAX_OPACITY = 0.9 // blush=1 时的实际不透明度
 
@@ -195,6 +199,14 @@ export class PetAnimator {
     } else if (kind === 'look_around') {
       // 张望：只驱动视线/头部扫视（见 update 的 lookAround 段），无弹跳与心形粒子
       this.reaction = { kind, elapsed: 0, duration: LOOK_AROUND_DURATION }
+    } else if (kind === 'captured') {
+      // 被魔法球抓住（fx 域）：体态缩小 + 挣扎抖动（见 update 的捕获段），无弹跳/心形粒子
+      this.reaction = { kind, elapsed: 0, duration: CAPTURED_REACTION_DURATION }
+    } else if (kind === 'released') {
+      // 被魔法球放回（fx 域）：体态从缩小弹性回弹（见 update 的释放段）
+      // + 弹簧给一次落地 Q 弹（与 glb-model 的 releasedReactionPose 观感对齐）
+      this.reaction = { kind, elapsed: 0, duration: RELEASED_REACTION_DURATION }
+      this.springVy -= 200
     }
   }
 
@@ -243,10 +255,15 @@ export class PetAnimator {
     this.springVy += (-180 * this.springY - 11 * this.springVy) * dt
     this.springY += this.springVy * dt
 
-    // ⑤ 即时反应：摸头（包络 + 心形粒子）/ 张望（视线与头部左右扫）
+    // ⑤ 即时反应：摸头（包络 + 心形粒子）/ 张望（视线与头部左右扫）/
+    //    被抓（缩小挣扎）/ 被放（弹性回弹）——魔法球捕获/释放由 fx 域触发
     let reactEnv = 0
     let lookAroundEnv = 0
     let lookAroundSweep = 0
+    let captureEnv = 0
+    let captureShake = 0
+    let releaseEnv = 0
+    let releaseWob = 1
     let hearts: Array<HeartFrame | null> = this.cfg.hearts.anchors.map(() => null)
     if (this.reaction) {
       this.reaction.elapsed += dt
@@ -264,6 +281,16 @@ export class PetAnimator {
         const env = p < FADE ? p / FADE : p > 1 - FADE ? (1 - p) / FADE : 1
         lookAroundEnv = smoothstep(env)
         lookAroundSweep = Math.sin(p * Math.PI * 4) // 两个来回的扫视
+      } else if (this.reaction.kind === 'captured') {
+        // 被抓：0.14s 快速进入缩小态，挣扎抖动幅度缓慢减弱（窗口 hide 时被截断属预期）
+        const tR = this.reaction.elapsed
+        captureEnv = smoothstep(clamp(tR / 0.14, 0, 1)) * (1 - 0.25 * p)
+        captureShake = Math.sin(tR * Math.PI * 2 * 6.4) // 约 6.4Hz 的挣动（输出处乘包络与幅度）
+      } else if (this.reaction.kind === 'released') {
+        // 被放：欠阻尼弹回（0.8 → 过冲 → 1.0，频率约 1.35Hz），与 glb-model 同构
+        const tR = this.reaction.elapsed
+        releaseEnv = Math.exp(-4.2 * tR)
+        releaseWob = Math.cos(tR * Math.PI * 2 * 1.35)
       }
     }
 
@@ -307,10 +334,14 @@ export class PetAnimator {
     const lookX = clamp(p.lookX + 0.65 * lookAroundSweep * lookAroundEnv, -1, 1)
     const lookAroundTilt = 3.2 * lookAroundSweep * lookAroundEnv
 
+    // 魔法球捕获/释放（fx 域）：体态缩放与挣扎抖动（released 的落地弹跳已由弹簧承担）
+    const captureScale = 1 - 0.25 * captureEnv
+    const releaseScale = 1 - 0.2 * releaseEnv * releaseWob
+
     return {
-      scaleX: 1 - 0.013 * breath,
-      scaleY: 1 + 0.026 * breath,
-      rotate: p.tilt + sway + reactSway + lookAroundTilt,
+      scaleX: (1 - 0.013 * breath) * captureScale * releaseScale,
+      scaleY: (1 + 0.026 * breath) * captureScale * releaseScale,
+      rotate: p.tilt + sway + reactSway + lookAroundTilt + captureShake * 5.5 * captureEnv,
       offsetY: p.restOffsetY + this.springY + walkBob,
       eyeRound,
       eyeArc,

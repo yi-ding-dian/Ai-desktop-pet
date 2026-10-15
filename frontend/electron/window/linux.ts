@@ -11,6 +11,16 @@
  *  2. setShape([]) 实测会让窗口输入区为空（彻底收不到任何事件）——"恢复全窗口"必须显式给全窗矩形；
  *  3. screen.getCursorScreenPoint() 为事件驱动缓存：光标离开窗口交互区后返回值冻结
  *     → 不能用于轮询或拖拽跟随，拖拽改为渲染侧 pointermove 事件驱动（见 startDrag/dragMove）。
+ *
+ * 窗口类型实验 type:'toolbar'（2026-10-15 实测，DDE + X11）：
+ *  - 背景：DDE(Dock) 忽略 skipTaskbar——默认(NORMAL)类型下 Dock 会显示宠物窗口格
+ *    （无 .desktop 时呈现为 fallback 图标），与"桌宠不应占 Dock 格子"的产品目标冲突；
+ *  - 结论：**type:'toolbar' 有效**——设置后 Dock 中窗口格消失，且副作用全套复测无破坏：
+ *    透明渲染（窗口背景仍透出桌面）、置顶（_NET_WM_STATE_ABOVE/STAYS_ON_TOP 正常，F10 可切换）、
+ *    点击穿透（setShape 收缩/恢复，hitbox enter/leave 与 clickThrough 切换日志正常）、
+ *    拖拽（窗口位置精确跟随光标）、F9/F10/F11 与 Ctrl+Shift+D 全局快捷键全部正常；
+ *  - Wayland 会话：type 为 X11 概念（xdg-shell 无对应物），在 Wayland 下静默无效，
+ *    不影响既有降级路径（degraded 分支照旧）。
  */
 import { BrowserWindow, screen } from 'electron'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
@@ -38,9 +48,9 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    // 备注（2026-10-15 实测）：DDE(Dock) 忽略 skipTaskbar 属性，Dock 仍会显示窗口——
-    // 用窗口图标（见 main.ts 的 icon 配置）让它显示为兔子头像；若将来要强制不显示，
-    // 可评估 X11 窗口类型 type:'toolbar'（实测副作用未验证，先不启用）
+    // DDE(Dock) 忽略 skipTaskbar 属性，Dock 仍会显示窗口格（2026-10-15 实测）——
+    // type:'toolbar' 实验结论见文件下方"窗口类型实验"注释块
+    type: 'toolbar',
     resizable: false,
     hasShadow: false,
     show: false,

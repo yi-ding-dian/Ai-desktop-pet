@@ -27,9 +27,15 @@ import {
   composePose,
   lookAroundYaw,
   petReactionOffsetY,
+  capturedReactionPose,
+  releasedReactionPose,
   LOOK_AROUND_DURATION,
   PET_REACTION_DURATION,
-  type GlbChannels
+  CAPTURED_REACTION_DURATION,
+  RELEASED_REACTION_DURATION,
+  ZERO_REACTION_POSE,
+  type GlbChannels,
+  type GlbReactionPose
 } from './pose'
 import { FACE_EX, FACE_EY_DOWN, FACE_ORIGIN, FACE_PROBE } from './face/config'
 import { FaceOverlay, type FaceFrame } from './face/overlay'
@@ -442,24 +448,37 @@ export class GlbModelRenderer implements PetRenderer {
       quiverPitch = pose.quiver * (0.62 * Math.sin(this.phaseQuiver1) + 0.38 * Math.sin(this.phaseQuiver2))
     }
 
-    // ---- 即时反应（独立时间轴；pet = 弹跳，look_around = 左右转头） ----
+    // ---- 即时反应（独立时间轴；pet = 弹跳，look_around = 左右转头，
+    //      captured/released = 魔法球捕获/释放姿态（fx 域隐藏/显示动画触发）） ----
     let reactionOffsetY = 0
     let reactionYaw = 0
+    let reactionPose: GlbReactionPose = ZERO_REACTION_POSE
     if (this.reactionT !== null && this.reactionKind !== null) {
       this.reactionT += dt
       if (this.reactionKind === 'pet') {
         reactionOffsetY = petReactionOffsetY(this.reactionT)
         if (this.reactionT >= PET_REACTION_DURATION) this.reactionT = null
-      } else {
+      } else if (this.reactionKind === 'look_around') {
         reactionYaw = lookAroundYaw(this.reactionT)
         if (this.reactionT >= LOOK_AROUND_DURATION) this.reactionT = null
+      } else if (this.reactionKind === 'captured') {
+        reactionPose = capturedReactionPose(this.reactionT)
+        if (this.reactionT >= CAPTURED_REACTION_DURATION) this.reactionT = null
+      } else {
+        // released（联合类型目前仅余此值；未来新增 kind 时在此扩展分支）
+        reactionPose = releasedReactionPose(this.reactionT)
+        if (this.reactionT >= RELEASED_REACTION_DURATION) this.reactionT = null
       }
     }
 
     // ---- 写入根组（缩放围绕脚底；反应叠加在阻尼姿态之上） ----
-    root.position.y = this.cur.offsetY + motionOffsetY + reactionOffsetY
-    root.rotation.set(this.cur.pitch + motionPitch + quiverPitch, this.cur.yaw + reactionYaw, this.cur.roll + motionRoll)
-    root.scale.setScalar(this.cur.scale * breathScale)
+    root.position.y = this.cur.offsetY + motionOffsetY + reactionOffsetY + reactionPose.offsetY
+    root.rotation.set(
+      this.cur.pitch + motionPitch + quiverPitch + reactionPose.pitch,
+      this.cur.yaw + reactionYaw + reactionPose.yaw,
+      this.cur.roll + motionRoll + reactionPose.roll
+    )
+    root.scale.setScalar(this.cur.scale * breathScale * reactionPose.scale)
   }
 
   /**

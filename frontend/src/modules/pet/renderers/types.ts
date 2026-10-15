@@ -21,6 +21,8 @@ import type { PetState } from '../../../shared/protocol'
 export type PetReactionKind =
   | 'pet' // 摸头
   | 'look_around' // 自主行为 look_around：原地张望（左右扫视 + 头部轻摆）
+  | 'captured' // 被魔法球抓住（隐藏动画触发：缩小 + 轻微旋转 + 挣扎抖动）
+  | 'released' // 被魔法球放回原位（显示动画触发：从缩小弹回 + 落地 Q 弹）
 // 预留扩展：'poke'（戳）/ 'hug' / 'drag_pickup' 等
 
 /** 渲染器标识（日志与调试展示） */

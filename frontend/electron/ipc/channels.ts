@@ -42,8 +42,39 @@ export const IPC_EVENTS = {
   /** 后端子进程状态变化（payload: BackendStatusPayload） */
   BACKEND_STATUS_CHANGED: 'backend:status-changed',
   /** 后端就绪（payload: BackendReadyPayload，含 WS 端口与 hello token） */
-  BACKEND_READY: 'backend:ready'
+  BACKEND_READY: 'backend:ready',
+  /** 魔法球动画：宠物遭到捕获/释放（payload: FxPetReactionPayload；只发宠物窗口，渲染侧播 captured/released 反应） */
+  PET_FX_REACTION: 'pet:fx-reaction'
 } as const
+
+/** 通道名：魔法球捕获动画（fx 域：主进程 ↔ fx 动画页） */
+export const IPC_FX = {
+  /** fx 动画页 → 主：动画页已就绪（首帧可接收指令） */
+  READY: 'fx:ready',
+  /** 主 → fx 动画页：动画指令（payload: FxCommand，单通道多指令类型） */
+  COMMAND: 'fx:command'
+} as const
+
+/**
+ * fx 动画指令（主进程为指挥，fx 球窗页面只负责"画"；球固定在球窗中心，
+ * 飞行 = 主进程移动球窗本身——指令不需要坐标，只有表现状态）。
+ */
+export type FxCommand =
+  | { type: 'reset' }
+  /** 进入飞行表现（拖尾/公转星点；cargo=true 时球内载宠物剪影——去程空载、回程携带） */
+  | { type: 'flight'; cargo: boolean }
+  /** 捕获爆闪：球心爆闪并吸附脉动（球窗原地停留 holdMs，期间宠物窗口缩小） */
+  | { type: 'capture-burst'; holdMs: number }
+  /** 释放爆闪：球炸开、光芒散开（显示方向） */
+  | { type: 'release-burst' }
+  /** 整层淡出（durationMs 后主进程隐藏球窗） */
+  | { type: 'fade-out'; durationMs: number }
+
+/** 宠物反应事件载荷（主 → 宠物窗口渲染进程） */
+export interface FxPetReactionPayload {
+  /** captured = 被魔法球抓住（隐藏动画）；released = 被放回原位（显示动画） */
+  kind: 'captured' | 'released'
+}
 
 /** 后端子进程状态（设计文档 §5.2 状态机；IPC 广播取值） */
 export type BackendState = 'starting' | 'ready' | 'failed' | 'stopped'
@@ -119,6 +150,19 @@ export interface PetBridgeApi {
   system: {
     /** 系统空闲秒数（用户多久没有键鼠操作） */
     getIdleSeconds(): Promise<number>
+  }
+  /**
+   * 魔法球捕获动画（fx 域）：
+   *  - fx 动画页（fx.html）用 ready/onCommand 与主进程通信；
+   *  - 宠物窗口用 onPetReaction 接收"被抓/被放"反应事件。
+   */
+  fx: {
+    /** fx 动画页专用：通知主进程"动画页已就绪，可接收指令" */
+    ready(): void
+    /** fx 动画页专用：订阅主进程动画指令；返回取消订阅函数 */
+    onCommand(cb: (cmd: FxCommand) => void): () => void
+    /** 宠物窗口专用：订阅"被抓/被放"反应事件（隐藏/显示动画触发）；返回取消订阅函数 */
+    onPetReaction(cb: (payload: FxPetReactionPayload) => void): () => void
   }
   /** 后端子进程（设计文档 §5.2）：状态订阅 + 快照查询；渲染进程不直接管理进程 */
   backend: {

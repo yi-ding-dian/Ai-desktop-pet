@@ -31,6 +31,17 @@ extraResources:
     filter:
       - '**/*'
       - '!**/__pycache__/**'
+  # 托盘图标 → resources/tray-icon.png（build/ 是构建元数据目录、默认不进安装包，
+  # 托盘图标必须走 extraResources；运行期由 electron/tray 以 process.resourcesPath/tray-icon.png 定位。
+  # 直接从 build/icon.png 取——图标素材唯一源，更新即随包生效，无需手工同步副本）
+  - from: build/icon.png
+    to: tray-icon.png
+  # 托盘锚点定位模板（fx 域：抓屏+像素匹配找兔头图标的模板）→ resources/tray-anchor-template.png
+  # 运行期由 electron/fx/anchor.ts 以 process.resourcesPath/tray-anchor-template.png 定位；
+  # 素材是从实测截图裁出的真实渲染托盘图标（24×24，中心=图标中心）。
+  # ⚠ 托盘图标外观更新后此模板会失配（自动定位回退到托盘图标素材/兜底坐标），需重新裁制（见 fx-report.md）
+  - from: resources/tray-anchor-template.png
+    to: tray-anchor-template.png
 linux:
   icon: build/icon.png
   target:

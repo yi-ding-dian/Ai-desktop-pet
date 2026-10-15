@@ -239,3 +239,70 @@ export function lookAroundYaw(t: number): number {
   const p = t / LOOK_AROUND_DURATION
   return 0.14 * Math.sin(p * Math.PI * 2) * Math.sin(p * Math.PI)
 }
+
+// ------------------------------------------------------------------ 魔法球捕获/释放反应（fx 域）
+
+/** 反应姿态增量（叠加在阻尼姿态/动态起伏之上；全部为 0/1 = 无反应） */
+export interface GlbReactionPose {
+  /** 竖直偏移增量（世界单位） */
+  offsetY: number
+  /** 前倾增量（弧度） */
+  pitch: number
+  /** 转向增量（弧度） */
+  yaw: number
+  /** 侧倾增量（弧度） */
+  roll: number
+  /** 缩放增量（1 = 不变） */
+  scale: number
+}
+
+/** 零反应（无反应进行中时的默认值；模块内复用同一对象，调用方只读） */
+export const ZERO_REACTION_POSE: GlbReactionPose = { offsetY: 0, pitch: 0, yaw: 0, roll: 0, scale: 1 }
+
+/** 平滑阶跃（0→1，端点导数为零） */
+function smoothstep01(x: number): number {
+  const t = x < 0 ? 0 : x > 1 ? 1 : x
+  return t * t * (3 - 2 * t)
+}
+
+/** captured 反应总时长（秒）：覆盖捕获缩小段（主进程 captureMs≈0.48s，取略长保证全程有表现） */
+export const CAPTURED_REACTION_DURATION = 0.6
+
+/**
+ * 被抓反应（magic ball 捕获触发）：缩小 + 轻微前倾 + 挣扎抖动（yaw/roll 双频反相振荡）。
+ * 窗口本身在同步缩小/移动（主进程），这里表现"蜷缩 + 挣动"的叠加姿态。
+ * 注意：窗口 hide 可能在该时长之前发生（主进程时序），被截断是预期行为。
+ */
+export function capturedReactionPose(t: number): GlbReactionPose {
+  if (t < 0 || t >= CAPTURED_REACTION_DURATION) return ZERO_REACTION_POSE
+  const inP = smoothstep01(t / 0.14) // 快速进入（0.14s 内到位）
+  const struggle = inP * (1 - 0.25 * (t / CAPTURED_REACTION_DURATION)) // 挣扎幅度缓慢减弱
+  return {
+    offsetY: 0.05 * inP * Math.exp(-1.6 * t) - 0.02 * inP, // 先被拎起一点、随即被按进"引力场"
+    pitch: 0.06 * inP, // 蜷缩前倾
+    yaw: 0.1 * struggle * Math.sin(t * Math.PI * 2 * 5.3), // 左右挣动（约 5Hz）
+    roll: 0.13 * struggle * Math.sin(t * Math.PI * 2 * 7.1 + 0.9), // 侧倾挣动（约 7Hz，与 yaw 反相）
+    scale: 1 - 0.14 * inP // 蜷缩缩小（叠加在窗口缩放的"体量感"上）
+  }
+}
+
+/** released 反应总时长（秒）：与主进程 releaseMs≈0.52s + 落地 Q 弹余韵匹配 */
+export const RELEASED_REACTION_DURATION = 0.95
+
+/**
+ * 被放回反应（magic ball 释放触发）：从缩小态弹性放大回弹（过冲到 ~1.05 再回落）
+ * + 落地 Q 弹（两次衰减弹跳）+ 落稳前左右微摆——"被放回地上、站定"的观感。
+ */
+export function releasedReactionPose(t: number): GlbReactionPose {
+  if (t < 0 || t >= RELEASED_REACTION_DURATION) return ZERO_REACTION_POSE
+  const env = Math.exp(-4.2 * t)
+  return {
+    // scale：欠阻尼弹回 0.8 → 过冲 → 1.0（频率约 1.35Hz）
+    scale: 1 - 0.2 * env * Math.cos(t * Math.PI * 2 * 1.35),
+    // 落地弹跳：初始"从球里被托起"（+0.05 快速消去）+ 两次衰减弹跳
+    offsetY: 0.05 * Math.exp(-6 * t) + 0.1 * Math.exp(-3.0 * t) * Math.abs(Math.sin(t * Math.PI * 2 * 1.6)),
+    pitch: 0.06 * Math.exp(-3.2 * t), // 低头看地、随即起身
+    yaw: 0,
+    roll: 0.08 * Math.exp(-3.5 * t) * Math.sin(t * Math.PI * 2 * 1.2) // 落稳前左右微摆
+  }
+}

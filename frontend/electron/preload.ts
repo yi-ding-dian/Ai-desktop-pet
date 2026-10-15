@@ -6,9 +6,12 @@ import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC,
   IPC_EVENTS,
+  IPC_FX,
   type BackendReadyPayload,
   type BackendSnapshot,
   type BackendStatusPayload,
+  type FxCommand,
+  type FxPetReactionPayload,
   type PetBridgeApi,
   type WindowDebugState
 } from './ipc/channels'
@@ -82,6 +85,29 @@ const api: PetBridgeApi = {
   system: {
     getIdleSeconds(): Promise<number> {
       return ipcRenderer.invoke(IPC.SYSTEM_GET_IDLE_SECONDS)
+    }
+  },
+
+  fx: {
+    ready(): void {
+      ipcRenderer.send(IPC_FX.READY)
+    },
+
+    onCommand(cb: (cmd: FxCommand) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, cmd: FxCommand): void => cb(cmd)
+      ipcRenderer.on(IPC_FX.COMMAND, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_FX.COMMAND, listener)
+      }
+    },
+
+    onPetReaction(cb: (payload: FxPetReactionPayload) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, payload: FxPetReactionPayload): void =>
+        cb(payload)
+      ipcRenderer.on(IPC_EVENTS.PET_FX_REACTION, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.PET_FX_REACTION, listener)
+      }
     }
   },
 
