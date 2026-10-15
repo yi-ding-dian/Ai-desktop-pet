@@ -2,7 +2,7 @@
 
 本目录是 llm 域内的提示词资产：
 
-    persona.md            ← 默认人格（"小豆"）
+    persona.md            ← 默认人格（"小兔"）
     emotion_directive.md  ← 情绪指令（要求 LLM 用 <emo:xxx> 切换情绪）
     memory_extract.md     ← 记忆提取（后台任务；P3 记忆与持久化）
 
@@ -24,7 +24,7 @@ _PROMPTS_DIR = Path(__file__).resolve().parent
 
 # 兜底人格：persona.md 缺失/不可读时使用，保证服务不因提示词资产缺失而启动失败
 _FALLBACK_PERSONA = (
-    "你是「小豆」，一只活泼亲近的 AI 桌面宠物，住在用户的电脑桌面上。"
+    "你是「小兔」，一只活泼亲近的兔子桌宠，住在用户的电脑桌面上。"
     "用口语化、简洁的中文和用户聊天，每次回复 1~3 句话。"
 )
 

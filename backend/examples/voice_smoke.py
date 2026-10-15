@@ -78,7 +78,7 @@ async def smoke_provider(save_dir: Path) -> None:
 
     print("\n[A] Edge TTS provider 直连冒烟")
     provider = EdgeTTSProvider(voice="zh-CN-XiaoxiaoNeural")
-    text = "你好呀，我是小豆。"
+    text = "你好呀，我是小兔。"
     t0 = time.monotonic()
     audio = await provider.synthesize(text)
     cost = time.monotonic() - t0

@@ -21,7 +21,7 @@ from backend.shared.errors import LlmError, TtsError, TtsErrorCode
 # 与 ECHO_CHUNK_SIZE=4 配合时，第一个标签 <emo:happy> 会被切成
 # "。<em" + "o:ha" + "ppy>" 三个片段 —— 故意覆盖「标签跨片段」边界。
 ECHO_REPLY = (
-    "你好呀！我是小豆。<emo:happy>今天过得怎么样？"
+    "你好呀！我是小兔。<emo:happy>今天过得怎么样？"
     "<emo:thinking>唔……让我想想。<emo:neutral>我随时都在这里陪你哦。"
 )
 ECHO_CHUNK_SIZE = 4

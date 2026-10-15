@@ -77,7 +77,7 @@ def test_pipeline_without_memory_keeps_single_system(tmp_path) -> None:
     pipeline = ChatPipeline(provider=ScriptedProvider([]))
     messages = build_messages(pipeline, SessionManager(), "你好")
     assert [m.role for m in messages] == ["system", "user"]
-    assert "小豆" in messages[0].content
+    assert "小兔" in messages[0].content
 
 
 def test_pipeline_injects_profile_and_memories(tmp_path) -> None:

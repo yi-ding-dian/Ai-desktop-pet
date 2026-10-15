@@ -94,14 +94,14 @@ def run_turn(
 
 def test_sentences_and_audio_frames_in_order() -> None:
     tts = FakeTTSProvider()
-    provider = ScriptedProvider(["你好呀！我是小豆。今天天气不错。"])
+    provider = ScriptedProvider(["你好呀！我是小兔。今天天气不错。"])
     sink = run_turn(provider, voice=VoiceOut(tts))
 
     # 分句：三句（末句在流结束时 flush）；seq/index 从 0 递增且一一对应
     sentences = sink.events("sentence")
     assert [(d["index"], d["text"]) for d in sentences] == [
         (0, "你好呀！"),
-        (1, "我是小豆。"),
+        (1, "我是小兔。"),
         (2, "今天天气不错。"),
     ]
 

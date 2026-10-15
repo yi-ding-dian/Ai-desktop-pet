@@ -85,8 +85,8 @@ def test_terminator_split_across_chunks() -> None:
 
 def test_every_boundary_split_into_chunks() -> None:
     """逐字符喂入（最极端切分）：输出与整块喂入一致。"""
-    text = "你好呀！我是小豆。今天过得怎么样？"
-    assert feed_flush(list(text)) == feed_flush([text]) == ["你好呀！", "我是小豆。", "今天过得怎么样？"]
+    text = "你好呀！我是小兔。今天过得怎么样？"
+    assert feed_flush(list(text)) == feed_flush([text]) == ["你好呀！", "我是小兔。", "今天过得怎么样？"]
 
 
 def test_feed_empty_chunk_is_noop() -> None:
@@ -102,7 +102,7 @@ def test_feed_empty_chunk_is_noop() -> None:
 
 def test_weak_boundary_short_fragment_merged() -> None:
     """逗号处片段过短（<6 字）：不切，与后续合并（防过碎）。"""
-    assert feed_flush(["你好，", "我叫小豆。"]) == ["你好，我叫小豆。"]
+    assert feed_flush(["你好，", "我叫小兔。"]) == ["你好，我叫小兔。"]
 
 
 def test_weak_boundary_long_fragment_cut() -> None:

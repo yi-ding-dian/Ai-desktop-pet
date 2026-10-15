@@ -31,7 +31,7 @@ mode  = "follow"   # follow=复用对话服务商 / custom=单独配置
 model = ""
 
 [pet]
-name     = "小豆"
+name     = "小兔"
 scale    = 1.0
 idle_fps = 10
 
@@ -77,7 +77,7 @@ class EmbeddingConfig(BaseModel):
 class PetConfig(BaseModel):
     """宠物外观配置。"""
 
-    name: str = "小豆"
+    name: str = "小兔"
     scale: float = 1.0
     idle_fps: int = 10
 

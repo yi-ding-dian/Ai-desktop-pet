@@ -122,7 +122,7 @@ def test_tokens_join_to_full_text_without_tag_residue() -> None:
 
     assert full == reply_end["full_text"]
     assert "<emo" not in full and ">" not in full
-    assert reply_end["full_text"] == "你好呀！我是小豆。今天过得怎么样？唔……让我想想。我随时都在这里陪你哦。"
+    assert reply_end["full_text"] == "你好呀！我是小兔。今天过得怎么样？唔……让我想想。我随时都在这里陪你哦。"
 
 
 def test_emotion_sequence_and_message_id_consistency() -> None:
@@ -152,10 +152,10 @@ def test_emotion_events_interleaved_in_order() -> None:
 
 def test_missing_emotion_tags_defaults_to_neutral() -> None:
     """模型不输出标签时：不报错，补一个显式 neutral（默认情绪）。"""
-    sink, _ = run_turn(ScriptedProvider(["你好呀", "，我是小豆。"]))
+    sink, _ = run_turn(ScriptedProvider(["你好呀", "，我是小兔。"]))
     emotions = [d["emotion"] for d in sink.data_of("emotion")]
     assert emotions == ["neutral"]
-    assert sink.data_of("reply_end")[0]["full_text"] == "你好呀，我是小豆。"
+    assert sink.data_of("reply_end")[0]["full_text"] == "你好呀，我是小兔。"
 
 
 def test_neutral_not_appended_when_tags_present() -> None:
@@ -186,7 +186,7 @@ def test_multi_turn_history_is_kept_and_replayed() -> None:
 
     # 第一轮：system + 本轮用户输入
     assert [m.role for m in first_request] == ["system", "user"]
-    assert "小豆" in first_request[0].content  # system 含人格
+    assert "小兔" in first_request[0].content  # system 含人格
     assert first_request[1].content == "第一轮问题"
 
     # 第二轮：system + 第一轮 user/assistant + 第二轮 user

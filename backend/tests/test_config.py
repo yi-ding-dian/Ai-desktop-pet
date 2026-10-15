@@ -19,7 +19,7 @@ def test_generates_default_template_when_missing(tmp_path: Path) -> None:
     assert cfg.llm.model == "deepseek-flash"
     assert cfg.llm.base_url == "http://192.168.0.8:3000/v1"
     assert cfg.llm.max_tokens == 768
-    assert cfg.pet.name == "小豆"
+    assert cfg.pet.name == "小兔"
     assert cfg.voice.enabled is True  # Phase 2：语音默认开启（失败自动降级）
     assert cfg.voice.provider == "edge"
     assert cfg.voice.voice == "zh-CN-XiaoxiaoNeural"

@@ -221,7 +221,7 @@ async def run_smoke(port: int, token: str) -> None:
 
         # 3) 第一轮：问名字（任务书指定的冒烟问句）
         text1 = await one_turn("你好，你叫什么名字", name="第一轮")
-        assert "小豆" in text1 or "豆" in text1, f"回复里没提到名字：{text1!r}"
+        assert "小兔" in text1 or "兔" in text1, f"回复里没提到名字：{text1!r}"
 
         # 4) 第二轮：告知个人信息（多轮记忆前置）
         await one_turn("我叫张三，我最喜欢喝拿铁咖啡，请记住哦。", name="第二轮")

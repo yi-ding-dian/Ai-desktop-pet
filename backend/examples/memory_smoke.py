@@ -214,7 +214,7 @@ async def run_smoke(data_dir: Path) -> int:
                     if evt["type"] == "state" and evt["data"]["state"] == "idle":
                         break
                 reply = assert_turn_shape(events, name=name)
-                print(f"[对话-{name}] 小豆：{reply}")
+                print(f"[对话-{name}] 小兔：{reply}")
                 return reply
 
             await one_turn(
@@ -289,7 +289,7 @@ async def run_smoke(data_dir: Path) -> int:
                 if evt["type"] == "state" and evt["data"]["state"] == "idle":
                     break
             reply = assert_turn_shape(events, name="第三轮（重启后）")
-            print(f"[4b] 小豆：{reply}")
+            print(f"[4b] 小兔：{reply}")
             recalled = "李雷" in reply
             print(f"[4b] 回复{'含' if recalled else '不含'}名字「李雷」{'✔（记忆注入生效的最强证据）' if recalled else '（观察项，见日志证据）'}")
     finally:

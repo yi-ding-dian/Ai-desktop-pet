@@ -14,7 +14,7 @@ from backend.modules.llm.prompts import (
 
 def test_system_prompt_contains_persona_and_directive() -> None:
     prompt = build_system_prompt()
-    assert "小豆" in prompt  # 人格设定
+    assert "小兔" in prompt  # 人格设定
     assert "情绪" in prompt  # 情绪指令
 
 
