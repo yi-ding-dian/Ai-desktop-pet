@@ -21,11 +21,13 @@ class ErrorCode(StrEnum):
     VERSION_MISMATCH = "VERSION_MISMATCH"  # 协议版本不匹配
     INTERNAL = "INTERNAL"                  # 服务端内部错误
     TTS_FAILED = "TTS_FAILED"              # 语音合成连续失败，本次连接内已停用 TTS（非 fatal）
+    CONFIG_INVALID = "CONFIG_INVALID"      # set_config 字段校验不过（message 说明具体原因）
 
 
 class LlmErrorCode(StrEnum):
     """LLM 调用错误码（经 error 事件透传给前端展示）。"""
 
+    LLM_NOT_CONFIGURED = "LLM_NOT_CONFIGURED"  # 还没配置 AI 服务（base_url 为空，首启引导）
     LLM_NO_KEY = "LLM_NO_KEY"            # 未配置 API key（引导用户去设置面板）
     LLM_AUTH = "LLM_AUTH"                # key 无效 / 无权限（401/403）
     LLM_TIMEOUT = "LLM_TIMEOUT"          # 请求超时

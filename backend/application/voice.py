@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Protocol
+from typing import Callable, Protocol
 
 from loguru import logger
 
@@ -47,7 +47,12 @@ _LOG_EXCERPT = 16
 
 
 class VoiceOut:
-    """连接级语音出站：TTS provider + 连续失败降级状态。"""
+    """连接级语音出站：TTS provider + 连续失败降级状态。
+
+    ``enabled``（可选注入，§7.6.3 热重装配）：读"当前语音是否启用"的回调——
+    设置面板把 ``[voice].enabled`` 关掉后，**已建立的连接**下一轮即刻静默
+    （无需重连）；缺省 None 表示恒启用，行为与旧版一致。
+    """
 
     def __init__(
         self,
@@ -55,17 +60,21 @@ class VoiceOut:
         *,
         synth_timeout: float = SYNTH_TIMEOUT,
         fail_threshold: int = FAIL_THRESHOLD,
+        enabled: Callable[[], bool] | None = None,
     ) -> None:
         self._provider = provider
         self._synth_timeout = synth_timeout
         self._fail_threshold = fail_threshold
+        self._enabled = enabled
         self._fail_streak = 0
         self._disabled = False
 
     @property
     def available(self) -> bool:
-        """TTS 是否可用（未被连续失败停用）。"""
-        return not self._disabled
+        """TTS 是否可用：未被连续失败停用，且运行时开关（配置热更新）仍为启用。"""
+        if self._disabled:
+            return False
+        return self._enabled is None or self._enabled()
 
     @property
     def disabled(self) -> bool:

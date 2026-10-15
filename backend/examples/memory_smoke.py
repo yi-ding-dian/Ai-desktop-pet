@@ -73,7 +73,7 @@ def write_smoke_config(data_dir: Path) -> None:
 
         with USER_CONFIG_PATH.open("rb") as f:
             llm = tomllib.load(f).get("llm", {})
-    base_url = llm.get("base_url", "http://192.168.0.8:3000/v1")
+    base_url = llm.get("base_url") or ""  # 空 = 未配置：冒烟会以 LLM_NOT_CONFIGURED 失败并提示
     model = llm.get("model", "deepseek-flash")
     temperature = llm.get("temperature", 0.8)
     max_tokens = llm.get("max_tokens", 768)

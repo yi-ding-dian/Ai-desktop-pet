@@ -35,6 +35,7 @@ from backend.modules.memory.extractor import (
 )
 from backend.modules.memory.profile import ProfileStore
 from backend.modules.memory.store import MemoryStore
+from backend.shared.config import MemoryConfig
 
 #: 提取调用参数（低温保证 JSON 稳定；推理型模型思考也消耗 token，给足额度）
 COMPLETE_TEMPERATURE = 0.2
@@ -110,6 +111,22 @@ class MemoryService:
             return
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+    async def update_config(self, config: MemoryConfig) -> None:
+        """热更新配置（设置面板保存后由装配层调用，§7.6.3）。
+
+        - ``enabled`` 开关：启动 / 停止后台扫描循环（启动幂等）；
+        - ``idle_seconds`` / ``check_interval_seconds``：扫描循环的 sleep 与空闲
+          判定都在每轮动态读这两个实例字段，换值即生效（无需重建服务）；
+        - 对话模型（provider）经装配层的热替换引用跟随更新，此处无需感知。
+        """
+        self._idle_seconds = max(1.0, float(config.idle_seconds))
+        self._check_interval = max(0.5, float(config.check_interval_seconds))
+        if config.enabled:
+            self.start()  # 幂等：循环已在跑则原样返回
+            return
+        await self.stop()
+        logger.info("记忆提取服务配置更新：已停用（enabled=false）")
 
     # ---------- 提取 ----------
 

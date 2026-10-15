@@ -15,6 +15,7 @@ import pytest
 from backend.application.chat_pipeline import ChatPipeline
 from backend.application.session import SessionManager
 from backend.modules.chat.emotion import EmotionPart, EmotionTagParser, TextPart
+from backend.modules.llm.openai_compat import OpenAICompatProvider
 from backend.modules.llm.provider import Chunk
 from backend.shared.errors import LlmError, LlmErrorCode
 from fakes import (
@@ -196,6 +197,40 @@ def test_multi_turn_history_is_kept_and_replayed() -> None:
     assert second_request[3].content == "第二轮问题"
 
 
+# ---------------------------------------------------------------- 宠物名字注入（§7.6.3）
+
+
+def test_pet_name_injected_per_turn_and_follows_config_change() -> None:
+    """pet_name 回调每轮动态读：设置面板改名保存后，下一轮 system 即注新名。"""
+    provider = ScriptedProvider(["收到"])
+    sessions = SessionManager()
+    current_name = ["小兔"]
+    pipeline = ChatPipeline(provider=provider, pet_name=lambda: current_name[0])
+
+    async def scenario() -> None:
+        session = sessions.start("s")
+        sink = FakeSink()
+        await pipeline.run_turn(sink, session=session, user_text="你叫什么名字")
+        current_name[0] = "毛毛"  # 模拟 set_config 保存新名字（配置热更新）
+        await pipeline.run_turn(sink, session=session, user_text="再说一次")
+
+    asyncio.run(scenario())
+
+    first_system = provider.seen_messages[0][0]
+    second_system = provider.seen_messages[1][0]
+    assert first_system.role == "system" and second_system.role == "system"
+    assert "你的名字叫「小兔」" in first_system.content
+    assert "你的名字叫「毛毛」" in second_system.content
+    assert "你的名字叫「小兔」" not in second_system.content
+
+
+def test_no_pet_name_callback_keeps_old_prompt() -> None:
+    """未注入回调（旧装配 / 测试替身场景）：system 里没有名字注入行（零回归）。"""
+    provider = ScriptedProvider(["嗯"])
+    run_turn(provider)
+    assert "你的名字叫" not in provider.seen_messages[0][0].content
+
+
 def test_interrupted_turn_records_partial_assistant_text() -> None:
     """中断后：已产出的半截回复进入历史（用户已看到），下一轮可见。"""
     provider = ScriptedProvider(["第一段", "第二段", "第三段"], delay=0.05)
@@ -253,6 +288,25 @@ def test_llm_error_at_start_no_content() -> None:
     session = sessions.get("test")
     assert session is not None
     assert [m.role for m in session.recent_messages()] == ["user"]
+
+
+def test_unconfigured_service_reports_guidance_error() -> None:
+    """未配置 AI 服务（base_url 空，首启引导）：明确引导错误、正常收尾不卡 thinking。
+
+    真 provider 直连路径（非替身）：空地址在发请求前即报 LLM_NOT_CONFIGURED，
+    不是网络层模糊错误；前端能据此引导用户去设置里选服务商。
+    """
+    provider = OpenAICompatProvider(
+        base_url="", model="m", key_provider=lambda: "k-0123456789"
+    )
+    sink, _ = run_turn(provider)
+
+    types = sink.types()
+    assert types[0] == "state" and types[1] == "reply_start"
+    assert types[-3:] == ["reply_end", "error", "state"]
+    err = sink.data_of("error")[0]
+    assert err["code"] == "LLM_NOT_CONFIGURED"
+    assert "设置" in err["message"]  # 引导去设置里选服务商
 
 
 # ---------------------------------------------------------------- Echo 分片性质

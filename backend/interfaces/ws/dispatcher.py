@@ -13,6 +13,7 @@ from starlette.websockets import WebSocketState
 
 from backend.application.chat_pipeline import ChatPipeline
 from backend.application.session import SessionManager
+from backend.application.settings_service import ConfigInvalid, SettingsService
 from backend.interfaces.ws.auth import verify_token
 from backend.interfaces.ws.protocol import (
     PROTOCOL_VERSION,
@@ -23,6 +24,8 @@ from backend.interfaces.ws.protocol import (
     HelloData,
     LoadHistoryData,
     PetEventData,
+    SetConfigData,
+    TestLlmData,
     UserMessageData,
 )
 from backend.shared.errors import ErrorCode, ProtocolError
@@ -112,12 +115,15 @@ def build_dispatcher(
     app_version: str,
     engine: BehaviorEngine | None = None,
     history: HistoryStore | None = None,
+    settings: SettingsService | None = None,
 ) -> Dispatcher:
     """装配默认事件路由（interfaces → application 的唯一接线点）。
 
     ``engine``：自主行为引擎（Phase 3，可为 None——未装配时 pet_event /
     behavior_done / env_update 走惰性兜底分支，不阻断其余事件）。
     ``history``：会话历史库（P3，可为 None——load_history 退化为空历史回填）。
+    ``settings``：设置面板用例（§7.6，可为 None——未装配时 get_config /
+    set_config / test_llm 走 NOT_IMPLEMENTED 兜底，与旧版行为一致）。
     """
     dispatcher = Dispatcher()
 
@@ -248,6 +254,42 @@ def build_dispatcher(
         if engine is not None:
             engine.update_env(data)
 
+    # ---------- 设置面板（§7.6；未装配 settings 时不注册，走 NOT_IMPLEMENTED） ----------
+
+    async def on_get_config(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """拉取配置快照（§3.2 get_config → §3.3 config）：key 以掩码返回，绝不回明文。"""
+        assert settings is not None  # 仅在装配了 settings 时注册（见下方注册块）
+        await ctx.send_event("config", settings.snapshot(), reply_to=msg.envelope.id)
+
+    async def on_set_config(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """更新配置（§7.6.3）：校验 → key 入 keyring + 写回 toml → 热重装配 → config 回执。
+
+        - 字段校验失败：error{code:"CONFIG_INVALID", message:具体原因}，不改任何状态；
+        - 成功：推 `config`（新快照）作回执，reply_to 配对请求。
+        """
+        assert settings is not None
+        data = cast(SetConfigData, msg.data)
+        try:
+            snapshot = await settings.apply_patch(data.patch)
+        except ConfigInvalid as exc:
+            await ctx.send_error(
+                ErrorCode.CONFIG_INVALID, exc.message, reply_to=msg.envelope.id
+            )
+            return
+        await ctx.send_event("config", snapshot, reply_to=msg.envelope.id)
+
+    async def on_test_llm(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """测试连接（§3.2 test_llm → §3.3 llm_test_result）：
+
+        最小 chat 请求验证鉴权与地址 + 尽力拉 /models；失败 message 说明具体原因。
+        """
+        assert settings is not None
+        data = cast(TestLlmData, msg.data)
+        payload = await settings.test_llm(
+            base_url=data.base_url, model=data.model, key=data.key
+        )
+        await ctx.send_event("llm_test_result", payload, reply_to=msg.envelope.id)
+
     dispatcher.register("ping", on_ping)
     dispatcher.register("hello", on_hello)
     dispatcher.register("user_message", on_user_message)
@@ -256,4 +298,8 @@ def build_dispatcher(
     dispatcher.register("pet_event", on_pet_event)
     dispatcher.register("behavior_done", on_behavior_done)
     dispatcher.register("env_update", on_env_update)
+    if settings is not None:
+        dispatcher.register("get_config", on_get_config)
+        dispatcher.register("set_config", on_set_config)
+        dispatcher.register("test_llm", on_test_llm)
     return dispatcher

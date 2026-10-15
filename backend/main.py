@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import asyncio
-import functools
 import json
 import os
 import secrets
@@ -27,16 +26,15 @@ from loguru import logger
 from backend import __version__
 from backend.application.chat_pipeline import ChatPipeline
 from backend.application.memory_service import MemoryService
+from backend.application.runtime import Runtime
 from backend.application.session import SessionManager
-from backend.application.voice import VoiceOut
+from backend.application.settings_service import SettingsService
 from backend.interfaces.ws.dispatcher import build_dispatcher
 from backend.interfaces.ws.server import create_app
 from backend.modules.behavior import BehaviorEngine
 from backend.modules.chat.history import HistoryStore
-from backend.modules.llm.openai_compat import OpenAICompatProvider
 from backend.modules.memory.profile import ProfileStore
 from backend.modules.memory.store import MemoryStore
-from backend.modules.voice.tts import create_tts_provider
 from backend.shared.config import load_config
 from backend.shared.db import connect_db, get_db_path
 from backend.shared.logging import setup_logging
@@ -71,45 +69,33 @@ def main() -> int:
 
     # 会话管理由 HistoryStore 支撑：进程重启后 load_history 可回填、历史不丢
     sessions = SessionManager(store=history_store)
-    # BYOK：base_url/model/采样参数来自 config.toml，key 走 shared.secrets 读取链（惰性）
-    provider = OpenAICompatProvider(
-        base_url=app_config.llm.base_url,
-        model=app_config.llm.model,
-        temperature=app_config.llm.temperature,
-        max_tokens=app_config.llm.max_tokens,
-        key_provider=get_llm_key,
-    )
-    pipeline = ChatPipeline(provider=provider, memories=memory_store, profile=profile_store)
+
+    # 运行时可重装配控制面（§7.6.3）：设置面板保存配置后由 Runtime 热更各模块；
+    # LLM provider 经可热替换的槽（LlmSlot）被流水线/记忆提取/测试连接共享，
+    # base_url/model/采样参数热更、key 经读取链惰性获取（keyring 更新即时生效）
+    runtime = Runtime(app_config)
     logger.info(
         "LLM 装配：base_url={} model={} key={}",
-        app_config.llm.base_url,
+        app_config.llm.base_url or "(未配置，聊天时引导去设置)",
         app_config.llm.model,
         mask_secret(get_llm_key()),  # 只记掩码，绝不记明文
     )
 
-    # 语音链路（Phase 2）：按配置装配 TTS provider；未知 provider 记日志降级，
-    # 不阻断启动（语音是旁路能力，失败不影响对话主链路）
-    tts_provider = None
-    if app_config.voice.enabled:
-        try:
-            tts_provider = create_tts_provider(
-                provider=app_config.voice.provider, voice=app_config.voice.voice
-            )
-        except ValueError as exc:
-            logger.warning("语音装配失败，本次运行不启用 TTS：{}", exc)
+    pipeline = ChatPipeline(
+        provider=runtime.llm,
+        memories=memory_store,
+        profile=profile_store,
+        pet_name=runtime.pet_name,  # 每轮动态注入 pet.name（§7.6.3 改名即生效）
+    )
+
+    # 语音链路（Phase 2）：按配置装配 TTS provider 进热替换槽；未知 provider 记
+    # 日志降级，不阻断启动（语音是旁路能力，失败不影响对话主链路）；
     # 每条连接一个连接级语音出站（失败降级状态随连接存活，任务书第 5 条）
-    voice_factory = functools.partial(VoiceOut, tts_provider) if tts_provider else None
-    if voice_factory is not None:
-        logger.info(
-            "TTS 装配：provider={} voice={}",
-            app_config.voice.provider,
-            app_config.voice.voice,
-        )
-    else:
-        logger.info("语音未启用（config.toml [voice].enabled=false 或装配失败）")
+    runtime.apply_voice(app_config)
 
     # 自主行为引擎（Phase 3）：全局单例，决策行为并下发指令；无连接时自动跳过
     behavior_engine = BehaviorEngine(app_config.behavior)
+    runtime.bind_behavior(behavior_engine)
     logger.info(
         "行为引擎装配：enabled={} 空闲 {:.0f}-{:.0f}s 免打扰={}",
         app_config.behavior.enabled,
@@ -119,28 +105,29 @@ def main() -> int:
     )
 
     # 记忆提取服务（Phase 3，§7.1）：会话空闲后后台提取 memories + profile；
-    # 关闭时（[memory].enabled=false）记忆注入仍可用（只读），但不自动写入
-    memory_service = (
-        MemoryService(
-            provider=provider,
-            store=memory_store,
-            profile_store=profile_store,
-            sessions=sessions,
-            history=history_store,
-            idle_seconds=app_config.memory.idle_seconds,
-            check_interval_seconds=app_config.memory.check_interval_seconds,
-        )
-        if app_config.memory.enabled
-        else None
+    # 实例总是创建（enabled 开关需能热切换），由配置决定启动时是否运行；
+    # 关闭时记忆注入仍可用（只读），只是不自动写入
+    memory_service = MemoryService(
+        provider=runtime.llm,
+        store=memory_store,
+        profile_store=profile_store,
+        sessions=sessions,
+        history=history_store,
+        idle_seconds=app_config.memory.idle_seconds,
+        check_interval_seconds=app_config.memory.check_interval_seconds,
     )
-    if memory_service is not None:
+    runtime.bind_memory(memory_service)
+    if app_config.memory.enabled:
         logger.info(
             "记忆服务装配：空闲阈值 {}s 扫描周期 {}s",
             app_config.memory.idle_seconds,
             app_config.memory.check_interval_seconds,
         )
     else:
-        logger.info("记忆提取未启用（config.toml [memory].enabled=false）")
+        logger.info("记忆提取未启用（config.toml [memory].enabled=false，设置面板可随时开启）")
+
+    # 设置面板用例（§7.6）：get_config / set_config / test_llm
+    settings = SettingsService(runtime=runtime)
 
     dispatcher = build_dispatcher(
         pipeline=pipeline,
@@ -149,9 +136,10 @@ def main() -> int:
         app_version=__version__,
         engine=behavior_engine,
         history=history_store,
+        settings=settings,
     )
     app = create_app(
-        dispatcher=dispatcher, app_version=__version__, voice_factory=voice_factory
+        dispatcher=dispatcher, app_version=__version__, voice_factory=runtime.voice_factory
     )
 
     config = uvicorn.Config(
@@ -165,15 +153,7 @@ def main() -> int:
     )
     server = uvicorn.Server(config)
     try:
-        asyncio.run(
-            _serve(
-                server,
-                token=token,
-                dev_mode=dev_mode,
-                engine=behavior_engine,
-                memory=memory_service,
-            )
-        )
+        asyncio.run(_serve(server, token=token, dev_mode=dev_mode, runtime=runtime))
     except KeyboardInterrupt:  # 兜底：正常退出码约定
         return 130
     return 0
@@ -184,12 +164,12 @@ async def _serve(
     *,
     token: str,
     dev_mode: bool,
-    engine: BehaviorEngine | None = None,
-    memory: MemoryService | None = None,
+    runtime: Runtime | None = None,
 ) -> None:
     """启动 uvicorn，就绪后打印 READY 行，然后等待退出信号（SIGINT/SIGTERM）。
 
-    行为引擎与记忆提取服务随服务启动（后台任务），退出时随之停止。
+    运行时的后台服务（行为引擎 / 记忆提取）随服务启动，退出时随之停止；
+    ``runtime=None`` 时行为与"无后台服务"一致（保序的装配兜底）。
     """
     serve_task = asyncio.create_task(server.serve(), name="uvicorn-serve")
     while not server.started:
@@ -199,18 +179,14 @@ async def _serve(
         await asyncio.sleep(0.02)
 
     port = _bound_port(server)
-    if engine is not None:
-        engine.start()
-    if memory is not None:
-        memory.start()
+    if runtime is not None:
+        runtime.start_services()
     emit_ready(port, token=token if dev_mode else None)
     try:
         await serve_task
     finally:
-        if memory is not None:
-            await memory.stop()
-        if engine is not None:
-            await engine.stop()
+        if runtime is not None:
+            await runtime.stop_services()
 
 
 def _bound_port(server: uvicorn.Server) -> int:

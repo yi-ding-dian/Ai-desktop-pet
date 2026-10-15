@@ -21,12 +21,16 @@ from typing import Any, AsyncIterator, Callable, Sequence
 import openai
 from loguru import logger  # noqa: F401  （预留：需要时可记录请求元信息，注意脱敏）
 
-from backend.modules.llm.provider import ChatMessage, Chunk
+from backend.modules.llm.provider import ChatMessage, Chunk, ProbeResult
 from backend.shared.errors import LlmError, LlmErrorCode
 from backend.shared.secrets import get_llm_key, redact, register_secret
 
 DEFAULT_TIMEOUT = 60.0  # 秒；流式场景为"相邻数据块间隔"超时
 DEFAULT_MAX_RETRIES = 2  # SDK 内建重试（仅连接类错误 / 429 / 5xx，流式开始后不重放）
+#: 「测试连接」探测超时（秒）——给足时间，避免慢网关/首字节慢被误报为连不上
+PROBE_TIMEOUT = 10.0
+#: 未配置 AI 服务（base_url 为空）时的引导文案——首启引导：去设置里选服务商
+NOT_CONFIGURED_MESSAGE = "还没有配置 AI 服务，打开设置里选一个服务商即可"
 
 
 def _extract_content(chunk: Any) -> str:
@@ -116,7 +120,9 @@ class OpenAICompatProvider:
         """流式对话：逐块产出正文增量，结束后产出 ``Chunk(finished=True)``。
 
         失败时抛 LlmError（已翻译、已脱敏）；可经 opts 覆盖 temperature / max_tokens / model。
+        未配置服务（base_url 空）先抛 LLM_NOT_CONFIGURED——明确引导，不走网络层模糊错误。
         """
+        base_url = self._require_base_url()
         key = self._resolve_key()
         request: dict[str, Any] = {
             "model": opts.pop("model", self._model),
@@ -126,7 +132,7 @@ class OpenAICompatProvider:
             "max_tokens": opts.pop("max_tokens", self._max_tokens),
         }
         try:
-            client = self._open_client(key)
+            client = self._open_client(key, base_url=base_url)
             async with client:  # 请求结束即关闭连接池
                 stream = await client.chat.completions.create(**request)
                 async for raw in stream:
@@ -148,11 +154,12 @@ class OpenAICompatProvider:
         推理型模型思考可能吃满 max_tokens 使正文为空——这不是失败。
         """
         try:
+            base_url = self._require_base_url()
             key = self._resolve_key()
         except LlmError as exc:
             return False, exc.message
         try:
-            client = self._open_client(key)
+            client = self._open_client(key, base_url=base_url)
             async with client:
                 await client.chat.completions.create(
                     model=self._model,
@@ -163,7 +170,80 @@ class OpenAICompatProvider:
             return False, _translate(exc, timeout=self._timeout).message
         return True, f"连接成功（model={self._model}）"
 
+    async def probe(
+        self,
+        *,
+        base_url: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+    ) -> ProbeResult:
+        """连通性探测（§3.2 test_llm → §3.3 llm_test_result）。
+
+        - 最小 chat 请求（max_tokens=1）：验证鉴权与地址（HTTP 200 即连通；
+          推理型模型思考吃 token 使正文为空——不是失败）；
+        - 随后尽力 GET ``{base_url}/models`` 拉可用模型列表（供设置面板下拉）；
+          网关不支持 / 拉取失败 → ``models=None``，**不影响 ok 结论**；
+        - 失败时 message 说明具体原因（连不上 / 401 / 404 / 超时…），全程脱敏；
+        - base_url / model / api_key 缺省用本实例配置（api_key 缺省走读取链——
+          环境变量 > keyring > 兜底文件，见 shared.secrets）；
+        - base_url 最终为空（本实例与入参都空）= 未配置：直接回引导文案，不发请求；
+        - 探测专用短平快参数：超时 10s、不自动重试（结论尽快给到面板）。
+        """
+        target_url = (base_url or self._base_url).strip()
+        target_model = (model or self._model).strip()
+        if not target_url:
+            return ProbeResult(ok=False, message=NOT_CONFIGURED_MESSAGE)
+        try:
+            key = (api_key or "").strip() or self._resolve_key()
+            register_secret(key)
+            client = self._open_client(
+                key, base_url=target_url, timeout=PROBE_TIMEOUT, max_retries=0
+            )
+            async with client:
+                ok, message = await self._probe_chat(client, target_model)
+                models = await self._fetch_models(client)
+                return ProbeResult(ok=ok, message=message, models=models)
+        except LlmError as exc:
+            return ProbeResult(ok=False, message=exc.message)
+        except Exception as exc:  # 兜底：探测任何异常都给面板一个可读结论，不带明文
+            return ProbeResult(ok=False, message=f"连接测试异常：{_safe_detail(exc)}")
+
     # ---------- 内部实现 ----------
+
+    def _require_base_url(self) -> str:
+        """解析 base_url；未配置（空）抛 LlmError(LLM_NOT_CONFIGURED)——首启引导。
+
+        空是合法配置态（用户还没选服务商）：给出明确引导文案，
+        而不是让 SDK 抛出网络层模糊错误。
+        """
+        url = self._base_url.strip()
+        if not url:
+            raise LlmError(LlmErrorCode.LLM_NOT_CONFIGURED, NOT_CONFIGURED_MESSAGE)
+        return url
+
+    async def _probe_chat(
+        self, client: openai.AsyncOpenAI, model: str
+    ) -> tuple[bool, str]:
+        """最小 chat 请求（max_tokens=1）→ (是否连通, 说明)。"""
+        try:
+            await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+            )
+        except openai.OpenAIError as exc:
+            return False, _translate(exc, timeout=PROBE_TIMEOUT).message
+        return True, f"连接成功（model={model}）"
+
+    async def _fetch_models(self, client: openai.AsyncOpenAI) -> list[str] | None:
+        """GET {base_url}/models 拉可用模型列表；不支持 / 失败返回 None（不报错）。"""
+        try:
+            page = await client.models.list()
+        except Exception:
+            return None
+        ids = [getattr(item, "id", None) for item in getattr(page, "data", None) or []]
+        model_ids = [str(model_id) for model_id in ids if model_id]
+        return model_ids or None
 
     def _resolve_key(self) -> str:
         """解析 API key；未配置抛 LlmError(LLM_NO_KEY)。已解析的 key 登记进脱敏集合。"""
@@ -173,11 +253,21 @@ class OpenAICompatProvider:
         register_secret(key)
         return key
 
-    def _open_client(self, key: str) -> openai.AsyncOpenAI:
-        """创建一次性异步客户端（用完即关；密钥不作为构造参数以外的任何形式外泄）。"""
+    def _open_client(
+        self,
+        key: str,
+        *,
+        base_url: str | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+    ) -> openai.AsyncOpenAI:
+        """创建一次性异步客户端（用完即关；密钥不作为构造参数以外的任何形式外泄）。
+
+        探测（probe）场景可覆盖 base_url / timeout / max_retries。
+        """
         return openai.AsyncOpenAI(
-            base_url=self._base_url,
+            base_url=base_url or self._base_url,
             api_key=key,
-            timeout=self._timeout,
-            max_retries=self._max_retries,
+            timeout=self._timeout if timeout is None else timeout,
+            max_retries=self._max_retries if max_retries is None else max_retries,
         )

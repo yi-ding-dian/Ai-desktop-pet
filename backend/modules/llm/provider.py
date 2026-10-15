@@ -27,6 +27,20 @@ class Chunk:
     finished: bool = False
 
 
+@dataclass(frozen=True)
+class ProbeResult:
+    """连通性探测结果（设置面板「测试连接」→ §3.3 llm_test_result 的数据来源）。
+
+    - ``ok``：最小 chat 请求是否成功（HTTP 200 即连通）；
+    - ``message``：成功说明 / 失败的具体原因（连不上、401、404、超时…），已脱敏；
+    - ``models``：/models 拉到的可用模型列表；拉不到为 None（不视为失败）。
+    """
+
+    ok: bool
+    message: str
+    models: list[str] | None = None
+
+
 class LLMProvider(Protocol):
     """LLM 服务商统一抽象（BYOK：base_url + key + model 由实现层管理）。"""
 
@@ -42,4 +56,8 @@ class LLMProvider(Protocol):
 
     async def test(self) -> tuple[bool, str]:
         """连接测试（设置面板「测试连接」）：返回 (是否成功, 说明)。"""
+        ...
+
+    async def probe(self, **overrides: Any) -> ProbeResult:
+        """连通性探测：最小请求 + 尽力拉模型列表（参数可覆盖 base_url/model/key）。"""
         ...

@@ -91,10 +91,15 @@ class SetConfigData(EventData):
 
 
 class TestLlmData(EventData):
-    """设置面板「测试连接」。"""
+    """设置面板「测试连接」。
 
-    base_url: str
-    model: str
+    §3.2 声明 ``{base_url, model, key?}``；服务端对 base_url / model 宽容缺省
+    （用当前配置），key 缺省用读取链（keyring 为主）——设置面板"先测再存"
+    与"用已存配置测"两种用法都成立。
+    """
+
+    base_url: str | None = None
+    model: str | None = None
     key: str | None = None
 
 
@@ -217,6 +222,15 @@ class ConfigData(EventData):
     model_config = ConfigDict(extra="allow")
 
 
+class LlmTestResultData(EventData):
+    """「测试连接」结果（§3.3）：失败时 message 说明具体原因（连不上 / 401 / 404…）；
+    成功且网关支持 ``/models`` 时附可用模型列表（供下拉），拉不到则省略该字段。"""
+
+    ok: bool
+    message: str = ""
+    models: list[str] | None = None
+
+
 class ErrorData(EventData):
     """错误；fatal=true 表示连接将关闭。"""
 
@@ -263,6 +277,7 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "proactive": ProactiveData,
     "history": HistoryData,
     "config": ConfigData,
+    "llm_test_result": LlmTestResultData,
     "error": ErrorData,
     "pong": PongData,
 }

@@ -86,6 +86,10 @@ class ChatPipeline:
 
     ``memories`` / ``profile``（可选注入，P3 记忆）：缺省 None 时行为与
     P1/P2 完全一致；装配后每轮组装第二条 system（画像 + 召回记忆）。
+
+    ``pet_name``（可选注入，§7.6.3）：读当前 ``pet.name`` 配置的回调——每轮
+    组装 system prompt 时动态取名字注入（"你的名字叫 X"）；缺省 None 不注入，
+    行为与旧版一致。
     """
 
     def __init__(
@@ -94,10 +98,12 @@ class ChatPipeline:
         *,
         memories: MemoryStore | None = None,
         profile: ProfileStore | None = None,
+        pet_name: Callable[[], str | None] | None = None,
     ) -> None:
         self._provider = provider
         self._memories = memories
         self._profile = profile
+        self._pet_name = pet_name
 
     async def run_turn(
         self,
@@ -229,14 +235,18 @@ class ChatPipeline:
     async def _build_messages(self, session: Session, *, user_text: str) -> list[ChatMessage]:
         """组装本轮请求 messages（§4.1/§4.2）：
 
-            system(人格 + 情绪指令)
+            system(人格 + [名字注入] + 情绪指令)
               → system(画像 + 记忆召回)   ← P3：有内容才注入
               → 最近 N 轮原文（含本轮用户输入）
 
-        召回以本轮用户输入为 query；记忆未装配（None）或为空时退化为
-        P1/P2 的单 system 结构，行为完全一致。
+        名字每轮从 ``pet_name`` 回调动态读取（§7.6.3：设置面板改名保存后，
+        下一轮对话即注入新名）。召回以本轮用户输入为 query；记忆未装配（None）
+        或为空时退化为 P1/P2 的单 system 结构，行为完全一致。
         """
-        messages = [ChatMessage(role="system", content=build_system_prompt())]
+        pet_name = self._pet_name() if self._pet_name is not None else None
+        messages = [
+            ChatMessage(role="system", content=build_system_prompt(pet_name=pet_name))
+        ]
         memory_block = await self._build_memory_block(user_text)
         if memory_block is not None:
             messages.append(ChatMessage(role="system", content=memory_block))

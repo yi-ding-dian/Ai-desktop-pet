@@ -156,6 +156,30 @@ class BehaviorEngine:
                 logger.exception("行为引擎任务收尾异常")
         self._wake_task = None
 
+    async def update_config(self, config: BehaviorConfig) -> None:
+        """热更新配置（设置面板保存后由装配层调用，§7.6.3）。
+
+        - 换入新配置引用：空闲间隔 / 免打扰 / enabled 的读取点都在主循环里
+          每轮动态读，换引用即生效（无需重启后端）；
+        - 开关联动：``enabled`` 关闭 → 停止主循环；开启 → 启动主循环（幂等）；
+        - ``proactive_enabled`` / ``greeting`` 当前无消费点（主动对话未实现），
+          新值已保存进配置，待该功能落地时生效。
+        """
+        self._config = config
+        if not config.enabled:
+            await self.stop()
+            logger.info("行为引擎配置更新：已停用")
+            return
+        if self._task is None or self._task.done():
+            self.start()  # 幂等：启动日志在 start 内
+            return
+        logger.info(
+            "行为引擎配置更新生效：空闲间隔 {:.0f}–{:.0f}s，免打扰={}",
+            config.idle_min_seconds,
+            config.idle_max_seconds,
+            config.quiet_hours or "无",
+        )
+
     # ---------------------------------------------------------------- 外部事件入口（dispatcher）
 
     def update_env(self, data: Any) -> None:

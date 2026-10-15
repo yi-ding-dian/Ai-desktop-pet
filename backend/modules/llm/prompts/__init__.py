@@ -6,11 +6,12 @@
     emotion_directive.md  ← 情绪指令（要求 LLM 用 <emo:xxx> 切换情绪）
     memory_extract.md     ← 记忆提取（后台任务；P3 记忆与持久化）
 
-system prompt 结构（§4.1）：
+system prompt 结构（§4.1/§7.6.3）：
 
-    [人格设定] + [情绪指令]
+    [人格设定] + [名字注入] + [情绪指令]
 
-（[记忆注入] 由后续 chat/context.py 动态拼接，不在本步骤范围。）
+（[名字注入]：``pet.name`` 配置非空时叠加"你的名字叫 X"一行，压过 persona 模板里的
+旧名——设置面板改名的"真身"；[记忆注入] 由 chat_pipeline 动态拼接，不在本步骤范围。）
 
 角色系统（§4.6）预留：角色包内 persona.md 经 ``build_system_prompt(persona_text=...)``
 参数注入并覆盖默认文件；本模块不 import character 模块，跨域组装由 application 完成。
@@ -62,17 +63,33 @@ def load_memory_extract_prompt() -> str:
     return _read_or(_PROMPTS_DIR / "memory_extract.md", _FALLBACK_MEMORY_EXTRACT)
 
 
-def build_system_prompt(persona_text: str | None = None) -> str:
-    """组装 system prompt：人格设定 + 情绪指令。
+#: 名字注入行（§7.6.3）：明确要求以 pet.name 自称，压过 persona 模板里的旧名
+_PET_NAME_LINE = (
+    "你的名字叫「{name}」。这是用户为你起的名字，与上面设定中出现的其它名字冲突时，"
+    "以这个名字为准；被问到名字或需要自称时，都用这个名字。"
+)
 
-    ``persona_text`` 为 None 时使用默认 persona.md；角色系统接入后由 application
-    以角色包的 persona.md 内容传入（§4.6），覆盖默认人格。
+
+def build_system_prompt(
+    persona_text: str | None = None, *, pet_name: str | None = None
+) -> str:
+    """组装 system prompt：人格设定 + [名字注入] + 情绪指令。
+
+    - ``persona_text`` 为 None 时使用默认 persona.md；角色系统接入后由 application
+      以角色包的 persona.md 内容传入（§4.6），覆盖默认人格；
+    - ``pet_name``（``pet.name`` 配置）：非空时在人格设定之后叠加"你的名字叫 X"
+      （§7.6.3）——设置面板改名后下一句聊天即自称新名；空/None 不注入，输出与
+      旧版完全一致（不破坏 persona 覆盖机制）。
     """
     persona = (
         persona_text if persona_text is not None else load_persona()
     ).strip() or _FALLBACK_PERSONA
-    directive = load_emotion_directive()
-    return f"{persona}\n\n---\n\n{directive}"
+    parts = [persona]
+    name = (pet_name or "").strip()
+    if name:
+        parts.append(_PET_NAME_LINE.format(name=name))
+    parts.append(load_emotion_directive())
+    return "\n\n---\n\n".join(parts)
 
 
 def _read_or(path: Path, fallback: str) -> str:

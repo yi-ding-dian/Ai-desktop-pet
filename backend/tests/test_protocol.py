@@ -157,6 +157,7 @@ SERVER_MIN_DATA: dict[str, dict] = {
     "proactive": {"message_id": "m1", "text": "hi"},
     "history": {"session_id": "s1"},
     "config": {},
+    "llm_test_result": {"ok": True, "message": "连接成功"},
     "error": {"code": "X", "message": "y"},
     "pong": {},
 }
