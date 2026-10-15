@@ -11,6 +11,9 @@
  * P5 教学模式（§7.5）：App 侧接线——onState 订阅（面板收起/气泡显隐/讲台走位）、
  * 头顶问题气泡（TeachingBubbles）集成与形状上报、拖拽联动折叠（notifyDragStart）。
  * 对话镜像/统一发送等无 UI 部分在 modules/teaching 域内实现。
+ *
+ * P4 设置向导（§7.6.6）：settings.onVisibility 订阅（向导期间聊天面板收起 + 右眼右上萌语
+ * 气泡）在 modules/settings-guide 域内实现，App 只做 UI 接线与形状上报；飞位动画由主进程 fx 编排。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { getPetBridge } from './shared/pet-bridge'
@@ -36,6 +39,11 @@ import {
   TeachingBubbles,
   type TeachingBubbleItem
 } from './modules/teaching'
+import {
+  setupSettingsGuidePetSide,
+  subscribeSettingsGuide,
+  SettingsGuideBubble
+} from './modules/settings-guide'
 import {
   setupVoice,
   subscribeVoiceSpeaking,
@@ -108,11 +116,15 @@ export default function App(): ReactElement {
   const [teachingState, setTeachingState] = useState<TeachingStatePayload>({ mode: 'normal', folded: false })
   /** 头顶问题气泡列表（教学模式中用户提问；课堂目录，点击回看） */
   const [teachingBubbles, setTeachingBubbles] = useState<TeachingBubbleItem[]>([])
+  /** 设置向导进行中（§7.6.6：设置窗打开 → 聊天面板收起 + 右眼右上方萌语气泡显隐） */
+  const [guideActive, setGuideActive] = useState(false)
   const hitboxRef = useRef<HTMLDivElement | null>(null)
   const statusBarRef = useRef<HTMLDivElement | null>(null)
   const chatPanelRef = useRef<HTMLDivElement | null>(null)
   /** 头顶气泡容器（教学模式可见时纳入交互矩形上报；X11 形状裁剪会裁掉未上报区域） */
   const teachingBubblesRef = useRef<HTMLDivElement | null>(null)
+  /** 向导萌语气泡容器（同上：可见时必须纳入形状上报） */
+  const settingsGuideRef = useRef<HTMLDivElement | null>(null)
   /**
    * 教学讲台走位任务（进入/恢复教学模式时宠物走回讲台位）：
    * seq = 任务序号（新任务/拖拽取消使旧任务失效）；active = 是否正在走位（拖拽需取消窗口缓动）
@@ -210,6 +222,17 @@ export default function App(): ReactElement {
       offBubbles()
     }
   }, [walkToTeachingPodium, cancelTeachingWalk])
+
+  // ---- 设置向导接线（§7.6.6）：onVisibility 订阅在 settings-guide 域内实现 ----
+  // 注：新增 bridge API 需重启 Electron 主进程才可用；旧 preload 无 settings 段时静默跳过
+  useEffect(() => {
+    const offSetup = setupSettingsGuidePetSide()
+    const offSub = subscribeSettingsGuide(setGuideActive)
+    return () => {
+      offSub()
+      offSetup()
+    }
+  }, [])
 
   // ---- dev 调试：V 键播放合成测试音（验证"帧→播放→口型→清理"全链路；输入框内不拦截） ----
   useEffect(() => {
@@ -411,9 +434,9 @@ export default function App(): ReactElement {
 
   // ---- 可交互区域上报（Linux 用作 X11 形状穿透的输入区） ----
   // 组成：宠物视觉包围盒（见下；必须 ≥ 渲染范围，防止被形状裁剪）+ hitbox + 聊天面板 + 状态栏（显示时）
-  //      + 头顶问题气泡容器（教学模式展开态挂载时——X11 形状裁剪会裁掉未上报区域，踩过坑）
+  //      + 头顶问题气泡容器（教学模式展开态）/ 向导萌语气泡（设置向导中）——X11 形状裁剪会裁掉未上报区域
   // 聊天面板/气泡尺寸会随消息变化，用 ResizeObserver 跟随，rAF 合并上报频次。
-  // 依赖 debugBarVisible/teachingExpanded：容器挂载/卸载时，需重建观察并重报矩形（隐藏时不含对应容器）。
+  // 依赖 debugBarVisible/teachingExpanded/guideActive：容器挂载/卸载时，需重建观察并重报矩形（隐藏时不含对应容器）。
   useEffect(() => {
     const bridge = getPetBridge()
     let rafId = 0
@@ -427,7 +450,8 @@ export default function App(): ReactElement {
         hitboxRef.current,
         chatPanelRef.current,
         statusBarRef.current,
-        teachingBubblesRef.current
+        teachingBubblesRef.current,
+        settingsGuideRef.current
       ]) {
         if (!el) continue
         const r = el.getBoundingClientRect()
@@ -458,7 +482,8 @@ export default function App(): ReactElement {
       hitboxRef.current,
       chatPanelRef.current,
       statusBarRef.current,
-      teachingBubblesRef.current
+      teachingBubblesRef.current,
+      settingsGuideRef.current
     ]) {
       if (!el) continue
       const ro = new ResizeObserver(report)
@@ -471,7 +496,7 @@ export default function App(): ReactElement {
       observers.forEach((ro) => ro.disconnect())
       window.removeEventListener('resize', report)
     }
-  }, [debugBarVisible, teachingExpanded, teachingState.mode])
+  }, [debugBarVisible, teachingExpanded, teachingState.mode, guideActive])
 
   return (
     <div className="app-root">
@@ -499,8 +524,13 @@ export default function App(): ReactElement {
       </div>
 
       {/* 对话域：输入框 + 气泡列表（订阅 WS token/emotion/reply_*）。
-          教学模式展开态收起（内容都在黑板；收起期间消息/输入状态保留，折叠让路或退出即恢复） */}
-      <ChatPanel client={wsClient} containerRef={chatPanelRef} hidden={teachingState.mode === 'teaching'} />
+          教学模式展开态收起（内容都在黑板）；设置向导期间收起（只剩宠物 + 萌语气泡，§7.6.6）。
+          收起期间消息/输入状态保留，折叠让路或退出即恢复 */}
+      <ChatPanel
+        client={wsClient}
+        containerRef={chatPanelRef}
+        hidden={teachingState.mode === 'teaching' || guideActive}
+      />
 
       {/* 教学模式：头顶问题气泡（课堂目录，最多 4 条 + "+N"；点击 → 黑板跳段）。
           仅展开态挂载（容器参与交互矩形上报）；让路态（折叠）隐藏 */}
@@ -510,6 +540,10 @@ export default function App(): ReactElement {
         onClick={gotoTeachingBubble}
         containerRef={teachingBubblesRef}
       />
+
+      {/* 设置向导：右眼右上方萌语气泡（§7.6.6；设置窗打开期间显示，飞位动画由主进程 fx 编排）。
+          纯视觉物（pointer-events:none），但可见时必须参与形状上报（X11 裁剪） */}
+      <SettingsGuideBubble visible={guideActive} containerRef={settingsGuideRef} />
 
       {/* 底部调试栏（开发向信息，默认隐藏；Ctrl+Shift+D 唤出）。
           条件渲染并在隐藏时不挂 ref：交互矩形上报与 ResizeObserver 均跳过该容器 */}

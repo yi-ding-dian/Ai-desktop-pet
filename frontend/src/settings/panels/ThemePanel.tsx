@@ -1,16 +1,16 @@
 /**
- * 「主题」分区（settings 域 panels 层，设计文档 §7.6.4）——三层结构：
+ * 「主题」分区（settings 域 panels 层，设计文档 §7.6.4 v2）——三层结构：
  *
- *  - 全部主题：6 套预设（暗夜/墨蓝/紫夜/明亮/暖米/薄荷）+ 跟随系统，预览小卡网格
- *    （背景/面板/强调三色块示意），点选即时生效；
+ *  - 全部主题：8 套预设（暗夜/墨蓝/紫夜/粉黛/明亮/暖米/薄荷/樱粉）+ 跟随系统，预览小卡网格
+ *    （色样预览卡：卡内以该主题的 背景/面板/强调 三色做 mini 示意），点选即时生效；
  *  - 自定义配色：4 个核心色选色器（背景/面板/文字/强调），改动**实时预览**
  *    （直接派生应用，不落存储）；其余变量自动派生；
- *  - 我的主题：命名保存（存 localStorage）后成卡；应用 / 删除（删除使用中的 → 回退暗夜）。
+ *  - 我的主题：命名保存（存 localStorage）后成卡；应用 / 删除（删除使用中的 → 回退薄荷）。
  *
  * 无需「保存」按钮：所有主题变更即时生效并跨窗口广播；离开分区（卸载）时若仍在
  * 实时预览，自动恢复正式主题（放弃未保存的草稿色）。
  */
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from 'react'
 import Section from '../components/section'
 import { TextField } from '../components/fields'
 import {
@@ -39,12 +39,61 @@ const EDITABLE_COLORS: ReadonlyArray<{ key: keyof ThemeColors; label: string }> 
   { key: 'accent', label: '强调色' }
 ]
 
-/** 「跟随系统」预览卡的斜分示意图（左深右浅，与真实生效一致） */
-const SYSTEM_SWATCHES: ReadonlyArray<string> = [
-  'linear-gradient(115deg, #12141c 49%, #f2f3f7 51%)',
-  'linear-gradient(115deg, #1c1f2a 49%, #ffffff 51%)',
-  'linear-gradient(115deg, #a78bfa 49%, #6d4aec 51%)'
-]
+/**
+ * 色样预览卡（§7.6.4 v2）：卡片内 mini 示意——底色 = 该主题 bg，
+ * 内嵌一条面板色块 + 一个强调色圆点（CSS 类见 settings.css 的 .theme-card-preview*）。
+ */
+function ThemeSwatch({ colors }: { colors: Pick<ThemeColors, 'bg' | 'panel' | 'accent'> }): ReactElement {
+  return (
+    <span className="theme-card-preview" aria-hidden="true" style={{ background: colors.bg }}>
+      <span className="theme-card-preview-panel" style={{ background: colors.panel }} />
+      <span className="theme-card-preview-dot" style={{ background: colors.accent }} />
+    </span>
+  )
+}
+
+/** 「跟随系统」预览卡的三色示意（左深右浅斜分，与真实生效的深/浅两套一致） */
+const SYSTEM_PREVIEW: Pick<ThemeColors, 'bg' | 'panel' | 'accent'> = {
+  bg: 'linear-gradient(115deg, #12141c 49%, #f2f3f7 51%)',
+  panel: 'linear-gradient(115deg, #1c1f2a 49%, #ffffff 51%)',
+  accent: 'linear-gradient(115deg, #a78bfa 49%, #6d4aec 51%)'
+}
+
+/**
+ * 主题卡容器（div role=radio，**刻意不用 `<button>`**）。
+ *
+ * 真机踩坑（2026-10-15）：`<button>` 在 Chromium 131 之前**不能作为 flex/grid 容器
+ * 布局其子元素**（子内容被匿名盒包裹、按 inline 布局）——Electron 33（Chromium 130）
+ * 下 `.theme-card{display:flex}` 失效：卡内预览块宽度塌成几像素细条（Playwright 的
+ * Chromium 151 已修复此行为，故本地无法复现）。改用 div + role/tabIndex/键盘处理，
+ * 走标准块布局，130 与 151 行为一致。
+ */
+function ThemeCard(props: {
+  checked: boolean
+  onPick: () => void
+  testId?: string
+  children: ReactNode
+}): ReactElement {
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === ' ' || event.key === 'Enter') {
+      event.preventDefault()
+      props.onPick()
+    }
+  }
+  return (
+    <div
+      role="radio"
+      aria-checked={props.checked}
+      tabIndex={0}
+      className={`theme-card${props.checked ? ' selected' : ''}`}
+      data-testid={props.testId}
+      onClick={props.onPick}
+      onKeyDown={onKeyDown}
+    >
+      {props.children}
+    </div>
+  )
+}
 
 export default function ThemePanel(): ReactElement {
   const [selection, setSelection] = useState<ThemeSelection>(() => readThemeSelection())
@@ -63,6 +112,48 @@ export default function ThemePanel(): ReactElement {
       }),
     []
   )
+
+  // ---- 真机排障探针（仅 dev）：主题卡尺寸 / CSS 命中实测 ----
+  // 背景：真机（Electron 33 = Chromium 130）曾出现"卡内预览塌成细条"，Playwright
+  // （Chromium 151）同代码正常——本探针打印实测值 + UA（确认浏览器版本差异），
+  // 输出转发进主进程日志（/tmp/pet-dev.log，[settings-renderer] 前缀）供真机对照。
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const describe = (node: HTMLElement | null, label: string): string => {
+      if (!node) return `${label}: null`
+      const s = getComputedStyle(node)
+      return (
+        `${label}: ${node.offsetWidth}x${node.offsetHeight}` +
+        ` display=${s.display} position=${s.position} width=${s.width} height=${s.height}` +
+        ` flex=${s.flex} alignSelf=${s.alignSelf}`
+      )
+    }
+    const probe = (): void => {
+      const card = document.querySelector<HTMLElement>('.theme-card')
+      const grid = document.querySelector<HTMLElement>('.set-theme-grid')
+      let rules = 0
+      try {
+        for (const sheet of document.styleSheets) rules += sheet.cssRules.length
+      } catch {
+        rules = -1 // 跨域样式表不可读（本项目全部同源，正常不会走到）
+      }
+      console.log(`[settings][probe] ua=${navigator.userAgent}`)
+      console.log(
+        `[settings][probe] env: dpr=${devicePixelRatio} inner=${innerWidth}x${innerHeight} sheets=${document.styleSheets.length} rules=${rules}`
+      )
+      console.log(`[settings][probe] ${describe(grid, 'grid')}`)
+      console.log(`[settings][probe] ${describe(card, 'card')}`)
+      console.log(
+        `[settings][probe] ${describe(card?.querySelector<HTMLElement>('.theme-card-preview') ?? null, 'preview')}`
+      )
+      console.log(
+        `[settings][probe] ${describe(card?.querySelector<HTMLElement>('.theme-card-preview-panel') ?? null, 'panel')}`
+      )
+    }
+    probe()
+    const timer = window.setTimeout(probe, 400) // 二次采样（布局稳定后，防字体/滚动条未就绪的首帧值）
+    return () => window.clearTimeout(timer)
+  }, [])
 
   // 卸载（切走分区）时若仍在实时预览 → 恢复正式主题（放弃未保存草稿）
   useEffect(
@@ -124,7 +215,7 @@ export default function ThemePanel(): ReactElement {
   }
 
   const removeMyTheme = (id: string): void => {
-    deleteMyTheme(id) // 内部：删除 +（使用中则回退暗夜）+ 广播
+    deleteMyTheme(id) // 内部：删除 +（使用中则回退薄荷）+ 广播
     setMyThemes(readMyThemes())
     setSelection(readThemeSelection())
   }
@@ -136,40 +227,26 @@ export default function ThemePanel(): ReactElement {
 
   return (
     <Section title="主题" desc="全部主题 / 自定义配色 / 我的主题。即时生效且跨窗口同步，无需保存。">
-      {/* 1）全部主题：6 预设 + 跟随系统 */}
+      {/* 1）全部主题：8 预设 + 跟随系统（色样预览卡） */}
       <div className="set-theme-grid" role="radiogroup" aria-label="全部主题">
         {PRESET_THEMES.map((preset) => (
-          <button
+          <ThemeCard
             key={preset.key}
-            type="button"
-            role="radio"
-            aria-checked={activePresetKey === preset.key}
-            className={`theme-card${activePresetKey === preset.key ? ' selected' : ''}`}
-            onClick={() => pickPreset(preset.key)}
+            checked={activePresetKey === preset.key}
+            onPick={() => pickPreset(preset.key)}
           >
-            <span className="theme-card-swatches" aria-hidden="true">
-              <span style={{ background: preset.colors.bg }} />
-              <span style={{ background: preset.colors.panel }} />
-              <span style={{ background: preset.colors.accent }} />
-            </span>
+            <ThemeSwatch colors={preset.colors} />
             <span className="theme-card-name">{preset.name}</span>
-          </button>
+          </ThemeCard>
         ))}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={activePresetKey === 'system'}
-          className={`theme-card${activePresetKey === 'system' ? ' selected' : ''}`}
-          onClick={() => pickPreset('system')}
-          data-testid="theme-card-system"
+        <ThemeCard
+          checked={activePresetKey === 'system'}
+          onPick={() => pickPreset('system')}
+          testId="theme-card-system"
         >
-          <span className="theme-card-swatches" aria-hidden="true">
-            {SYSTEM_SWATCHES.map((background, i) => (
-              <span key={i} style={{ background }} />
-            ))}
-          </span>
+          <ThemeSwatch colors={SYSTEM_PREVIEW} />
           <span className="theme-card-name">跟随系统</span>
-        </button>
+        </ThemeCard>
       </div>
 
       {/* 2）我的主题：命名保存的自定义配色 */}
@@ -179,20 +256,10 @@ export default function ThemePanel(): ReactElement {
           <div className="set-theme-grid" role="radiogroup" aria-label="我的主题">
             {myThemes.map((theme) => (
               <div key={theme.id} className="theme-card-wrap">
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={activeCustomId === theme.id}
-                  className={`theme-card${activeCustomId === theme.id ? ' selected' : ''}`}
-                  onClick={() => pickMyTheme(theme.id)}
-                >
-                  <span className="theme-card-swatches" aria-hidden="true">
-                    <span style={{ background: theme.colors.bg }} />
-                    <span style={{ background: theme.colors.panel }} />
-                    <span style={{ background: theme.colors.accent }} />
-                  </span>
+                <ThemeCard checked={activeCustomId === theme.id} onPick={() => pickMyTheme(theme.id)}>
+                  <ThemeSwatch colors={theme.colors} />
                   <span className="theme-card-name">{theme.name}</span>
-                </button>
+                </ThemeCard>
                 <button
                   type="button"
                   className="theme-card-del"

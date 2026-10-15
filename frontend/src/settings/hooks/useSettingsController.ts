@@ -4,7 +4,8 @@
  * 生命周期：
  *   mount → 建 SettingsBackendClient（自持 WS 连接）→ connected 后发 get_config
  *   → 收 `config` 填充表单（基线 = 服务端值）→ 用户编辑（dirty）→ 保存发 set_config{patch}
- *   → 收 `config` 回执 → 提示"已保存生效"并以回执为新基线。
+ *   → 收 `config` 回执 → 提示"已保存生效"并以回执为新基线
+ *   （同时经 bridge settings.notifySaved 上报主进程，§7.6.6 向导飞回编排）。
  * 另有：「测试连接」（test_llm → llm_test_result）与 `error` 事件的就近归因
  * （按当前未决请求 pending 判断该错误属于加载/保存/测试，否则作为一般错误提示）。
  *
@@ -163,6 +164,12 @@ export function useSettingsController(): SettingsController {
       setQuietHoursError(null)
       setGuideMode(false) // 保存成功 → 欢迎条消失（首启引导 §7.6.5）
       setNotice({ kind: 'success', text: '已保存生效' })
+      // 设置向导（§7.6.6）：保存成功上报主进程 → 宠物萌语气泡收起、飞回原位
+      try {
+        getPetBridge().settings?.notifySaved?.()
+      } catch {
+        /* 旧 preload 无 settings 段 / bridge 缺失：静默（向导编排降级为"仅关闭时飞回"） */
+      }
       return
     }
 

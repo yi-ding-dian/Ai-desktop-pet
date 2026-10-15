@@ -1,8 +1,8 @@
 /**
- * 主题体系 v2（设计文档 §7.6.4）——跨窗口共享：设置窗 / 宠物窗 / 黑板窗。
+ * 主题体系 v2（设计文档 §7.6.4）——跨窗口共享：设置窗 / 宠物窗 / 黑板窗 / 自绘托盘菜单窗。
  *
  * 三层结构（对齐用户熟悉的 svn-git 主题范式）：
- *  - 全部主题：6 套预设（暗夜/墨蓝/紫夜/明亮/暖米/薄荷）+ 跟随系统；
+ *  - 全部主题：8 套预设（暗夜/墨蓝/紫夜/粉黛/明亮/暖米/薄荷/樱粉）+ 跟随系统；
  *  - 自定义配色：4 个核心色（bg/panel/text/accent）实时预览，其余变量自动派生（palette.ts）；
  *  - 我的主题：自定义命名保存到 localStorage（pet-my-themes），可应用 / 删除。
  *
@@ -15,14 +15,14 @@
  *    其他窗口收到即应用（不只 key——删除"正在被别的窗口使用"的自定义也能一致回退）；
  *  - 每个窗口入口调一次 initTheme()（返回清理函数）。
  *
- * 约定：settings.html 的 head 内联脚本做"首帧防闪烁"（按同一存储格式解析基调），
- * 改存储键名/默认值需同步该脚本。
+ * 约定：settings.html / tray-menu.html 的 head 内联脚本做"首帧防闪烁"（按同一存储格式
+ * 解析基调），改存储键名/默认值需同步这些脚本。
  */
 import { deriveThemeVars, toneOf, type ThemeColors } from './palette'
-import { findPreset, PRESET_THEMES, type PresetColorKey } from './presets'
+import { DEFAULT_PRESET_KEY, findPreset, PRESET_THEMES, type PresetColorKey } from './presets'
 
 export type { ThemeColors } from './palette'
-export { PRESET_THEMES, type PresetColorKey, type PresetTheme } from './presets'
+export { PRESET_THEMES, DEFAULT_PRESET_KEY, type PresetColorKey, type PresetTheme } from './presets'
 export { deriveThemeVars, toHex, luminance } from './palette'
 
 /** 预设 key + system（跟随系统） */
@@ -45,8 +45,12 @@ export const MY_THEMES_STORAGE_KEY = 'pet-my-themes'
 /** BroadcastChannel 名（同源多窗口共享） */
 export const THEME_CHANNEL_NAME = 'pet-theme'
 
-/** 默认选择（暗夜） */
-export const DEFAULT_SELECTION: ThemeSelection = { kind: 'preset', key: 'dark' }
+/**
+ * 默认选择（§7.6.4 v2：默认主题 = 薄荷）。
+ * 兜底路径（无存储 / 数据损坏 / 自定义已删除）统一回退到它；
+ * 注意：只影响"从未选过主题"的新用户，已有 localStorage 选择的用户保持原选择。
+ */
+export const DEFAULT_SELECTION: ThemeSelection = { kind: 'preset', key: DEFAULT_PRESET_KEY }
 
 // ---------------------------------------------------------------- 存储（含旧格式迁移）
 
@@ -61,7 +65,7 @@ export function selectionToRaw(selection: ThemeSelection): string {
   return selection.kind === 'custom' ? `custom:${selection.id}` : `preset:${selection.key}`
 }
 
-/** 存储字符串 → 选择（兼容旧值 'dark'/'light'/'system'；非法 → 默认暗夜） */
+/** 存储字符串 → 选择（兼容旧值 'dark'/'light'/'system'；非法 → 默认薄荷） */
 export function selectionFromRaw(raw: string | null): ThemeSelection {
   const s = (raw ?? '').trim()
   if (!s) return DEFAULT_SELECTION
@@ -125,7 +129,7 @@ function writeMyThemes(list: MyTheme[]): void {
 
 // ---------------------------------------------------------------- 应用
 
-/** 解析选择 → { 基调, 全量变量 }；自定义 id 不存在时回退默认（返回 null 交由调用方处理） */
+/** 解析选择 → { 基调, 全量变量 }；自定义 id 不存在时回退默认（薄荷） */
 function resolveTheme(
   selection: ThemeSelection,
   myThemes: MyTheme[]
@@ -158,7 +162,7 @@ function injectVars(vars: Record<string, string>): void {
 }
 
 /**
- * 应用主题选择（含回退处理）。返回**实际生效**的选择（可能与入参不同：custom 缺失 → 暗夜）。
+ * 应用主题选择（含回退处理）。返回**实际生效**的选择（可能与入参不同：custom 缺失 → 薄荷）。
  * 不在任何存储上留痕迹——写盘由 setThemeSelection 负责。
  */
 export function applyThemeSelection(selection: ThemeSelection, myThemes?: MyTheme[]): ThemeSelection {
@@ -181,7 +185,7 @@ export function currentThemeColors(selection?: ThemeSelection, myThemes?: MyThem
   if (sel.kind === 'custom') {
     const hit = themes.find((t) => t.id === sel.id)
     if (hit) return { ...hit.colors }
-    return { ...findPreset('dark').colors }
+    return { ...findPreset(DEFAULT_PRESET_KEY).colors }
   }
   if (sel.key === 'system') {
     const light = window.matchMedia('(prefers-color-scheme: light)').matches
@@ -262,7 +266,7 @@ export function saveMyTheme(name: string, colors: ThemeColors): MyTheme {
   return item
 }
 
-/** 删除「我的主题」；若删除的是当前使用中的 → 回退默认（暗夜）并应用 */
+/** 删除「我的主题」；若删除的是当前使用中的 → 回退默认（薄荷）并应用 */
 export function deleteMyTheme(id: string): void {
   const list = readMyThemes()
   const next = list.filter((t) => t.id !== id)

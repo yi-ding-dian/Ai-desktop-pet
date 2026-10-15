@@ -363,6 +363,9 @@ body {
   font-family: inherit;
   text-align: left;
   cursor: pointer;
+  /* div[role=radio]（非原生 button）：补 button 的 UA 默认行为——文本不可选中、键盘可达 */
+  user-select: none;
+  -webkit-user-select: none;
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 
@@ -375,17 +378,35 @@ body {
   box-shadow: 0 0 0 2px var(--ui-accent-soft);
 }
 
-/* 预览三色块（背景 / 面板 / 强调） */
-.theme-card-swatches {
-  display: flex;
-  height: 26px;
+/* 色样预览卡（§7.6.4 v2）：mini 示意——底色 = 该主题背景色，
+   内嵌一条面板色块 + 一个强调色圆点/样张（浅色主题下用轻阴影保证面板块可见） */
+.theme-card-preview {
+  position: relative;
+  display: block;
+  height: 42px;
   border: 1px solid var(--ui-border-soft);
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
 }
 
-.theme-card-swatches > span {
-  flex: 1 1 0;
+.theme-card-preview-panel {
+  position: absolute;
+  left: 7px;
+  top: 8px;
+  width: 52%;
+  height: 26px;
+  border-radius: 5px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+}
+
+.theme-card-preview-dot {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .theme-card-name {
@@ -606,8 +627,9 @@ body {
   color: var(--ui-danger);
 }
 
-/* 键盘焦点可见性 */
-button:focus-visible {
+/* 键盘焦点可见性（.theme-card 为 div[role=radio]，不命中 button 选择器） */
+button:focus-visible,
+.theme-card:focus-visible {
   outline: 2px solid var(--ui-accent);
   outline-offset: 1px;
 }

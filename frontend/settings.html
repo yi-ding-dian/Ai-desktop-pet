@@ -8,19 +8,22 @@
       // 首帧防闪烁：在样式/JS 加载前按持久化主题设置明暗基调（data-theme）。
       // 只判基调（dark|light）；具体配色变量由 shared/theme 的 initTheme 注入（几十毫秒内完成）。
       // 存储格式与 src/shared/theme/index.ts 保持一致：'preset:<key>' | 'custom:<id>'
-      //（兼容旧值 'dark' | 'light' | 'system'）——改格式需同步这里。
+      //（兼容旧值 'dark' | 'light' | 'system'）——改格式/默认值需同步这里与 tray-menu.html。
       ;(function () {
         var PRESET_TONE = {
           dark: 'dark',
           blue: 'dark',
           violet: 'dark',
+          plum: 'dark',
           light: 'light',
           warm: 'light',
-          mint: 'light'
+          mint: 'light',
+          sakura: 'light'
         }
-        var tone = 'dark'
+        // 默认主题 = 薄荷（浅色，§7.6.4 v2）；仅有存储值的用户走其自身选择
+        var tone = 'light'
         try {
-          var raw = localStorage.getItem('pet-theme') || 'preset:dark'
+          var raw = localStorage.getItem('pet-theme') || 'preset:mint'
           var key = raw.indexOf('preset:') === 0 ? raw.slice(7) : raw
           if (key === 'system') {
             tone = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'

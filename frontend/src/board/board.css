@@ -447,6 +447,9 @@ body,
 
 /* ---------------------------------------------------------------- 折叠态角标（窗口 24×140，页面铺满） */
 
+/* div[role=button]（非原生 button）：Chromium 131 之前 button 不能作为 flex 容器布局
+   子元素（Electron 33 = Chromium 130 下 icon 与竖排文字会塌/横排），故用 div + 标准
+   flex 布局；user-select/focus 等原 button 的 UA 默认在下方显式补齐 */
 .board-badge {
   position: absolute;
   inset: 0;
@@ -467,6 +470,7 @@ body,
   cursor: pointer;
   outline: none;
   user-select: none;
+  -webkit-user-select: none;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
   transition: background 0.15s, color 0.15s;
 }
@@ -474,6 +478,11 @@ body,
 .board-badge:hover {
   background: var(--ui-solid-hover);
   color: var(--ui-accent-strong);
+}
+
+.board-badge:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -3px; /* 角标贴满窗口，内缩描边防被裁 */
 }
 
 .board-badge-label {

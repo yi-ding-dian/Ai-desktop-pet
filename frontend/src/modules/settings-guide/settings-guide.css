@@ -1,0 +1,55 @@
+/* ============================================================================
+ * 向导萌语气泡（§7.6.6）——宠物右眼右上方的设置向导萌语。
+ *
+ * 定位约定（窗口坐标，见 SettingsGuideBubble.tsx 头注释的换算依据）：
+ *  - 右眼 ≈ (220, 134)：气泡 left 226 / top 54（底缘 ~102，在眼睛上方 30px 左右）；
+ *  - 尾巴 = 左下角旋转 45° 的小方块（::after），尖角朝左下指向宠物；
+ *  - 不遮脸：气泡整体位于右眼右上方（脸部右侧外）。
+ * 改宠物形象 / 容器尺寸 / 相机时，同步微调这里的 left/top。
+ *
+ * 观感跟随主题：底色/文字用 --bubble-bg/--bubble-fg（§7.6.4 变量体系，
+ * 与教学模式头顶气泡同族）；类名独立以免互相牵连。
+ * ========================================================================= */
+
+.settings-guide-bubble {
+  position: absolute;
+  left: 226px;
+  top: 54px;
+  max-width: 154px;
+  padding: 7px 11px;
+  border-radius: 11px 11px 11px 5px; /* 左下角收窄，衔接尾巴 */
+  background: var(--bubble-bg);
+  color: var(--bubble-fg);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+  /* 纯视觉物：不参与鼠标交互（形状上报仍必须包含它，X11 裁剪与交互无关） */
+  pointer-events: none;
+  z-index: 12;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+  animation: guide-bubble-in 0.22s ease-out;
+}
+
+/* 尾巴：左下角小菱形（旋转 45° 的方块），尖角指向宠物（左下方向） */
+.settings-guide-bubble::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  bottom: -4px;
+  width: 9px;
+  height: 9px;
+  background: var(--bubble-bg);
+  transform: rotate(45deg);
+  border-radius: 2px;
+}
+
+@keyframes guide-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

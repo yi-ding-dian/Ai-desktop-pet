@@ -352,18 +352,33 @@ export default function BoardApp(): JSX.Element {
 
   // ---- 渲染
 
+  /** 请求恢复展开（角标点击 / 键盘共用；bridge 可选链容错） */
+  const requestUnfold = (): void => {
+    teaching()?.requestUnfold?.()
+  }
+
   return (
     <div className="board-root">
       {folded ? (
-        <button
-          type="button"
+        // 折叠角标：div[role=button]（刻意不用 <button>——Chromium 131 之前 button 不能作为
+        // flex 容器布局子元素，Electron 33（Chromium 130）下图标与竖排文字会横排/塌陷；
+        // 同 theme-card 真机坑，2026-10-15）
+        <div
           className="board-badge"
+          role="button"
+          tabIndex={0}
           title="展开黑板"
-          onClick={() => teaching()?.requestUnfold?.()}
+          onClick={requestUnfold}
+          onKeyDown={(e) => {
+            if (e.key === ' ' || e.key === 'Enter') {
+              e.preventDefault()
+              requestUnfold()
+            }
+          }}
         >
           <BookIcon />
           <span className="board-badge-label">板书</span>
-        </button>
+        </div>
       ) : (
         <div className="board-body">
           <header className="board-header">

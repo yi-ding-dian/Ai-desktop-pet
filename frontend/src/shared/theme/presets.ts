@@ -1,14 +1,23 @@
 /**
- * 主题预设（shared/theme）：6 套配色 + 跟随系统（共 7 个选项）。
+ * 主题预设（shared/theme）：8 套配色 + 跟随系统（共 9 个选项；§7.6.4 v2）。
  *
  * 每套只定 4 个核心色（bg/panel/text/accent），其余变量由 palette.ts 的
  * deriveThemeVars 统一派生——预设与「我的主题」走同一条路径，观感一致。
  * 「暗夜 / 明亮」的核心色对齐旧版硬编码值（默认观感不变）。
+ * 排序 = 深色组在前、浅色组在后（设置页按此顺序铺卡片）。
  */
 import type { ThemeColors } from './palette'
 
 /** 预设配色 key（不含 system——system 是"跟随系统"，由 index.ts 单独解析） */
-export type PresetColorKey = 'dark' | 'blue' | 'violet' | 'light' | 'warm' | 'mint'
+export type PresetColorKey =
+  | 'dark'
+  | 'blue'
+  | 'violet'
+  | 'plum'
+  | 'light'
+  | 'warm'
+  | 'mint'
+  | 'sakura'
 
 export interface PresetTheme {
   key: PresetColorKey
@@ -38,6 +47,13 @@ export const PRESET_THEMES: readonly PresetTheme[] = [
     colors: { bg: '#171126', panel: '#241a38', text: '#ece6f9', accent: '#e879f9' }
   },
   {
+    // 粉系深色（v2）：深紫红底 + 粉紫强调
+    key: 'plum',
+    name: '粉黛',
+    group: 'dark',
+    colors: { bg: '#221326', panel: '#2f1c34', text: '#f3e7f4', accent: '#ef9fd7' }
+  },
+  {
     key: 'light',
     name: '明亮',
     group: 'light',
@@ -54,10 +70,27 @@ export const PRESET_THEMES: readonly PresetTheme[] = [
     name: '薄荷',
     group: 'light',
     colors: { bg: '#eef7f4', panel: '#ffffff', text: '#1f3a35', accent: '#0d9488' }
+  },
+  {
+    // 粉系浅色（v2）：浅粉底 + 玫红强调
+    key: 'sakura',
+    name: '樱粉',
+    group: 'light',
+    colors: { bg: '#fdf0f4', panel: '#ffffff', text: '#3d2333', accent: '#d6336c' }
   }
 ]
 
-/** 按 key 取预设（未知 key 回退暗夜） */
+/**
+ * 默认预设 key（§7.6.4 v2：默认主题 = 薄荷）。
+ * 单一事实来源：index.ts 的默认选择（无存储/数据损坏时）与 findPreset 的未知 key 兜底共用。
+ */
+export const DEFAULT_PRESET_KEY: PresetColorKey = 'mint'
+
+/** 按 key 取预设（未知 key 回退默认预设「薄荷」——与无存储时的默认选择一致） */
 export function findPreset(key: string): PresetTheme {
-  return PRESET_THEMES.find((p) => p.key === key) ?? PRESET_THEMES[0]
+  return (
+    PRESET_THEMES.find((p) => p.key === key) ??
+    PRESET_THEMES.find((p) => p.key === DEFAULT_PRESET_KEY) ??
+    PRESET_THEMES[0]
+  )
 }

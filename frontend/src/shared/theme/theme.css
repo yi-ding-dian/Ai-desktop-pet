@@ -4,9 +4,10 @@
  * 机制（v2 多配色）：
  *  - 运行时的主题应用在 src/shared/theme/（palette.ts 由 4 个核心色派生全量变量，
  *    index.ts 把结果**内联注入根元素**——内联值优先于本文件的任何规则）；
- *  - 本文件是**无 JS 兜底 + 首帧基线**：:root/[data-theme='dark'] = 暗夜（默认），
- *    [data-theme='light'] = 明亮；initTheme() 挂载后会立即以内联变量覆盖为实际主题
- *    （墨蓝/紫夜/暖米/薄荷/自定义等）；
+ *  - 本文件是**无 JS 兜底 + 首帧基线**：:root/[data-theme='dark'] = 暗夜（深色兜底），
+ *    [data-theme='light'] = 明亮（浅色兜底）；html 首帧防闪烁脚本先按持久化选择定基调
+ *    （默认主题「薄荷」为浅色 → 走 light 兜底），initTheme() 挂载后立即以内联变量覆盖
+ *    为实际主题（墨蓝/紫夜/粉黛/暖米/樱粉/自定义等）；
  *  - 使用方：styles.css / board.css / settings/settings.css 各自 @import 本文件（vite 内联）；
  *  - 变量清单应与 palette.ts 的 THEME_VAR_KEYS 保持一致。
  * 宠物 3D 本体不受影响（渲染层不消费这些变量）。
