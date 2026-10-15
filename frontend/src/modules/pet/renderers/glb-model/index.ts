@@ -31,6 +31,8 @@ import {
   PET_REACTION_DURATION,
   type GlbChannels
 } from './pose'
+import { FACE_EX, FACE_EY_DOWN, FACE_ORIGIN, FACE_PROBE } from './face/config'
+import { FaceOverlay, type FaceFrame } from './face/overlay'
 
 /** dev 态日志（转发到主进程日志，便于无 devtools 验证）；生产构建自动剔除 */
 const devLog = (msg: string): void => {
@@ -112,6 +114,14 @@ export class GlbModelRenderer implements PetRenderer {
   private lastScreenPos = { x: 0, y: 0, ts: -1 }
   private moveSpeedSmooth = 0
 
+  // ---- SVG 表情叠加层（内部实现细节；PetRenderer 接口不变） ----
+  /** 叠在画布之上的 2D 表情层（眨眼/情绪脸；跟随头姿，见 face/overlay.ts） */
+  private readonly face = new FaceOverlay()
+  /** 每帧复用的脸坐标系投影结果（FaceFrame 字段就地更新，避免逐帧分配） */
+  private readonly faceFrame: FaceFrame = { ox: 0, oy: 0, ax: 1, ay: 0, bx: 0, by: 1 }
+  /** 投影用的三个屏幕坐标缓冲 */
+  private readonly faceScreen = { o: { x: 0, y: 0 }, x: { x: 0, y: 0 }, y: { x: 0, y: 0 } }
+
   constructor() {
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.05, 50)
@@ -145,6 +155,9 @@ export class GlbModelRenderer implements PetRenderer {
     }
 
     // ③ WebGL 上下文（懒创建 + 复用；失败则保持空容器）
+    // SVG 表情层的 stage（相对定位包装层）先建好：画布与表情 SVG 都挂在它里面，
+    // 这样绝对定位的 SVG 有可靠基准，且不依赖外部容器的 position 样式
+    const stage = this.face.attach(container)
     if (!this.webgl && !this.webglFailed) {
       try {
         this.webgl = new THREE.WebGLRenderer({
@@ -173,7 +186,8 @@ export class GlbModelRenderer implements PetRenderer {
       canvas.style.display = 'block'
       canvas.style.width = '100%'
       canvas.style.height = '100%'
-      container.appendChild(canvas)
+      // 插到 SVG 之前（DOM 层序：canvas 在下、表情层在上）
+      stage.insertBefore(canvas, stage.firstChild)
       this.applySize()
     }
 
@@ -197,6 +211,7 @@ export class GlbModelRenderer implements PetRenderer {
     // root 出场景但保留（资源可复用，再 mount 时挂回）
     if (this.root && this.root.parent === this.scene) this.scene.remove(this.root)
     this.webgl?.domElement.remove()
+    this.face.detach() // 移除表情层（stage+SVG；情绪/眨眼状态保留）
     this.container = null
     this.lastTs = null
   }
@@ -205,6 +220,7 @@ export class GlbModelRenderer implements PetRenderer {
     this.unmount()
     this.disposed = true // 先置位：加载竞态回调与 contextlost 监听据此静默
     this.loadToken++ // 使在途加载回调失效
+    this.face.dispose()
     this.disposeModelResources()
     if (this.webgl) {
       // 显式丢弃 WebGL 上下文（Chromium 有活跃上下文上限；HMR 反复重建防累积）
@@ -225,11 +241,15 @@ export class GlbModelRenderer implements PetRenderer {
     // 白名单外的值回退 neutral（协议保证不会出现，防御性处理）
     this.emotion = EMOTIONS_SET.has(emotion) ? (emotion as Emotion) : 'neutral'
     this.emotionIntensity = Math.min(1, Math.max(0, intensity))
+    // 同步到 SVG 表情层（脸部表情；与姿态层同一份情绪状态）
+    this.face.setEmotion(this.emotion, this.emotionIntensity)
     devLog(`emotion -> ${emotion} (intensity=${intensity})`)
   }
 
   setState(state: PetState): void {
     this.state = state
+    // 同步到 SVG 表情层（sleeping 时半合眼 + Zzz，见 face/config.ts）
+    this.face.setState(state)
     devLog(`state -> ${state}`)
   }
 
@@ -345,6 +365,8 @@ export class GlbModelRenderer implements PetRenderer {
     this.measureMoveSpeed(ts)
     this.updatePose(dt)
     this.renderOnce()
+    // SVG 表情层跟随（在渲染后投影：此时场景/相机矩阵已刷新，与刚画出的画面完全对齐）
+    this.updateFace(dt)
   }
 
   /** 姿态合成与写入（静态通道阻尼追踪 + 动态起伏 + 反应叠加） */
@@ -449,9 +471,76 @@ export class GlbModelRenderer implements PetRenderer {
   private renderOnce(): void {
     if (this.webgl) this.webgl.render(this.scene, this.camera)
   }
+
+  // ------------------------------------------------------------------ SVG 表情层跟随
+
+  /**
+   * 更新 SVG 表情层：把脸坐标系（原点=两眼中点，见 face/config.ts）的
+   * O、O+ex×probe、O+eyDown×probe 三点投影到屏幕，得到"世界单位 → 屏幕 px"的局部仿射，
+   * 交给叠加层写根组矩阵（整层随头部/整体姿态平移、旋转、缩放）。
+   * 在 renderOnce 之后调用，保证与当前帧画面一致。
+   */
+  private updateFace(dt: number): void {
+    const root = this.root
+    if (!root || !this.container || this.loadState !== 'ready') {
+      this.face.update(dt, null) // 模型未就绪：隐藏叠加层（眨眼计时照常推进，无副作用）
+      return
+    }
+    // 矩阵新鲜化（正常路径下 renderOnce 已刷新；WebGL 不可用时也能正确跟随）
+    root.updateMatrixWorld()
+    this.camera.updateMatrixWorld()
+    this.camera.matrixWorldInverse.copy(this.camera.matrixWorld).invert()
+
+    const screen = this.faceScreen
+    this.projectScreen(_faceTmpA.copy(FACE_ORIGIN_V).applyMatrix4(root.matrixWorld), screen.o)
+    this.projectScreen(
+      _faceTmpB
+        .copy(FACE_EX_V)
+        .multiplyScalar(FACE_PROBE)
+        .add(FACE_ORIGIN_V)
+        .applyMatrix4(root.matrixWorld),
+      screen.x
+    )
+    this.projectScreen(
+      _faceTmpC
+        .copy(FACE_EY_V)
+        .multiplyScalar(FACE_PROBE)
+        .add(FACE_ORIGIN_V)
+        .applyMatrix4(root.matrixWorld),
+      screen.y
+    )
+
+    const f = this.faceFrame
+    f.ox = screen.o.x
+    f.oy = screen.o.y
+    f.ax = (screen.x.x - screen.o.x) / FACE_PROBE
+    f.ay = (screen.x.y - screen.o.y) / FACE_PROBE
+    f.bx = (screen.y.x - screen.o.x) / FACE_PROBE
+    f.by = (screen.y.y - screen.o.y) / FACE_PROBE
+    this.face.update(dt, f)
+  }
+
+  /** 世界坐标 → 容器内屏幕坐标（px，左上原点；与 applySize 的兜底尺寸一致） */
+  private projectScreen(world: THREE.Vector3, out: { x: number; y: number }): void {
+    const w = this.container ? this.container.clientWidth || 208 : 208
+    const h = this.container ? this.container.clientHeight || 208 : 208
+    // Vector3.applyMatrix4 对投影矩阵会自动做透视除法（与 Vector3.project 等价）
+    const v = world.applyMatrix4(this.camera.matrixWorldInverse).applyMatrix4(this.camera.projectionMatrix)
+    out.x = (v.x * 0.5 + 0.5) * w
+    out.y = (1 - (v.y * 0.5 + 0.5)) * h
+  }
 }
 
 // ------------------------------------------------------------------ 工具函数
+
+/** 脸坐标系基础本地向量（从 face/config 构造一次；每帧只读，投影时 copy 到临时向量） */
+const FACE_ORIGIN_V = new THREE.Vector3(FACE_ORIGIN[0], FACE_ORIGIN[1], FACE_ORIGIN[2])
+const FACE_EX_V = new THREE.Vector3(FACE_EX[0], FACE_EX[1], FACE_EX[2])
+const FACE_EY_V = new THREE.Vector3(FACE_EY_DOWN[0], FACE_EY_DOWN[1], FACE_EY_DOWN[2])
+/** 投影临时向量（模块级复用；单线程内"写完即用、用完即弃"，多实例并存也安全） */
+const _faceTmpA = new THREE.Vector3()
+const _faceTmpB = new THREE.Vector3()
+const _faceTmpC = new THREE.Vector3()
 
 /** 情绪白名单集合（防御性回退用；与 protocol 的 EMOTION_VALUES 对齐） */
 const EMOTIONS_SET: ReadonlySet<string> = new Set([
