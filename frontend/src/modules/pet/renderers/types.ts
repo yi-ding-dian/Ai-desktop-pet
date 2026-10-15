@@ -2,10 +2,13 @@
  * PetRenderer：宠物渲染器统一接口（设计文档 §5.3 的"可插拔渲染器"落地）。
  *
  * 设计目标：**换渲染器，不改调用方**。
- * - 当前实现：`part-animation/`（程序化 SVG 部件动画，纯 rAF 驱动，零依赖）——本目录第一个实现；
+ * - 当前实现：
+ *   `glb-model/`（**缺省**：加载 Meshy 生成的兔子 GLB 静态网格，整体姿态驱动）、
+ *   `three-d/`（Three.js 程序化 3D，软胶玩具风）、
+ *   `part-animation/`（程序化 SVG 部件动画，零依赖）——均在 renderers/index.ts 的工厂里注册；
  * - 将来实现：`live2d/`（pixi-live2d-display + Cubism 模型，含自带 speak() 口型），
- *   只需实现同一接口并在 renderers/index.ts 的工厂里注册，PetView 等调用方零改动；
- * - 调用方（src/modules/pet/PetView.tsx）只依赖本接口，不感知具体渲染技术（SVG / Pixi 画布）。
+ *   只需实现同一接口并在工厂里注册，PetView 等调用方零改动；
+ * - 调用方（src/modules/pet/PetView.tsx）只依赖本接口，不感知具体渲染技术（SVG / WebGL 画布）。
  *
  * 生命周期约定：
  *   createPetRenderer() → mount(container) → [setEmotion / setState / setMouth / playReaction...]
@@ -15,10 +18,13 @@
 import type { PetState } from '../../../shared/protocol'
 
 /** 即时反应种类（手势/事件触发的短效动作，播放后自动结束，叠加在情绪表现之上） */
-export type PetReactionKind = 'pet' // 摸头；预留扩展：'poke'（戳）/ 'hug' / 'drag_pickup' 等
+export type PetReactionKind =
+  | 'pet' // 摸头
+  | 'look_around' // 自主行为 look_around：原地张望（左右扫视 + 头部轻摆）
+// 预留扩展：'poke'（戳）/ 'hug' / 'drag_pickup' 等
 
 /** 渲染器标识（日志与调试展示） */
-export type PetRendererName = 'part-animation' | 'live2d'
+export type PetRendererName = 'glb-model' | 'three-d' | 'part-animation' | 'live2d'
 
 export interface PetRenderer {
   /** 渲染器标识（日志/调试用） */

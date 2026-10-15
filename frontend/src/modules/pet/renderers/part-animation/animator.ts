@@ -36,6 +36,7 @@ const NUMERIC_KEYS = (Object.keys(NEUTRAL_POSE) as Array<keyof PetPose>).filter(
 
 const BLINK_DURATION = 0.16 // 一次眨眼总时长（秒）
 const PET_REACTION_DURATION = 0.9 // 摸头反应时长（秒）
+const LOOK_AROUND_DURATION = 2.8 // 张望反应时长（秒；执行器按此循环播放以覆盖行为 duration）
 const HEART_DURATION_MS = 1100 // 单颗心形粒子飘出时长
 const BLUSH_MAX_OPACITY = 0.9 // blush=1 时的实际不透明度
 
@@ -188,9 +189,13 @@ export class PetAnimator {
   }
 
   playReaction(kind: PetReactionKind): void {
-    if (kind !== 'pet') return
-    this.reaction = { kind, elapsed: 0, duration: PET_REACTION_DURATION }
-    this.springVy -= 240 // 向上弹一下（峰值约 17px）
+    if (kind === 'pet') {
+      this.reaction = { kind, elapsed: 0, duration: PET_REACTION_DURATION }
+      this.springVy -= 240 // 向上弹一下（峰值约 17px）
+    } else if (kind === 'look_around') {
+      // 张望：只驱动视线/头部扫视（见 update 的 lookAround 段），无弹跳与心形粒子
+      this.reaction = { kind, elapsed: 0, duration: LOOK_AROUND_DURATION }
+    }
   }
 
   // ---------------- 每帧推进 ----------------
@@ -238,20 +243,27 @@ export class PetAnimator {
     this.springVy += (-180 * this.springY - 11 * this.springVy) * dt
     this.springY += this.springVy * dt
 
-    // ⑤ 摸头反应：包络（快进 → 保持 → 缓出）+ 心形粒子
+    // ⑤ 即时反应：摸头（包络 + 心形粒子）/ 张望（视线与头部左右扫）
     let reactEnv = 0
+    let lookAroundEnv = 0
+    let lookAroundSweep = 0
     let hearts: Array<HeartFrame | null> = this.cfg.hearts.anchors.map(() => null)
     if (this.reaction) {
       this.reaction.elapsed += dt
       const p = this.reaction.elapsed / this.reaction.duration
       if (p >= 1) {
         this.reaction = null
-      } else {
+      } else if (this.reaction.kind === 'pet') {
         const RISE = 0.12
         const FALL = 0.35
         const env = p < RISE ? p / RISE : p > 1 - FALL ? (1 - p) / FALL : 1
         reactEnv = smoothstep(env)
         hearts = this.computeHearts(this.reaction.elapsed * 1000)
+      } else if (this.reaction.kind === 'look_around') {
+        const FADE = 0.15
+        const env = p < FADE ? p / FADE : p > 1 - FADE ? (1 - p) / FADE : 1
+        lookAroundEnv = smoothstep(env)
+        lookAroundSweep = Math.sin(p * Math.PI * 4) // 两个来回的扫视
       }
     }
 
@@ -291,15 +303,19 @@ export class PetAnimator {
     // 翅膀：呼吸带动微摆 + 反应展开
     const wingAngle = p.wingAngle + Math.sin(this.breathPhase * 0.5) * 1.6 - 14 * reactEnv
 
+    // 张望叠加：视线左右扫 + 头部轻摆（look_around 行为期间）
+    const lookX = clamp(p.lookX + 0.65 * lookAroundSweep * lookAroundEnv, -1, 1)
+    const lookAroundTilt = 3.2 * lookAroundSweep * lookAroundEnv
+
     return {
       scaleX: 1 - 0.013 * breath,
       scaleY: 1 + 0.026 * breath,
-      rotate: p.tilt + sway + reactSway,
+      rotate: p.tilt + sway + reactSway + lookAroundTilt,
       offsetY: p.restOffsetY + this.springY + walkBob,
       eyeRound,
       eyeArc,
       eyelidScale: lidScale,
-      pupilX: p.lookX * 9,
+      pupilX: lookX * 9,
       pupilY: p.lookY * 8,
       pupilScale: p.pupilScale,
       browAngry: p.browAngry,
