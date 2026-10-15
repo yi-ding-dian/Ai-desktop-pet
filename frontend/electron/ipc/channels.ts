@@ -28,7 +28,25 @@ export const IPC = {
   /** 查询系统空闲秒数（invoke → number；powerMonitor.getSystemIdleTime） */
   SYSTEM_GET_IDLE_SECONDS: 'system:get-idle-seconds',
   /** 查询后端状态快照（invoke → BackendSnapshot；渲染进程晚订阅时补状态） */
-  BACKEND_GET_SNAPSHOT: 'backend:get-snapshot'
+  BACKEND_GET_SNAPSHOT: 'backend:get-snapshot',
+  /** 教学模式：请求进入（payload: TeachingEnterReason；宠物面"关键词"或内部） */
+  TEACHING_ENTER: 'teaching:enter',
+  /** 教学模式：请求退出（宠物面"下课"关键词 / 黑板面 × 按钮共用；主进程按 sender 识别来源） */
+  TEACHING_EXIT: 'teaching:exit',
+  /** 教学模式：宠物面上报镜像事件（payload: TeachingMirrorEvent，主进程路由给黑板） */
+  TEACHING_REPORT_MIRROR: 'teaching:report-mirror',
+  /** 教学模式：请求黑板跳转（payload: messageId，点击头顶问题气泡） */
+  TEACHING_GOTO: 'teaching:goto',
+  /** 教学模式：拖拽开始（无 payload；教学模式中触发黑板折叠让路） */
+  TEACHING_DRAG_START: 'teaching:drag-start',
+  /** 教学模式：黑板输入条发送（payload: text，主进程路由给宠物窗口执行 WS 发送） */
+  TEACHING_REQUEST_SEND: 'teaching:request-send',
+  /** 教学模式：黑板角标点击请求恢复展开（无 payload） */
+  TEACHING_REQUEST_UNFOLD: 'teaching:request-unfold',
+  /** 教学模式：黑板渲染就绪（主进程收到后下发首批数据） */
+  TEACHING_READY: 'teaching:ready',
+  /** 教学模式：查询状态（invoke → TeachingStatePayload） */
+  TEACHING_GET_STATE: 'teaching:get-state'
 } as const
 
 /** 通道名：主 → 渲染（webContents.send 广播） */
@@ -44,7 +62,13 @@ export const IPC_EVENTS = {
   /** 后端就绪（payload: BackendReadyPayload，含 WS 端口与 hello token） */
   BACKEND_READY: 'backend:ready',
   /** 魔法球动画：宠物遭到捕获/释放（payload: FxPetReactionPayload；只发宠物窗口，渲染侧播 captured/released 反应） */
-  PET_FX_REACTION: 'pet:fx-reaction'
+  PET_FX_REACTION: 'pet:fx-reaction',
+  /** 教学模式：状态广播（payload: TeachingStatePayload；双端都收——宠物面走位/气泡/面板，黑板面视图） */
+  TEACHING_STATE_CHANGED: 'teaching:state-changed',
+  /** 教学模式：黑板收件箱（payload: TeachingBoardInbox；只发黑板窗口，单通道多指令，先例见 IPC_FX.COMMAND） */
+  TEACHING_BOARD_INBOX: 'teaching:board-inbox',
+  /** 教学模式：黑板输入条发送请求（payload: {text}；只发宠物窗口，宠物面收到后执行 WS user_message 发送） */
+  TEACHING_SEND_REQUEST: 'teaching:send-request'
 } as const
 
 /** 通道名：魔法球捕获动画（fx 域：主进程 ↔ fx 动画页） */
@@ -75,6 +99,40 @@ export interface FxPetReactionPayload {
   /** captured = 被魔法球抓住（隐藏动画）；released = 被放回原位（显示动画） */
   kind: 'captured' | 'released'
 }
+
+// ------------------------------------------------------------------ 教学模式（P5，设计文档 §7.5）
+
+/** 进入教学模式的触发来源（日志/调试用） */
+export type TeachingEnterReason = 'menu' | 'keyword' | 'debug'
+
+/** 教学模式状态（主进程为唯一权威；两渲染面只读） */
+export interface TeachingStatePayload {
+  mode: 'normal' | 'teaching'
+  /** 仅 mode=teaching 有意义：黑板是否处于折叠（角标）态 */
+  folded: boolean
+  /** 讲台位目标屏幕坐标（进入/恢复教学模式时给出；宠物面据此走位） */
+  podium?: Point
+  /** 状态变化原因（'menu' | 'keyword' | 'drag' | 'unfold' | 'exit' | 'ready' 等，日志用） */
+  reason?: string
+}
+
+/**
+ * 镜像事件（宠物面 → 主 → 黑板面）：
+ * 对话主体仍在宠物窗口的 WS 连接上，黑板是"哑显示"——宠物面收到这些事件后镜像一份。
+ */
+export type TeachingMirrorEvent =
+  | { kind: 'user_message'; text: string }
+  | { kind: 'reply_start'; messageId: string }
+  | { kind: 'token'; messageId: string; text: string }
+  | { kind: 'reply_end'; messageId: string; fullText: string; interrupted: boolean }
+  | { kind: 'history'; messages: { id: string; role: 'user' | 'assistant'; text: string }[] }
+
+/** 黑板收件箱指令（主 → 黑板面；单通道多指令） */
+export type TeachingBoardInbox =
+  | { type: 'mirror'; event: TeachingMirrorEvent }
+  | { type: 'goto'; messageId: string }
+  /** expand = 卷出恢复；fold = 折叠成角标；exit = 退出教学模式（滑出收起） */
+  | { type: 'visibility'; action: 'expand' | 'fold' | 'exit' }
 
 /** 后端子进程状态（设计文档 §5.2 状态机；IPC 广播取值） */
 export type BackendState = 'starting' | 'ready' | 'failed' | 'stopped'
@@ -163,6 +221,38 @@ export interface PetBridgeApi {
     onCommand(cb: (cmd: FxCommand) => void): () => void
     /** 宠物窗口专用：订阅"被抓/被放"反应事件（隐藏/显示动画触发）；返回取消订阅函数 */
     onPetReaction(cb: (payload: FxPetReactionPayload) => void): () => void
+  }
+  /**
+   * 教学模式（P5，设计文档 §7.5）：讲台 + 黑板形态。
+   *  - 宠物面（pet 窗口）：enter/exit/reportMirror/goto/notifyDragStart + onState；
+   *  - 黑板面（?surface=board）：requestSend/requestUnfold/ready/exit + onBoardInbox/onState。
+   * 注："黑板面专属"的方法在宠物面调用、"宠物面专属"在黑板面调用均为无害空操作（主进程按 sender 过滤）。
+   */
+  teaching: {
+    /** 查询当前教学模式状态（invoke → TeachingStatePayload） */
+    getState(): Promise<TeachingStatePayload>
+    /** 订阅教学模式状态变化（两个面都可用）；返回取消订阅函数 */
+    onState(cb: (state: TeachingStatePayload) => void): () => void
+    /** 宠物面：请求进入教学模式（reason: 'menu' 托盘 / 'keyword' 聊天关键词） */
+    enter(reason: TeachingEnterReason): void
+    /** 请求退出教学模式（宠物面"下课"关键词 / 黑板面 × 按钮共用） */
+    exit(): void
+    /** 宠物面：上报镜像对话事件（主进程路由给黑板） */
+    reportMirror(event: TeachingMirrorEvent): void
+    /** 宠物面：请求黑板跳转到某消息（点击头顶问题气泡） */
+    goto(messageId: string): void
+    /** 宠物面：拖拽开始（教学模式中触发黑板折叠让路；非教学模式主进程忽略） */
+    notifyDragStart(): void
+    /** 黑板面：输入条发送（主进程路由给宠物窗口执行 WS 发送） */
+    requestSend(text: string): void
+    /** 宠物面：订阅"黑板输入条发送请求"（黑板打字 → 主进程路由 → 宠物面执行 WS 发送）；返回取消订阅函数 */
+    onSendRequest(cb: (payload: { text: string }) => void): () => void
+    /** 黑板面：角标点击请求恢复展开 */
+    requestUnfold(): void
+    /** 黑板面：渲染就绪（主进程收到后下发首批数据） */
+    ready(): void
+    /** 黑板面：订阅收件箱（镜像 / 跳转 / 显隐命令）；返回取消订阅函数 */
+    onBoardInbox(cb: (item: TeachingBoardInbox) => void): () => void
   }
   /** 后端子进程（设计文档 §5.2）：状态订阅 + 快照查询；渲染进程不直接管理进程 */
   backend: {

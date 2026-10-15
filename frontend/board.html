@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>黑板</title>
+    <style>
+      /* 黑板窗（board 域）：html/body 必须完全透明——深色板体与圆角都在板体元素上
+         （窗口本体 frameless + 透明；折叠态窗口为 24×140 的小角标，同样由页面自适应铺满） */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/board/main.tsx"></script>
+  </body>
+</html>

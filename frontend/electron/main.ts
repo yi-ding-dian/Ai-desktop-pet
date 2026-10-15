@@ -13,6 +13,7 @@ import { backendManager } from './backend-process'
 import { createTray } from './tray'
 import { runHideAnimation, runShowAnimation, destroyFx } from './fx'
 import { runAnchorSelfTest } from './fx/anchor'
+import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
 import type { PlatformWindow } from './window'
 
 /** 宠物窗口尺寸（逻辑基准 400x400；渲染侧按 100vw/100vh 自适应） */
@@ -147,11 +148,21 @@ if (!app.requestSingleInstanceLock()) {
       console.log('[main] 关闭窗口 → 躲进托盘（退出请用托盘菜单）')
       void runHideAnimation(petWin)
     })
-    // 系统托盘：常驻入口（显示/隐藏、退出）；窗口显隐状态驱动其菜单文案
+    // 系统托盘：常驻入口（显示/隐藏、教学模式、退出）；窗口显隐状态驱动其菜单文案
     tray = createTray(petWin)
     registerDebugShortcuts()
+    // 教学模式（P5，设计文档 §7.5）编排中心：注册 IPC（托盘菜单/渲染面请求都进这里）；
+    // 黑板窗口由它按需创建（进入教学模式前不存在）
+    initTeaching(petWin)
     // 后端子进程与窗口并行启动（design §3.4）；就绪后经 IPC 下发 port/token
     backendManager.start()
+
+    // dev/排障逃生门：PET_TEACHING_AUTOSTART=1 → ready 3s 后自动进入教学模式
+    // （先例：PET_ANCHOR_SELFTEST；留给无 GUI 交互环境的自检路径）
+    if (process.env['PET_TEACHING_AUTOSTART'] === '1') {
+      console.log('[main] PET_TEACHING_AUTOSTART=1 → 3s 后自动进入教学模式（debug）')
+      setTimeout(() => void enterTeaching('debug'), 3000)
+    }
   })
 
   // 单窗口应用兜底：窗口被真关闭（仅退出流程中）后走应用退出；平时 close 已被"躲进托盘"拦截
@@ -181,5 +192,7 @@ if (!app.requestSingleInstanceLock()) {
     tray = null
     // 魔法球动画窗（若存在）随退出直接销毁——退出链路不播动画、不做等待
     destroyFx()
+    // 黑板窗口（若存在）同样直接销毁（教学模式编排中心复位为 normal）
+    destroyTeaching()
   })
 }

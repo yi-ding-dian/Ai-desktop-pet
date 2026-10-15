@@ -241,3 +241,58 @@ body,
 .status-speaking {
   color: #9fd8ff;
 }
+
+/* ---------- 教学模式（P5 §7.5） ---------- */
+
+/* 头顶问题气泡容器（课堂目录）：窗口顶部居中区，从窗口顶 y=4 往下纵向堆叠（最新在顶、往下更旧）。
+   容器本体不拦截鼠标（pointer-events:none，不挡宠物摸头/拖拽），仅气泡元素自身可点。
+   可见时必须纳入交互矩形上报（X11 setShape 会裁掉未上报区域）——见 App.tsx rects 计算 */
+.teaching-bubbles {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* 单条问题气泡：高 30、单行省略；深色半透明与黑板（§7.5.2 深色板面）呼应 */
+.teaching-bubble {
+  height: 30px;
+  line-height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: rgba(18, 20, 28, 0.85);
+  color: #e8ecf4;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: auto;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.teaching-bubble:hover {
+  background: rgba(48, 58, 82, 0.95);
+}
+
+/* "+N" 小徽标：超过 4 条时提示省略的旧问题数 */
+.teaching-bubble-more {
+  align-self: center;
+  padding: 1px 8px;
+  border-radius: 9px;
+  background: rgba(18, 20, 28, 0.7);
+  color: #cfd8e6;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* 聊天面板收起（教学模式展开态）：display:none 保留组件挂载——消息/输入状态不丢 */
+.chat-panel-hidden {
+  display: none;
+}

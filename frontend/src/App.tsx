@@ -7,8 +7,12 @@
  * P1 打通后：WS 连接与后端状态经 shared/ws-client 与 pet-bridge 接入；
  * 宠物本体由 pet 域（§5.3 可插拔渲染器）提供——当前为程序化 SVG 部件动画，
  * 将来接入 Live2D 渲染器时只替换渲染器实现，本文件不需要改动。
+ *
+ * P5 教学模式（§7.5）：App 侧接线——onState 订阅（面板收起/气泡显隐/讲台走位）、
+ * 头顶问题气泡（TeachingBubbles）集成与形状上报、拖拽联动折叠（notifyDragStart）。
+ * 对话镜像/统一发送等无 UI 部分在 modules/teaching 域内实现。
  */
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { getPetBridge } from './shared/pet-bridge'
 import { setupWsFromBridge } from './shared/ws-client/bridge'
 import type { WsClient, WsConnectionState } from './shared/ws-client'
@@ -20,23 +24,39 @@ import {
   interruptPetBehavior,
   subscribeBehaviorStatus,
   setPetConversationActive,
+  setPetState,
   type BehaviorStatus
 } from './modules/pet'
+import {
+  setupTeachingPetSide,
+  subscribeTeachingState,
+  subscribeTeachingBubbles,
+  gotoTeachingBubble,
+  notifyTeachingDragStart,
+  TeachingBubbles,
+  type TeachingBubbleItem
+} from './modules/teaching'
 import {
   setupVoice,
   subscribeVoiceSpeaking,
   playDebugTone,
   installVoiceDebugHook
 } from './modules/voice'
-import type { BackendState, WindowDebugState } from '../electron/ipc/channels'
+import type { BackendState, TeachingStatePayload, WindowDebugState } from '../electron/ipc/channels'
 import type { PetState } from './shared/protocol'
-import type { Rect } from '../electron/window'
+import type { Point, Rect } from '../electron/window'
 
 const INITIAL_DEBUG_STATE: WindowDebugState = {
   clickThrough: true,
   alwaysOnTop: true,
   hitboxVisible: false
 }
+
+/**
+ * 教学模式折叠判定阈值（px）：pointerdown 后位移超过它才算"真拖拽"→ 通知主进程折叠黑板。
+ * 与 PetView 的点击判定（TAP_MOVE_THRESHOLD=6）同值——"轻点=摸头，拖动=让路"语义互斥。
+ */
+const TEACHING_DRAG_NOTIFY_PX = 6
 
 /** 宠物状态机 → 中文展示（protocol.py StateData 全量取值） */
 const STATE_LABEL: Record<PetState, string> = {
@@ -84,9 +104,20 @@ export default function App(): ReactElement {
    * Ctrl+Shift+D 切换（渲染侧 keydown + 主进程全局快捷键事件两条路径，均翻转本状态）
    */
   const [debugBarVisible, setDebugBarVisible] = useState(false)
+  /** 教学模式状态（P5 §7.5；主进程为权威，teaching 域 onState 订阅镜像到此处驱动 UI） */
+  const [teachingState, setTeachingState] = useState<TeachingStatePayload>({ mode: 'normal', folded: false })
+  /** 头顶问题气泡列表（教学模式中用户提问；课堂目录，点击回看） */
+  const [teachingBubbles, setTeachingBubbles] = useState<TeachingBubbleItem[]>([])
   const hitboxRef = useRef<HTMLDivElement | null>(null)
   const statusBarRef = useRef<HTMLDivElement | null>(null)
   const chatPanelRef = useRef<HTMLDivElement | null>(null)
+  /** 头顶气泡容器（教学模式可见时纳入交互矩形上报；X11 形状裁剪会裁掉未上报区域） */
+  const teachingBubblesRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * 教学讲台走位任务（进入/恢复教学模式时宠物走回讲台位）：
+   * seq = 任务序号（新任务/拖拽取消使旧任务失效）；active = 是否正在走位（拖拽需取消窗口缓动）
+   */
+  const teachingWalkRef = useRef<{ seq: number; active: boolean }>({ seq: 0, active: false })
   const hoveringRef = useRef(false)
   const draggingRef = useRef(false)
 
@@ -110,6 +141,75 @@ export default function App(): ReactElement {
 
   // 行为执行状态（状态栏展示"它正在做什么"；须在 setup 的 effect 之后声明）
   useEffect(() => subscribeBehaviorStatus(setBehaviorStatus), [])
+
+  // ---- 教学模式接线（P5 §7.5）：onState 分发 / 黑板输入转发 / 对话镜像均在 teaching 域内实现 ----
+  // 注：新增 bridge API 需重启 Electron 主进程才可用；旧 preload 无 teaching 段时静默跳过
+  useEffect(() => setupTeachingPetSide(wsClient), [wsClient])
+
+  /**
+   * 讲台走位（进入教学模式 / 折叠恢复时）：宠物走回讲台位（复用 moveTo 缓动）。
+   * - 距离 ≤30px 不动（已在讲台位）；
+   * - 走位前中断进行中的自主行为（防窗口缓动抢控制权）；
+   * - 中断后稍候再置 walking：行为执行器中断路径的收尾（经 IPC 往返回渲染侧）会
+   *   setPetState('idle')，立即置 walking 会被迟到事件覆盖掉；
+   * - 拖拽打断 / 退出教学 / 新走位发生时旧任务作废（seq 守卫），被取消的旧任务不再回写状态。
+   */
+  const walkToTeachingPodium = useCallback(async (podium: Point): Promise<void> => {
+    const walk = teachingWalkRef.current
+    const mySeq = ++walk.seq
+    walk.active = true // 任务进行中（含前置阶段）——拖拽/退出可经 cancelTeachingWalk 作废
+    let moved = false
+    try {
+      const geo = await getPetBridge().window.getGeometry()
+      if (walk.seq !== mySeq) return
+      if (Math.hypot(geo.pos.x - podium.x, geo.pos.y - podium.y) <= 30) return
+      interruptPetBehavior('进入教学模式')
+      await new Promise((resolve) => window.setTimeout(resolve, 60))
+      if (walk.seq !== mySeq) return
+      moved = true
+      setPetState('walking')
+      await getPetBridge().window.moveTo(podium.x, podium.y, 1200)
+    } catch (err) {
+      console.error('[teaching] 讲台走位失败：', err)
+    } finally {
+      if (walk.seq === mySeq) {
+        walk.active = false
+        if (moved) setPetState('idle')
+      }
+    }
+  }, [])
+
+  /** 取消进行中的讲台走位（用户拖拽打断 / 退出教学模式）：作废任务 + 停窗口缓动 + 回 idle */
+  const cancelTeachingWalk = useCallback((reason: string): void => {
+    const walk = teachingWalkRef.current
+    if (!walk.active) return
+    walk.active = false
+    walk.seq += 1
+    getPetBridge().window.cancelMove()
+    setPetState('idle')
+    console.log(`[teaching] 讲台走位取消（${reason}）`)
+  }, [])
+
+  // ---- 教学状态/气泡订阅：面板收起、气泡显隐、讲台走位（onState 经 teaching 域分发到此处） ----
+  useEffect(() => {
+    const offState = subscribeTeachingState((state) => {
+      setTeachingState(state)
+      if (state.mode !== 'teaching') {
+        // 退出教学模式：在跑的讲台走位一并取消（气泡已由 teaching 域清空）
+        cancelTeachingWalk('退出教学模式')
+        return
+      }
+      // 进入与折叠恢复（reason='unfold'）走同一判定：展开态 + 有讲台位 → 回讲台（>30px 才走）
+      if (!state.folded && state.podium) {
+        void walkToTeachingPodium(state.podium)
+      }
+    })
+    const offBubbles = subscribeTeachingBubbles(setTeachingBubbles)
+    return () => {
+      offState()
+      offBubbles()
+    }
+  }, [walkToTeachingPodium, cancelTeachingWalk])
 
   // ---- dev 调试：V 键播放合成测试音（验证"帧→播放→口型→清理"全链路；输入框内不拦截） ----
   useEffect(() => {
@@ -172,6 +272,9 @@ export default function App(): ReactElement {
     return () => offs.forEach((off) => off())
   }, [wsClient])
 
+  /** 教学模式展开态（气泡显示 + 聊天面板收起；折叠=让路态：气泡藏、聊天面板恢复可打字） */
+  const teachingExpanded = teachingState.mode === 'teaching' && !teachingState.folded
+
   // ---- 悬停接管：mousemove 检测光标是否在宠物 hitbox 内 ----
   // 简化：矩形 hitbox；后续接 Live2D 后可升级为像素级 hit-test（画布 alpha 采样）。
   // Linux：物理穿透由窗口形状静态保证，本逻辑负责"形状接管 ↔ 全窗接管"的动态切换；
@@ -205,6 +308,9 @@ export default function App(): ReactElement {
     const bridge = getPetBridge()
     let rafId = 0
     let pending: { x: number; y: number } | null = null
+    /** 教学模式折叠判定：本次拖拽的起点（screen 坐标）与"已通知折叠"标志（每次按下重置） */
+    let teachingDragOrigin: { x: number; y: number } | null = null
+    let teachingDragNotified = false
 
     const flush = (): void => {
       rafId = 0
@@ -219,6 +325,10 @@ export default function App(): ReactElement {
       // 用户开始摸头/拖拽 → 立即中止自主行为（设计文档 §4.5.2 不打扰原则：
       // 行为永不抢占用户交互；中止后执行器会上报 behavior_done{interrupted:true}）
       interruptPetBehavior('用户触摸/抓取')
+      // 教学模式中"拖动=让路"的折叠通知**不在此处**（按下即通知会把轻点摸头误判为拖拽）：
+      // 改为 pointermove 位移超过 TEACHING_DRAG_NOTIFY_PX 才通知一次（见 handlePointerMove）
+      teachingDragOrigin = { x: e.screenX, y: e.screenY }
+      teachingDragNotified = false
       draggingRef.current = true
       el.setPointerCapture(e.pointerId)
       console.log('[pet] drag start')
@@ -228,6 +338,19 @@ export default function App(): ReactElement {
 
     const handlePointerMove = (e: PointerEvent): void => {
       if (!draggingRef.current) return
+      // 教学模式中"拖动=让路"：位移超过阈值才通知一次折叠（轻点摸头不会触发）
+      if (
+        !teachingDragNotified &&
+        teachingDragOrigin &&
+        Math.hypot(e.screenX - teachingDragOrigin.x, e.screenY - teachingDragOrigin.y) >
+          TEACHING_DRAG_NOTIFY_PX
+      ) {
+        teachingDragNotified = true
+        notifyTeachingDragStart()
+      }
+      // 教学讲台走位进行中被拖拽打断：作废走位任务并取消窗口缓动（拖拽与缓动互斥，
+      // 同刻两个 setBounds 源会抢窗口控制权）
+      cancelTeachingWalk('用户拖拽')
       // rAF 节流：pointermove 频率可能远高于帧率，每帧最多发一次坐标
       pending = { x: e.screenX, y: e.screenY }
       if (!rafId) rafId = requestAnimationFrame(flush)
@@ -236,6 +359,7 @@ export default function App(): ReactElement {
     const handlePointerUp = (e: PointerEvent): void => {
       if (!draggingRef.current) return
       draggingRef.current = false
+      teachingDragOrigin = null
       // 最后对齐到抬起位置，再结束拖拽
       bridge.window.dragMove({ x: e.screenX, y: e.screenY })
       if (rafId) cancelAnimationFrame(rafId)
@@ -262,8 +386,9 @@ export default function App(): ReactElement {
 
   // ---- 可交互区域上报（Linux 用作 X11 形状穿透的输入区） ----
   // 组成：宠物视觉包围盒（见下；必须 ≥ 渲染范围，防止被形状裁剪）+ hitbox + 聊天面板 + 状态栏（显示时）
-  // 聊天面板尺寸会随消息变化，用 ResizeObserver 跟随，rAF 合并上报频次。
-  // 依赖 debugBarVisible：调试栏显隐时容器挂载/卸载，需重建观察并重报矩形（隐藏时不含状态栏）。
+  //      + 头顶问题气泡容器（教学模式展开态挂载时——X11 形状裁剪会裁掉未上报区域，踩过坑）
+  // 聊天面板/气泡尺寸会随消息变化，用 ResizeObserver 跟随，rAF 合并上报频次。
+  // 依赖 debugBarVisible/teachingExpanded：容器挂载/卸载时，需重建观察并重报矩形（隐藏时不含对应容器）。
   useEffect(() => {
     const bridge = getPetBridge()
     let rafId = 0
@@ -273,7 +398,12 @@ export default function App(): ReactElement {
       // 形状矩形必须 ≥ 形象渲染范围（含 SVG 表情符号如头顶 Zzz/"？"），否则形象被裁。
       // 调整形象尺寸 / 表情元素位置时，同步调整此值。
       const rects: Rect[] = [{ x: 65, y: 8, width: 270, height: 340 }]
-      for (const el of [hitboxRef.current, chatPanelRef.current, statusBarRef.current]) {
+      for (const el of [
+        hitboxRef.current,
+        chatPanelRef.current,
+        statusBarRef.current,
+        teachingBubblesRef.current
+      ]) {
         if (!el) continue
         const r = el.getBoundingClientRect()
         if (r.width === 0 || r.height === 0) continue
@@ -299,7 +429,12 @@ export default function App(): ReactElement {
 
     report()
     const observers: ResizeObserver[] = []
-    for (const el of [hitboxRef.current, chatPanelRef.current, statusBarRef.current]) {
+    for (const el of [
+      hitboxRef.current,
+      chatPanelRef.current,
+      statusBarRef.current,
+      teachingBubblesRef.current
+    ]) {
       if (!el) continue
       const ro = new ResizeObserver(report)
       ro.observe(el)
@@ -311,7 +446,7 @@ export default function App(): ReactElement {
       observers.forEach((ro) => ro.disconnect())
       window.removeEventListener('resize', report)
     }
-  }, [debugBarVisible])
+  }, [debugBarVisible, teachingExpanded, teachingState.mode])
 
   return (
     <div className="app-root">
@@ -338,8 +473,18 @@ export default function App(): ReactElement {
         <PetView client={wsClient} />
       </div>
 
-      {/* 对话域：输入框 + 气泡列表（订阅 WS token/emotion/reply_*） */}
-      <ChatPanel client={wsClient} containerRef={chatPanelRef} />
+      {/* 对话域：输入框 + 气泡列表（订阅 WS token/emotion/reply_*）。
+          教学模式展开态收起（内容都在黑板；收起期间消息/输入状态保留，折叠让路或退出即恢复） */}
+      <ChatPanel client={wsClient} containerRef={chatPanelRef} hidden={teachingState.mode === 'teaching'} />
+
+      {/* 教学模式：头顶问题气泡（课堂目录，最多 4 条 + "+N"；点击 → 黑板跳段）。
+          仅展开态挂载（容器参与交互矩形上报）；让路态（折叠）隐藏 */}
+      <TeachingBubbles
+        items={teachingBubbles}
+        visible={teachingExpanded}
+        onClick={gotoTeachingBubble}
+        containerRef={teachingBubblesRef}
+      />
 
       {/* 底部调试栏（开发向信息，默认隐藏；Ctrl+Shift+D 唤出）。
           条件渲染并在隐藏时不挂 ref：交互矩形上报与 ResizeObserver 均跳过该容器 */}

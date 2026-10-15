@@ -11,6 +11,8 @@ import { useCallback, useEffect, useRef, useState, type ReactElement, type RefOb
 import type { WsClient } from '../../shared/ws-client'
 import type { PetState } from '../../shared/protocol'
 import { subscribeVoiceSpeaking, stopVoiceNow } from '../voice'
+// 统一发送入口（P5 §7.5）：关键词（开始教学/下课）+ WS 发送 + 教学模式镜像/气泡都在此
+import { sendUserMessage } from '../teaching'
 import { emotionEmoji } from './emotions'
 
 /** 一条聊天消息（用户 / 助手 / 错误提示） */
@@ -32,6 +34,11 @@ interface ChatPanelProps {
   client: WsClient
   /** App 侧用于把聊天面板纳入窗口可交互矩形（X11 形状穿透） */
   containerRef?: RefObject<HTMLDivElement>
+  /**
+   * 教学模式展开态收起（P5 §7.5：内容都在黑板上）。
+   * display:none 收起、组件保留挂载——消息/输入状态不丢，折叠让路或退出教学即原样恢复。
+   */
+  hidden?: boolean
 }
 
 /** 往消息列表插入 / 更新一条助手消息（token 早于 reply_start 时的兜底） */
@@ -49,7 +56,7 @@ function upsertAssistant(
   return next
 }
 
-export default function ChatPanel({ client, containerRef }: ChatPanelProps): ReactElement {
+export default function ChatPanel({ client, containerRef, hidden = false }: ChatPanelProps): ReactElement {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [connected, setConnected] = useState(client.connectionState === 'connected')
@@ -132,7 +139,8 @@ export default function ChatPanel({ client, containerRef }: ChatPanelProps): Rea
   const handleSend = useCallback((): void => {
     const text = input.trim()
     if (!text) return
-    if (!client.send('user_message', { text })) return
+    // 统一发送入口（teaching 域）：关键词（开始教学/下课）→ WS 发送 → 教学模式镜像 + 头顶气泡
+    if (!sendUserMessage(client, text)) return
     localSeqRef.current += 1
     setMessages((ms) => [
       ...ms,
@@ -160,7 +168,11 @@ export default function ChatPanel({ client, containerRef }: ChatPanelProps): Rea
     messages.some((m) => m.streaming)
 
   return (
-    <div className="chat-panel" ref={containerRef} data-testid="chat-panel">
+    <div
+      className={`chat-panel${hidden ? ' chat-panel-hidden' : ''}`}
+      ref={containerRef}
+      data-testid="chat-panel"
+    >
       <div className="chat-messages" ref={listRef} data-testid="chat-messages">
         {messages.map((m) => (
           <div

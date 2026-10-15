@@ -22,6 +22,7 @@ import { app, Menu, Tray, nativeImage, screen, type BrowserWindow, type MenuItem
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { runHideAnimation, runShowAnimation } from '../fx'
+import { enterTeaching } from '../teaching'
 
 /**
  * 托盘图标基准边长（px）。Linux 托盘区常见高度 22~24px，22 是 Electron 官方建议值；
@@ -100,6 +101,15 @@ export function createTray(win: BrowserWindow): Tray | null {
     },
     { type: 'separator' },
     {
+      label: '教学模式',
+      // 进入教学模式（P5，§7.5）：黑板滑入 + 宠物走讲台位；退出走宠物面关键词或黑板 ×
+      click: () => {
+        console.log('[tray] 菜单：进入教学模式（reason=menu）')
+        void enterTeaching('menu')
+      }
+    },
+    { type: 'separator' },
+    {
       label: '退出',
       // 走既有退出清理链路：app.quit → before-quit 拦截 → backendManager.stop() → 真正退出
       click: () => app.quit()
@@ -124,6 +134,6 @@ export function createTray(win: BrowserWindow): Tray | null {
     void runShowAnimation(win)
   })
 
-  console.log('[tray] 托盘已创建（菜单：显示/隐藏宠物、退出）')
+  console.log('[tray] 托盘已创建（菜单：显示/隐藏宠物、教学模式、退出）')
   return tray
 }

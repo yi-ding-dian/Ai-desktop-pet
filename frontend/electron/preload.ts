@@ -13,6 +13,10 @@ import {
   type FxCommand,
   type FxPetReactionPayload,
   type PetBridgeApi,
+  type TeachingBoardInbox,
+  type TeachingEnterReason,
+  type TeachingMirrorEvent,
+  type TeachingStatePayload,
   type WindowDebugState
 } from './ipc/channels'
 import type { MoveResult, Point, Rect, WindowGeometry } from './window'
@@ -107,6 +111,71 @@ const api: PetBridgeApi = {
       ipcRenderer.on(IPC_EVENTS.PET_FX_REACTION, listener)
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.PET_FX_REACTION, listener)
+      }
+    }
+  },
+
+  teaching: {
+    getState(): Promise<TeachingStatePayload> {
+      return ipcRenderer.invoke(IPC.TEACHING_GET_STATE)
+    },
+
+    onState(cb: (state: TeachingStatePayload) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, state: TeachingStatePayload): void =>
+        cb(state)
+      ipcRenderer.on(IPC_EVENTS.TEACHING_STATE_CHANGED, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.TEACHING_STATE_CHANGED, listener)
+      }
+    },
+
+    enter(reason: TeachingEnterReason): void {
+      ipcRenderer.send(IPC.TEACHING_ENTER, reason)
+    },
+
+    exit(): void {
+      ipcRenderer.send(IPC.TEACHING_EXIT)
+    },
+
+    reportMirror(event: TeachingMirrorEvent): void {
+      ipcRenderer.send(IPC.TEACHING_REPORT_MIRROR, event)
+    },
+
+    goto(messageId: string): void {
+      ipcRenderer.send(IPC.TEACHING_GOTO, messageId)
+    },
+
+    notifyDragStart(): void {
+      ipcRenderer.send(IPC.TEACHING_DRAG_START)
+    },
+
+    requestSend(text: string): void {
+      ipcRenderer.send(IPC.TEACHING_REQUEST_SEND, text)
+    },
+
+    onSendRequest(cb: (payload: { text: string }) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { text: string }): void =>
+        cb(payload)
+      ipcRenderer.on(IPC_EVENTS.TEACHING_SEND_REQUEST, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.TEACHING_SEND_REQUEST, listener)
+      }
+    },
+
+    requestUnfold(): void {
+      ipcRenderer.send(IPC.TEACHING_REQUEST_UNFOLD)
+    },
+
+    ready(): void {
+      ipcRenderer.send(IPC.TEACHING_READY)
+    },
+
+    onBoardInbox(cb: (item: TeachingBoardInbox) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, item: TeachingBoardInbox): void =>
+        cb(item)
+      ipcRenderer.on(IPC_EVENTS.TEACHING_BOARD_INBOX, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.TEACHING_BOARD_INBOX, listener)
       }
     }
   },

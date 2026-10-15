@@ -1,0 +1,480 @@
+/* ============================================================================
+ * 黑板页样式（board 域，设计文档 §7.5）
+ *  - html/body/#root 全透明：窗口本体 frameless + 透明，圆角/深色底都是"板体"样式；
+ *  - 布局全部 100vw/100vh 自适应（窗口尺寸由主进程控制：展开态大矩形 / 折叠态 24×140）；
+ *  - 内容可选中（教学板书要能复制代码），与宠物窗的强交互区不同。
+ * ========================================================================= */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: system-ui, 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif;
+  color: #e8eaf1;
+}
+
+.board-root {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* ---------------------------------------------------------------- 板体（展开态） */
+
+.board-body {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 20, 28, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45);
+}
+
+/* 顶栏：小标题 + 右上角 ×（下课） */
+.board-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 10px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.board-title {
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  color: #8f9aad;
+  user-select: none;
+}
+
+.board-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #98a1b3;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.board-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffb4b4;
+}
+
+/* 内容滚动区 */
+.board-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 24px 22px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  scroll-behavior: auto;
+}
+
+.board-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.board-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+}
+
+.board-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* 空板欢迎态 */
+.board-empty {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #8f9aad;
+  user-select: none;
+}
+
+.board-empty-emoji {
+  font-size: 30px;
+  filter: drop-shadow(0 0 14px rgba(167, 139, 250, 0.55));
+}
+
+.board-empty-text {
+  font-size: 14px;
+  letter-spacing: 0.06em;
+}
+
+/* ---------------------------------------------------------------- 卡片 */
+
+.board-card {
+  border-radius: 10px;
+}
+
+/* 问题卡：小节标题样式（左侧竖条 + 问号徽标） */
+.board-card-question {
+  margin: 22px 0 10px;
+  padding-left: 12px;
+  border-left: 3px solid #a78bfa;
+}
+
+.board-card-question:first-child {
+  margin-top: 8px;
+}
+
+.q-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.q-badge {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(167, 139, 250, 0.16);
+  color: #a78bfa;
+  font-size: 13px;
+  font-weight: 700;
+  transform: translateY(2px);
+}
+
+.q-text {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.55;
+  color: #eef0f7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+/* 讲解卡：正文（流式渐进 Markdown 与终态共用 .md-body 容器） */
+.board-card-reply {
+  margin: 0 0 20px;
+  font-size: 14.5px;
+  line-height: 1.78;
+  color: #dce0ea;
+}
+
+/* 思考中：三个跳动点 */
+.board-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 2px;
+}
+
+.board-thinking span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #7c8698;
+  animation: board-think 1.2s ease-in-out infinite;
+}
+
+.board-thinking span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.board-thinking span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes board-think {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+/* 被打断小注 */
+.board-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8f9aad;
+  user-select: none;
+}
+
+/* goto 跳转的 600ms 高亮闪烁（连续跳同一目标：类先移除再强制重排重启动画） */
+@keyframes board-goto-flash {
+  0% {
+    background-color: rgba(125, 211, 252, 0.22);
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.7), 0 0 26px rgba(125, 211, 252, 0.4);
+  }
+  100% {
+    background-color: rgba(125, 211, 252, 0);
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0), 0 0 0 rgba(125, 211, 252, 0);
+  }
+}
+
+.board-card.goto-flash {
+  animation: board-goto-flash 0.6s ease-out 1;
+}
+
+/* ---------------------------------------------------------------- Markdown 正文（深色底适配） */
+
+.md-body {
+  user-select: text;
+}
+
+.md-body > :first-child {
+  margin-top: 0;
+}
+
+.md-body > :last-child {
+  margin-bottom: 0;
+}
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  margin: 1.05em 0 0.45em;
+  line-height: 1.4;
+  color: #f2f4fa;
+}
+
+.md-body h1 {
+  font-size: 1.35em;
+}
+
+.md-body h2 {
+  font-size: 1.2em;
+}
+
+.md-body h3 {
+  font-size: 1.08em;
+}
+
+.md-body p {
+  margin: 0.55em 0;
+}
+
+.md-body ul,
+.md-body ol {
+  margin: 0.5em 0;
+  padding-left: 1.45em;
+}
+
+.md-body li {
+  margin: 0.22em 0;
+}
+
+.md-body li::marker {
+  color: #a78bfa;
+}
+
+.md-body blockquote {
+  margin: 0.65em 0;
+  padding: 0.35em 1em;
+  border-left: 3px solid rgba(125, 211, 252, 0.65);
+  border-radius: 0 8px 8px 0;
+  background: rgba(125, 211, 252, 0.07);
+  color: #aeb7c8;
+}
+
+.md-body blockquote p {
+  margin: 0.3em 0;
+}
+
+.md-body a {
+  color: #7dd3fc;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(125, 211, 252, 0.5);
+}
+
+.md-body strong {
+  color: #f2f4fa;
+}
+
+.md-body hr {
+  margin: 1em 0;
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.md-body img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+/* 行内代码 */
+.md-body code {
+  font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 0.9em;
+  background: rgba(255, 255, 255, 0.09);
+  color: #c9d1d9;
+  padding: 0.14em 0.4em;
+  border-radius: 5px;
+}
+
+/* 代码块（highlight.js 深色主题 github-dark 之上做板体化覆盖） */
+.md-body pre {
+  margin: 0.7em 0;
+  padding: 11px 14px;
+  background: #14161d;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  overflow: auto;
+}
+
+.md-body pre code {
+  display: block;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.86em;
+  line-height: 1.62;
+}
+
+/* 代码块内容（github-dark 主题的 .hljs{background:#0d1117} 会命中 pre.hljs——
+   已被上方 .md-body pre 规则以更高特异性覆盖为板体化深色底 #14161d，无需再清 pre 背景；
+   此条仅兜底清掉未来 code 若带 hljs 类时的默认 padding/背景） */
+.md-body pre code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
+/* 表格（markdown-it 默认支持） */
+.md-body table {
+  margin: 0.7em 0;
+  border-collapse: collapse;
+  font-size: 0.94em;
+}
+
+.md-body th,
+.md-body td {
+  padding: 5px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.md-body th {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2f4fa;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- 底部输入条 */
+
+.board-composer {
+  flex: none;
+  display: flex;
+  gap: 9px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.board-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 9px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8eaf1;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.board-input::placeholder {
+  color: #6b7486;
+}
+
+.board-input:focus {
+  border-color: rgba(167, 139, 250, 0.65);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.14);
+}
+
+.board-send {
+  flex: none;
+  padding: 0 16px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(167, 139, 250, 0.85);
+  color: #17121f;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.board-send:hover:not(:disabled) {
+  background: #b9a5f8;
+}
+
+.board-send:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------- 折叠态角标（窗口 24×140，页面铺满） */
+
+.board-badge {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(18, 20, 28, 0.92);
+  color: #a78bfa;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  transition: background 0.15s, color 0.15s;
+}
+
+.board-badge:hover {
+  background: rgba(30, 34, 46, 0.95);
+  color: #c4b5fd;
+}
+
+.board-badge-label {
+  writing-mode: vertical-rl;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  color: #7c8698;
+}
