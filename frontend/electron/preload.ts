@@ -13,10 +13,12 @@ import {
   type FxCommand,
   type FxPetReactionPayload,
   type PetBridgeApi,
+  type SettingsVisibilityPayload,
   type TeachingBoardInbox,
   type TeachingEnterReason,
   type TeachingMirrorEvent,
   type TeachingStatePayload,
+  type TrayMenuAction,
   type WindowDebugState
 } from './ipc/channels'
 import type { MoveResult, Point, Rect, WindowGeometry } from './window'
@@ -183,6 +185,39 @@ const api: PetBridgeApi = {
   settings: {
     open(): void {
       ipcRenderer.send(IPC.SETTINGS_OPEN)
+    },
+
+    notifySaved(): void {
+      ipcRenderer.send(IPC.SETTINGS_SAVED)
+    },
+
+    onVisibility(cb: (payload: SettingsVisibilityPayload) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: SettingsVisibilityPayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_EVENTS.SETTINGS_VISIBILITY, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.SETTINGS_VISIBILITY, listener)
+      }
+    }
+  },
+
+  /** 自绘托盘菜单窗（§7.6.4 v2）：菜单窗 → 主 动作；主 → 菜单窗 每次弹出前的初始化载荷 */
+  trayMenu: {
+    action(a: TrayMenuAction): void {
+      ipcRenderer.send(IPC.TRAY_MENU_ACTION, a)
+    },
+
+    onInit(cb: (payload: { petVisible: boolean }) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: { petVisible: boolean }
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_EVENTS.TRAY_MENU_INIT, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.TRAY_MENU_INIT, listener)
+      }
     }
   },
 

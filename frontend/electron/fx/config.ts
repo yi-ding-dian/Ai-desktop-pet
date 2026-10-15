@@ -50,6 +50,13 @@ export const FX_CONFIG = {
   /** 宠物被捕获时缩到的比例（0.2 = 缩到 20%） */
   shrinkScale: 0.2,
 
+  /**
+   * 移动动画（relocate，设置向导 §7.6.6）等待在途动画收尾的上限（ms）。
+   * 与 hide/show 的「忙则忽略」不同：向导入位/回位不可静默丢失，忙时短暂等待
+   * （在途动画典型总长 ≤ totalTimeoutMs）；超过上限则放弃本次（日志警告）。
+   */
+  relocateBusyWaitMs: 7000,
+
   /** 等待 fx 动画页就绪的超时（ms）：超时则本次退化为直接 show/hide（不再创建/等待） */
   readyTimeoutMs: 2500,
   /** 整个动画流程的兜底超时（ms）：异常时强制收尾，保证 hide/show 一定生效 */

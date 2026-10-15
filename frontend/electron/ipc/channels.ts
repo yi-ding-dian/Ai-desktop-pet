@@ -50,7 +50,11 @@ export const IPC = {
   /** 设置窗口：请求打开独立设置窗口（托盘菜单与聊天关键词共用；单例，重复打开则聚焦已有） */
   SETTINGS_OPEN: 'settings:open',
   /** 设置窗口：请求重启应用（设置页"重启"按钮；主进程先走后端退出清理再 relaunch） */
-  APP_RESTART: 'app:restart'
+  APP_RESTART: 'app:restart',
+  /** 设置窗口：保存成功上报（设置面 → 主；主进程据此触发宠物向导飞回原位） */
+  SETTINGS_SAVED: 'settings:saved',
+  /** 自绘托盘菜单：菜单项动作（菜单窗 → 主；payload: TrayMenuAction，执行后主进程收起菜单） */
+  TRAY_MENU_ACTION: 'tray-menu:action'
 } as const
 
 /** 通道名：主 → 渲染（webContents.send 广播） */
@@ -72,7 +76,11 @@ export const IPC_EVENTS = {
   /** 教学模式：黑板收件箱（payload: TeachingBoardInbox；只发黑板窗口，单通道多指令，先例见 IPC_FX.COMMAND） */
   TEACHING_BOARD_INBOX: 'teaching:board-inbox',
   /** 教学模式：黑板输入条发送请求（payload: {text}；只发宠物窗口，宠物面收到后执行 WS user_message 发送） */
-  TEACHING_SEND_REQUEST: 'teaching:send-request'
+  TEACHING_SEND_REQUEST: 'teaching:send-request',
+  /** 设置窗显示状态变化（payload: SettingsVisibilityPayload；只发宠物窗口——向导编排：面板收起/萌语气泡/回位） */
+  SETTINGS_VISIBILITY: 'settings:visibility',
+  /** 自绘托盘菜单：初始化载荷（payload: {petVisible: boolean}；菜单窗每次弹出前下发，驱动「显示/隐藏宠物」文案） */
+  TRAY_MENU_INIT: 'tray-menu:init'
 } as const
 
 /** 通道名：魔法球捕获动画（fx 域：主进程 ↔ fx 动画页） */
@@ -137,6 +145,20 @@ export type TeachingBoardInbox =
   | { type: 'goto'; messageId: string }
   /** expand = 卷出恢复；fold = 折叠成角标；exit = 退出教学模式（滑出收起） */
   | { type: 'visibility'; action: 'expand' | 'fold' | 'exit' }
+
+// ------------------------------------------------------------------ 设置向导宠物（P4，设计文档 §7.6.6）与自绘托盘菜单（§7.6.4）
+
+/** 设置窗显示状态（主 → 宠物窗；驱动向导 UI——飞位动画由主进程 fx 域编排，宠物面只做响应） */
+export type SettingsVisibilityPhase = 'opened' | 'saved' | 'closed'
+
+/** SETTINGS_VISIBILITY 推送载荷 */
+export interface SettingsVisibilityPayload {
+  /** opened = 设置窗打开（宠物已飞至向导位：收起面板+萌语气泡）；saved/closed = 已触发飞回原位（气泡收起+面板恢复） */
+  phase: SettingsVisibilityPhase
+}
+
+/** 自绘托盘菜单项动作（菜单窗 → 主；主进程执行后收起菜单窗） */
+export type TrayMenuAction = 'toggle-pet' | 'teaching' | 'settings' | 'quit'
 
 /** 后端子进程状态（设计文档 §5.2 状态机；IPC 广播取值） */
 export type BackendState = 'starting' | 'ready' | 'failed' | 'stopped'
@@ -262,11 +284,22 @@ export interface PetBridgeApi {
   settings: {
     /** 请求打开设置窗口（宠物窗口调用；托盘菜单与聊天关键词"打开设置"共用入口；单例——已打开则聚焦） */
     open(): void
+    /** 设置面：保存成功上报（主进程据此触发宠物向导飞回原位） */
+    notifySaved(): void
+    /** 宠物面：订阅设置窗显示状态（向导编排——面板收起/萌语气泡/回位）；返回取消订阅函数 */
+    onVisibility(cb: (payload: SettingsVisibilityPayload) => void): () => void
   }
   /** 应用级操作（设置页用） */
   app: {
     /** 请求重启应用（主进程先走后端退出清理链，再 relaunch——防孤儿后端进程） */
     restart(): void
+  }
+  /** 自绘托盘菜单窗（主题跟随；§7.6.4） */
+  trayMenu: {
+    /** 菜单窗 → 主：执行菜单项动作（主进程执行后收起菜单窗） */
+    action(a: TrayMenuAction): void
+    /** 菜单窗：订阅每次弹出前的初始化载荷（{petVisible}——驱动「显示/隐藏宠物」文案）；返回取消订阅函数 */
+    onInit(cb: (payload: { petVisible: boolean }) => void): () => void
   }
   /** 后端子进程（设计文档 §5.2）：状态订阅 + 快照查询；渲染进程不直接管理进程 */
   backend: {

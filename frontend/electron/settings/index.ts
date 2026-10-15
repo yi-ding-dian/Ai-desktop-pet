@@ -1,24 +1,34 @@
 /**
- * 设置窗口域（P4 前置，设计文档 §7.6）——独立设置窗口的生命周期 + 应用级 IPC。
+ * 设置窗口域（P4 前置，设计文档 §7.6）——独立设置窗口的生命周期 + 应用级 IPC + 向导编排。
  *
  * 职责边界（高内聚：与设置窗口有关的一切都在本目录）：
  *  - 窗口生命周期：单例（已打开 → 聚焦；关闭即清引用，下次打开重建）、约 640×560 居中、
  *    **系统标题栏常规窗口**（frame:true、可拖动/最小化、任务栏可见）——设置是工具型界面，
  *    用户预期是正常窗口；刻意**不**照抄宠物窗/黑板窗的「无边框 + 透明 + 置顶 + skipTaskbar +
  *    Linux type:'toolbar'」悬浮窗技术（那是给「不该出现在任务栏的桌宠层」用的）；
+ *  - 向导编排（§7.6.6）：设置窗打开 → 记宠物原位 + 广播 SETTINGS_VISIBILITY{opened} +
+ *    fx 域 relocate 宠物到"扒窗沿"向导位（几何纯函数见 settings/geometry.ts）；保存成功
+ *    （SETTINGS_SAVED）/ 关闭设置窗 → 反向 relocate 回原位 + 广播 saved/closed。
+ *    状态机（wizardActive / returning）防重入：已回位不重复回位；
  *  - 页面加载：settings.html（dev 走 ELECTRON_RENDERER_URL 同目录换名、生产 out/renderer/settings.html，
  *    与 teaching 的 board.html 同法）；
  *  - IPC 契约（channels.ts 已写死）：
- *      IPC.SETTINGS_OPEN —— 托盘菜单 / 聊天关键词共用入口 → openSettings()（单例收敛）；
- *      IPC.APP_RESTART   —— 设置页「重启」→ restartApp()：先停后端（防孤儿进程）再 relaunch。
+ *      IPC.SETTINGS_OPEN   —— 托盘菜单 / 聊天关键词共用入口 → openSettings()（单例收敛）；
+ *      IPC.SETTINGS_SAVED  —— 设置面保存成功上报 → 宠物反向 relocate 回原位；
+ *      IPC.APP_RESTART     —— 设置页「重启」→ restartApp()：先停后端（防孤儿进程）再 relaunch。
  *
  * 数据流（§7.6.2）：设置页**自持 WS 连接**（经 backend.getSnapshot() 取 port/token 自行连接），
- * 本域不参与设置项读写——只管「窗口怎么开、怎么关、重启怎么做」。
+ * 本域不参与设置项读写——只管「窗口怎么开、怎么关、向导怎么编排、重启怎么做」。
+ * 飞位动画一律经 fx 域 runRelocateAnimation（本域不碰球窗/时序，只给目标坐标）。
  */
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
-import { IPC } from '../ipc/channels'
+import { IPC, IPC_EVENTS, type SettingsVisibilityPhase } from '../ipc/channels'
 import { backendManager } from '../backend-process'
+import { runRelocateAnimation } from '../fx'
+import { wizardPetRect } from './geometry'
+import { probeXWindowAlive, type XWindowAlive } from './window-health'
+import type { Rect } from '../window'
 
 const isDev = !app.isPackaged
 
@@ -36,6 +46,34 @@ let settingsWin: BrowserWindow | null = null
 let ipcRegistered = false
 /** 重启流程进行中标志（防「重启」按钮连点触发两次 stop + relaunch） */
 let restarting = false
+
+/** 宠物窗口（initSettings 注入；向导广播与 relocate 的对象） */
+let petWin: BrowserWindow | null = null
+/**
+ * 向导状态机：true = 向导流程已启动（宠物已被迁往向导位/正在位）——saved/closed 时它是
+ * "需要回位"的唯一依据；回位开始即复位（已回位不重复回位）。置位发生在 relocate 之前
+ * （relocate 飞行途中关窗也能正确回位）。
+ */
+let wizardActive = false
+/** 向导 relocate 前记录的宠物原位（回位目标；随 wizardActive 生命周期） */
+let petHomeRect: Rect | null = null
+/** 回位 relocate 进行中（防 saved + closed 连续触发两次回位） */
+let returning = false
+
+/**
+ * 健康巡检间隔（ms）：低频（一次 xwininfo 子进程调用 ≈ 数 ms）。
+ * 可用环境变量 PET_SETTINGS_HEALTH_MS 覆盖（≥100；dev/排障/自动化实测用，先例 PET_TRAY_ANCHOR）。
+ */
+const HEALTH_CHECK_MS = (() => {
+  const raw = Number(process.env['PET_SETTINGS_HEALTH_MS'])
+  return Number.isFinite(raw) && raw >= 100 ? raw : 10000
+})()
+/** 健康巡检定时器（设置窗生命周期内运行；非 Linux 从不启动） */
+let healthTimer: NodeJS.Timeout | null = null
+/** 巡检探测在途标志（防重入：一次探测未回来前不发新的） */
+let healthProbing = false
+/** openSettings 健康校验在途标志（防用户狂点并发触发重复建窗） */
+let openingCheck = false
 
 // ------------------------------------------------------------------ 窗口生命周期
 
@@ -81,11 +119,21 @@ function createSettingsWindow(): BrowserWindow {
   win.once('ready-to-show', () => {
     win.show()
     console.log('[settings] 设置窗口已显示')
+    // 显示后立即走向导编排（§7.6.6）：广播 opened + 宠物 relocate 到"扒窗沿"向导位。
+    // 窗口已 center() 定位、getBounds 稳定；异步进行（设置页加载/交互不等待动画）
+    void beginWizard()
   })
 
   win.on('closed', () => {
-    if (settingsWin === win) settingsWin = null
-    console.log('[settings] 设置窗口已关闭（引用已清理，下次打开重建）')
+    stopHealthWatch()
+    if (settingsWin === win) {
+      settingsWin = null
+      console.log('[settings] 设置窗口已关闭（引用已清理，下次打开重建）')
+    }
+    // 宠物在向导位 → 反向 relocate 回原位 + 广播 closed（"已回位则不重复"由状态机保证）。
+    // 用户关闭、加载失败/渲染崩溃的兜底销毁、健康巡检清理统一走这里；退出链路
+    // （destroySettings 预置 wizardActive=false）自然 no-op，不做回位/广播
+    void returnPetHome('closed')
   })
 
   // 加载失败/渲染崩溃兜底：关闭窗口并清引用（单例不卡在坏窗口上，用户下次点击即重建重试）。
@@ -112,6 +160,9 @@ function createSettingsWindow(): BrowserWindow {
   loadSettingsPage(win)
   // 居中打开（主显示器工作区中央；§7.6.1）
   win.center()
+  // 启动健康巡检（Linux）：外部强杀（X 层窗口消失）在 Electron 事件层不可见，
+  // 低频探测保证"引用与窗口状态最终一致"（见 window-health.ts 与 startHealthWatch）
+  startHealthWatch(win)
   console.log(
     `[settings] 设置窗口已创建（${SETTINGS_WINDOW_WIDTH}x${SETTINGS_WINDOW_HEIGHT} 居中；${win.getBounds().x},${win.getBounds().y}）`
   )
@@ -138,17 +189,51 @@ function loadSettingsPage(win: BrowserWindow): void {
 }
 
 /**
- * 打开设置窗口（唯一公共入口：托盘菜单 / SETTINGS_OPEN IPC 都走这里）。
- * 单例：已打开则聚焦（最小化先还原），不重复创建。
+ * 打开设置窗口（唯一公共入口：托盘菜单 / SETTINGS_OPEN IPC 都走这里；异步实现、同步签名）。
+ * 单例：已打开则聚焦（最小化先还原），不重复创建——也就不重复走向导（宠物已在向导位）。
+ * **健康校验**（防"僵尸引用"，见 window-health.ts）：已存在分支先探测 X 层窗口是否仍在——
+ * 死窗（外部强杀，Electron 事件层不可见）清理引用并重建，**绝不聚焦死窗**；
+ * 不可检测（非 Linux/Wayland/命令缺失）时保持既有聚焦行为（不误判）。
  */
 export function openSettings(): void {
+  void openSettingsChecked()
+}
+
+/** openSettings 的异步实现：健康校验 → 聚焦 / 清理重建（并发请求由 openingCheck 收敛） */
+async function openSettingsChecked(): Promise<void> {
   const existing = settingsWin
   if (existing && !existing.isDestroyed()) {
-    if (existing.isMinimized()) existing.restore()
-    // show() 对已可见窗口仍是「显示并聚焦」，兼顾「存在但被隐藏」的极端态
-    existing.show()
-    existing.focus()
-    console.log('[settings] 设置窗口已存在 → 聚焦（不重复创建）')
+    if (openingCheck) return // 校验在途：忽略重复请求（首个请求很快完成并显示窗口）
+    openingCheck = true
+    let alive: XWindowAlive
+    try {
+      alive = await probeXWindowAlive(existing)
+    } finally {
+      openingCheck = false
+    }
+    if (alive === false) {
+      console.warn('[settings] 打开设置：检测到僵尸设置窗（X 层窗口已消失）→ 清理引用并重建')
+      if (settingsWin === existing) {
+        settingsWin = null
+        stopHealthWatch()
+        // destroy 触发 closed handler → returnPetHome('closed')（宠物若还在向导位则回位 + 广播）
+        if (!existing.isDestroyed()) existing.destroy()
+      }
+    } else {
+      // 活窗（或不可检测）：走既有聚焦路径
+      if (existing.isMinimized()) existing.restore()
+      // show() 对已可见窗口仍是「显示并聚焦」，兼顾「存在但被隐藏」的极端态
+      existing.show()
+      existing.focus()
+      console.log('[settings] 设置窗口已存在 → 聚焦（不重复创建/不重排向导）')
+      return
+    }
+  }
+  // 新建路径（无窗口 / 死窗已清理；若并发路径刚建出窗口则聚焦它）
+  const current = settingsWin
+  if (current && !current.isDestroyed()) {
+    current.show()
+    current.focus()
     return
   }
   settingsWin = createSettingsWindow()
@@ -156,9 +241,155 @@ export function openSettings(): void {
 
 /** 应用退出清理（will-quit；窗口随退出直接销毁，不做额外等待） */
 export function destroySettings(): void {
+  // 退出链路：向导状态直接丢弃（不回位/不广播——宠物窗也随退出销毁）
+  wizardActive = false
+  petHomeRect = null
+  returning = false
+  petWin = null
+  stopHealthWatch()
   const win = settingsWin
   settingsWin = null
   if (win && !win.isDestroyed()) win.destroy()
+}
+
+// ------------------------------------------------------------------ 窗健康巡检（防 X 层僵尸引用）
+
+/** 停止健康巡检（幂等；窗口关闭/销毁/退出时调用） */
+function stopHealthWatch(): void {
+  if (healthTimer) {
+    clearInterval(healthTimer)
+    healthTimer = null
+  }
+}
+
+/**
+ * 启动健康巡检：设置窗存在期间低频探测 X 层窗口是否存在。
+ * 外部强杀（xdotool windowclose / WM 异常等）在 Electron 事件层与状态探针上完全不可见
+ * （独立实验实测，见 window-health.ts）——巡检是"引用与窗口状态最终一致"的兜底：
+ * 发现死窗 → 清引用 + destroy（closed 链 → 向导回位广播），下次打开即正常重建。
+ * 非 Linux / 不可检测时探针恒为 null，本巡检无害空转（仅一次异步调用开销）。
+ */
+function startHealthWatch(win: BrowserWindow): void {
+  if (process.platform !== 'linux') return
+  stopHealthWatch()
+  console.log(`[settings] 健康巡检已启动（间隔 ${HEALTH_CHECK_MS}ms）`)
+  healthTimer = setInterval(() => {
+    void healthCheck(win)
+  }, HEALTH_CHECK_MS)
+}
+
+/** 单次健康检查（防重入；窗口换任/已被正常关闭时自然退出） */
+async function healthCheck(win: BrowserWindow): Promise<void> {
+  if (healthProbing) return
+  if (settingsWin !== win || win.isDestroyed()) {
+    stopHealthWatch()
+    return
+  }
+  healthProbing = true
+  try {
+    const alive = await probeXWindowAlive(win)
+    if (alive !== false || settingsWin !== win) return
+    console.warn(
+      '[settings] 健康巡检：设置窗的 X 层窗口已消失（外部销毁）→ 按关闭处理（清理引用 + 回位广播）'
+    )
+    settingsWin = null
+    stopHealthWatch()
+    // destroy 触发 closed handler → returnPetHome('closed')；已销毁的极端情形手动兜一次
+    if (!win.isDestroyed()) win.destroy()
+    else void returnPetHome('closed')
+  } finally {
+    healthProbing = false
+  }
+}
+
+// ------------------------------------------------------------------ 向导编排（§7.6.6）
+
+/** 取宠物窗口（会话内有效；未注入/已销毁时返回 null） */
+function getPetWindow(): BrowserWindow | null {
+  if (!petWin || petWin.isDestroyed()) return null
+  return petWin
+}
+
+/** 广播向导状态给宠物窗（载荷 SettingsVisibilityPayload；宠物面据此收面板/冒泡/恢复） */
+function broadcastVisibility(phase: SettingsVisibilityPhase): void {
+  const pet = getPetWindow()
+  if (!pet || pet.webContents.isDestroyed()) {
+    console.log(`[settings] 广播向导状态 ${phase}（宠物窗不可用，跳过）`)
+    return
+  }
+  pet.webContents.send(IPC_EVENTS.SETTINGS_VISIBILITY, { phase })
+  console.log(`[settings] 广播向导状态：phase=${phase}`)
+}
+
+const rectStr = (r: Rect): string => `${r.x},${r.y} ${r.width}x${r.height}`
+
+/**
+ * 开始向导（设置窗 ready-to-show 后调用）：
+ * 记宠物原位 → 广播 opened（宠物面立即收面板 + 冒泡萌语）→ relocate 至"扒窗沿"向导位。
+ * 防重入：wizardActive 已置位时忽略（重复打开设置走 openSettings 的聚焦分支，不会进这里）。
+ */
+async function beginWizard(): Promise<void> {
+  const pet = getPetWindow()
+  const sw = settingsWin
+  if (!pet || !sw || sw.isDestroyed()) {
+    console.log('[settings] 开始向导：宠物/设置窗不可用，跳过')
+    return
+  }
+  if (wizardActive) {
+    // 已有进行中的向导（如设置窗曾因渲染崩溃被兜底销毁后重开——宠物仍在向导位）：
+    // 不重复 relocate，但重发 opened 广播（幂等：宠物面据此回向导 UI 态）
+    console.log('[settings] 向导已在进行（宠物应在向导位），仅重发 opened 广播')
+    broadcastVisibility('opened')
+    return
+  }
+
+  petHomeRect = pet.getBounds()
+  wizardActive = true
+  broadcastVisibility('opened')
+
+  const sBounds = sw.getBounds()
+  const wa = screen.getDisplayMatching(sBounds).workArea
+  const target = wizardPetRect(sBounds, { width: petHomeRect.width, height: petHomeRect.height }, wa)
+  console.log(
+    `[settings] 向导入位：宠物 ${rectStr(petHomeRect)} → ${rectStr(target)}（设置窗 ${rectStr(sBounds)}）`
+  )
+  await runRelocateAnimation(pet, target)
+}
+
+/**
+ * 回位（saved/closed 共用）：宠物在向导位时反向 relocate 回原位 + 广播对应 phase。
+ *  - 已回位（wizardActive=false）→ no-op（"已回位则不重复"）；
+ *  - 宠物隐藏中 → 直接 setBounds 回原位（不播动画：relocate 的释放段会把宠物"显示出来"，
+ *    违背用户刚做的隐藏动作）；
+ *  - 广播在回位完成后发（宠物面"面板恢复"与宠物落位同步；异常/放弃路径也保证广播）。
+ */
+async function returnPetHome(phase: 'saved' | 'closed'): Promise<void> {
+  if (!wizardActive) return
+  if (returning) {
+    console.log('[settings] 回位进行中，忽略重复回位请求')
+    return
+  }
+  const pet = getPetWindow()
+  const home = petHomeRect
+  wizardActive = false
+  petHomeRect = null
+  returning = true
+  try {
+    if (!pet || !home) {
+      console.log('[settings] 回位：宠物窗/原位不可用，仅广播')
+      return
+    }
+    if (!pet.isVisible()) {
+      pet.setBounds(home)
+      console.log(`[settings] 回位（${phase}）：宠物隐藏中 → 静默改坐标回 ${rectStr(home)}`)
+      return
+    }
+    console.log(`[settings] 回位（${phase}）：relocate 回 ${rectStr(home)}`)
+    await runRelocateAnimation(pet, home)
+  } finally {
+    returning = false
+    broadcastVisibility(phase)
+  }
 }
 
 // ------------------------------------------------------------------ 应用重启
@@ -191,8 +422,19 @@ async function restartApp(): Promise<void> {
 
 // ------------------------------------------------------------------ IPC 接线（渲染 → 主）
 
-/** 注册设置域 IPC 处理器（main.ts 在 app ready 后调用一次；无窗口依赖，无需传参） */
-export function initSettings(): void {
+/** sender 是否当前受管设置窗（保存上报等"设置面专属"消息只认它） */
+function isSettingsSender(sender: WebContents): boolean {
+  return Boolean(
+    settingsWin && !settingsWin.isDestroyed() && sender.id === settingsWin.webContents.id
+  )
+}
+
+/**
+ * 注册设置域 IPC 处理器（main.ts 在 app ready 后调用一次）。
+ * @param pet 宠物窗口（向导广播/relocate 的对象；注入方式同 teaching 域）
+ */
+export function initSettings(pet: BrowserWindow): void {
+  petWin = pet
   if (ipcRegistered) return
   ipcRegistered = true
 
@@ -200,6 +442,14 @@ export function initSettings(): void {
   // 无 sender 过滤：「打开设置」是无害幂等操作（重复打开收敛为聚焦），任何渲染面触发都安全
   ipcMain.on(IPC.SETTINGS_OPEN, () => {
     openSettings()
+  })
+
+  // 保存成功上报（设置面 → 主）：宠物在向导位时反向 relocate 回原位 + 广播 saved。
+  // sender 校验：仅受管设置窗（其它渲染面误发一律忽略）
+  ipcMain.on(IPC.SETTINGS_SAVED, (event) => {
+    if (!isSettingsSender(event.sender)) return
+    console.log('[settings] 收到设置面保存成功上报')
+    void returnPetHome('saved')
   })
 
   // 重启应用（设置页「重启」按钮）：先走后端退出清理链再 relaunch，防孤儿后端进程

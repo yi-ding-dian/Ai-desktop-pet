@@ -10,7 +10,7 @@ import { resolveWindowImpl } from './window/registry'
 import { registerIpcHandlers, pushDebugState, type IpcContext } from './ipc'
 import { IPC_EVENTS } from './ipc/channels'
 import { backendManager } from './backend-process'
-import { createTray } from './tray'
+import { createTray, destroyTrayMenu } from './tray'
 import { runHideAnimation, runShowAnimation, destroyFx } from './fx'
 import { runAnchorSelfTest } from './fx/anchor'
 import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
@@ -162,8 +162,10 @@ if (!app.requestSingleInstanceLock()) {
     // 黑板窗口由它按需创建（进入教学模式前不存在）
     initTeaching(petWin)
     // 设置窗口域（P4 前置，设计文档 §7.6）：注册 IPC（托盘菜单/聊天关键词 → SETTINGS_OPEN；
-    // 设置页「重启」→ APP_RESTART）；设置窗口本身懒创建（首次打开时建立，单例）
-    initSettings()
+    // 设置页「重启」→ APP_RESTART；设置面保存 → SETTINGS_SAVED）+ 向导编排（§7.6.6：
+    // 打开设置时宠物 relocate 到设置窗下沿、保存/关闭回位——需要宠物窗引用，同 teaching 域）；
+    // 设置窗口本身懒创建（首次打开时建立，单例）
+    initSettings(petWin)
     // 后端子进程与窗口并行启动（design §3.4）；就绪后经 IPC 下发 port/token
     backendManager.start()
 
@@ -206,5 +208,7 @@ if (!app.requestSingleInstanceLock()) {
     destroyTeaching()
     // 设置窗口（若存在）直接销毁并清引用
     destroySettings()
+    // 自绘托盘菜单窗（若存在）直接销毁
+    destroyTrayMenu()
   })
 }
