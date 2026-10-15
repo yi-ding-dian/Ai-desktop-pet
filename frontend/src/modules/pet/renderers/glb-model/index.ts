@@ -33,6 +33,7 @@ import {
 } from './pose'
 import { FACE_EX, FACE_EY_DOWN, FACE_ORIGIN, FACE_PROBE } from './face/config'
 import { FaceOverlay, type FaceFrame } from './face/overlay'
+import { EarsOverlay } from './ears/overlay'
 
 /** dev 态日志（转发到主进程日志，便于无 devtools 验证）；生产构建自动剔除 */
 const devLog = (msg: string): void => {
@@ -121,6 +122,10 @@ export class GlbModelRenderer implements PetRenderer {
   private readonly faceFrame: FaceFrame = { ox: 0, oy: 0, ax: 1, ay: 0, bx: 0, by: 1 }
   /** 投影用的三个屏幕坐标缓冲 */
   private readonly faceScreen = { o: { x: 0, y: 0 }, x: { x: 0, y: 0 }, y: { x: 0, y: 0 } }
+
+  // ---- 耳朵形变层（内部实现细节；PetRenderer 接口不变） ----
+  /** 顶点级"耳骨"：程序化微动原耳顶点（挂在模型几何上；见 ears/overlay.ts） */
+  private readonly ears = new EarsOverlay()
 
   constructor() {
     this.scene = new THREE.Scene()
@@ -243,6 +248,8 @@ export class GlbModelRenderer implements PetRenderer {
     this.emotionIntensity = Math.min(1, Math.max(0, intensity))
     // 同步到 SVG 表情层（脸部表情；与姿态层同一份情绪状态）
     this.face.setEmotion(this.emotion, this.emotionIntensity)
+    // 同步到耳朵形变层（耳态；与表情层同一份情绪状态）
+    this.ears.setEmotion(this.emotion, this.emotionIntensity)
     devLog(`emotion -> ${emotion} (intensity=${intensity})`)
   }
 
@@ -250,6 +257,8 @@ export class GlbModelRenderer implements PetRenderer {
     this.state = state
     // 同步到 SVG 表情层（sleeping 时半合眼 + Zzz，见 face/config.ts）
     this.face.setState(state)
+    // 同步到耳朵形变层（sleeping 微趴等，见 ears/config.ts）
+    this.ears.setState(state)
     devLog(`state -> ${state}`)
   }
 
@@ -295,7 +304,7 @@ export class GlbModelRenderer implements PetRenderer {
     )
   }
 
-  /** 加载完成：材质微调 → 包围盒居中/贴地 → 建姿态根组 → 相机适配 */
+  /** 加载完成：材质微调 → 包围盒居中/贴地 → 建姿态根组 → 相机适配 → 挂耳朵形变层 */
   private setupModel(loaded: THREE.Object3D): void {
     // ① 材质微调：卡通兔是非金属，若烘焙的 metallic 偏高则压到 0.1 以下
     //    （低金属度 + 环境光为主的光照下，避免金属反射导致的"发黑/发灰"）
@@ -332,6 +341,17 @@ export class GlbModelRenderer implements PetRenderer {
     this.camera.position.set(0, lookY, dist)
     this.camera.lookAt(0, lookY, 0)
 
+    // ⑤ 耳朵形变层：收集耳朵顶点并绑定几何（顶点级微动；见 ears/config.ts）
+    let earMesh: THREE.Mesh | null = null
+    loaded.traverse((o) => {
+      const mesh = o as THREE.Mesh
+      if (!earMesh && (mesh as THREE.Mesh).isMesh) earMesh = mesh
+    })
+    if (earMesh) {
+      const picked = this.ears.attach(root, earMesh)
+      devLog(`renderer(glb-model) 耳朵绑定：L ${picked.L} 顶点 / R ${picked.R} 顶点（重叠 ${picked.overlap}）`)
+    }
+
     this.loadState = 'ready'
     devLog(
       `renderer(glb-model) 模型就绪：高 ${height.toFixed(2)}，相机距离 ${dist.toFixed(2)}，` +
@@ -343,6 +363,8 @@ export class GlbModelRenderer implements PetRenderer {
   /** 释放模型资源（几何/材质/贴图，去重后逐一 dispose） */
   private disposeModelResources(): void {
     if (this.root && this.root.parent === this.scene) this.scene.remove(this.root)
+    // 耳朵变形层先解绑定（不持有独立资源）；顶点随几何一起释放
+    this.ears.dispose()
     if (this.root) disposeObjectResources(this.root)
     this.root = null
     this.model = null
@@ -364,6 +386,8 @@ export class GlbModelRenderer implements PetRenderer {
     // 行为引擎移动窗口时渲染进程可直接读出"真实步速"，保持 PetRenderer 接口零改动）
     this.measureMoveSpeed(ts)
     this.updatePose(dt)
+    // 耳朵形变层：耳态阻尼/微行为（仅姿态变化时重写耳朵顶点；见 ears/overlay.ts）
+    this.ears.update(dt)
     this.renderOnce()
     // SVG 表情层跟随（在渲染后投影：此时场景/相机矩阵已刷新，与刚画出的画面完全对齐）
     this.updateFace(dt)
