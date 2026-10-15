@@ -38,6 +38,9 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
+    // 备注（2026-10-15 实测）：DDE(Dock) 忽略 skipTaskbar 属性，Dock 仍会显示窗口——
+    // 用窗口图标（见 main.ts 的 icon 配置）让它显示为兔子头像；若将来要强制不显示，
+    // 可评估 X11 窗口类型 type:'toolbar'（实测副作用未验证，先不启用）
     resizable: false,
     hasShadow: false,
     show: false,
