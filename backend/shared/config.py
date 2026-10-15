@@ -40,9 +40,20 @@ enabled  = true
 provider = "edge"
 voice    = "zh-CN-XiaoxiaoNeural"
 
-[behavior]         # Phase 3
-proactive_enabled = true
-greeting          = true
+[behavior]         # Phase 3：自主行为引擎
+enabled            = true
+proactive_enabled  = true
+greeting           = true
+# 免打扰时段（本地时间，可跨午夜；空 = 无免打扰）：命中期间不做任何自主行为
+quiet_hours        = []
+# 自主行为的空闲间隔（秒）——两次行为之间的随机等待范围
+idle_min_seconds   = 10.0
+idle_max_seconds   = 40.0
+
+[memory]           # Phase 3：长期记忆（结构化 + 规则召回；向量待网关支持 embedding）
+enabled                = true
+idle_seconds           = 300   # 会话空闲多久后触发记忆提取（秒）
+check_interval_seconds = 15    # 空闲扫描周期（秒）
 """
 
 
@@ -80,10 +91,30 @@ class VoiceConfig(BaseModel):
 
 
 class BehaviorConfig(BaseModel):
-    """自主行为配置（Phase 3）。"""
+    """自主行为配置（Phase 3）。
 
+    ``quiet_hours``：免打扰时段列表，条目形如 ``"23:00-07:00"``（本地时间，可跨午夜）；
+    默认空列表 = 无免打扰。``idle_*_seconds``：两次行为之间的随机空闲间隔。
+    """
+
+    enabled: bool = True
     proactive_enabled: bool = True
     greeting: bool = True
+    quiet_hours: list[str] = Field(default_factory=list)
+    idle_min_seconds: float = 10.0
+    idle_max_seconds: float = 40.0
+
+
+class MemoryConfig(BaseModel):
+    """长期记忆配置（Phase 3：会话空闲后后台提取，§4.3/§7.1）。
+
+    - ``idle_seconds``：会话空闲多久后触发记忆提取（默认 5 分钟）；
+    - ``check_interval_seconds``：空闲扫描周期。
+    """
+
+    enabled: bool = True
+    idle_seconds: int = 300
+    check_interval_seconds: int = 15
 
 
 class AppConfig(BaseModel):
@@ -94,6 +125,7 @@ class AppConfig(BaseModel):
     pet: PetConfig = Field(default_factory=PetConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     behavior: BehaviorConfig = Field(default_factory=BehaviorConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
 
 def load_config(path: Path | None = None) -> AppConfig:

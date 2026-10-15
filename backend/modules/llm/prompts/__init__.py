@@ -4,6 +4,7 @@
 
     persona.md            ← 默认人格（"小豆"）
     emotion_directive.md  ← 情绪指令（要求 LLM 用 <emo:xxx> 切换情绪）
+    memory_extract.md     ← 记忆提取（后台任务；P3 记忆与持久化）
 
 system prompt 结构（§4.1）：
 
@@ -34,6 +35,14 @@ _FALLBACK_EMOTION_DIRECTIVE = (
     "标签会被系统剥离、不展示给用户；没有情绪变化时可以不写（默认 neutral）。"
 )
 
+# 兜底记忆提取指令：memory_extract.md 缺失/不可读时使用（保持与文件同义的最简版）
+_FALLBACK_MEMORY_EXTRACT = (
+    "阅读对话记录，提炼关于用户、长期有效的信息。只输出 JSON 对象："
+    '{"memories": [{"text": "一句话描述", "kind": "fact|preference|event", '
+    '"importance": 0.5}], "profile": [{"key": "称呼", "value": "张三"}]}。'
+    "最多 8 条记忆；没有可提炼内容时输出 {\"memories\": [], \"profile\": []}。"
+)
+
 
 def load_persona() -> str:
     """读取默认人格（persona.md）；读不到时返回内置兜底文本（不抛异常）。"""
@@ -43,6 +52,14 @@ def load_persona() -> str:
 def load_emotion_directive() -> str:
     """读取情绪指令（emotion_directive.md）；读不到时返回内置兜底文本。"""
     return _read_or(_PROMPTS_DIR / "emotion_directive.md", _FALLBACK_EMOTION_DIRECTIVE)
+
+
+def load_memory_extract_prompt() -> str:
+    """读取记忆提取提示词（memory_extract.md）；读不到时返回内置兜底文本。
+
+    由 application 装配层加载后注入 memory 域的提取器（该域不 import 本模块）。
+    """
+    return _read_or(_PROMPTS_DIR / "memory_extract.md", _FALLBACK_MEMORY_EXTRACT)
 
 
 def build_system_prompt(persona_text: str | None = None) -> str:

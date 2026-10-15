@@ -6,26 +6,62 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Awaitable, Callable, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
 
 from loguru import logger
+from starlette.websockets import WebSocketState
 
 from backend.application.chat_pipeline import ChatPipeline
 from backend.application.session import SessionManager
 from backend.interfaces.ws.auth import verify_token
 from backend.interfaces.ws.protocol import (
     PROTOCOL_VERSION,
+    BehaviorDoneData,
     ClientMessage,
+    EnvUpdateData,
     HelloAckData,
     HelloData,
+    LoadHistoryData,
+    PetEventData,
     UserMessageData,
 )
 from backend.shared.errors import ErrorCode, ProtocolError
 
 if TYPE_CHECKING:  # 避免与 server 运行时循环 import（类型注解专用）
     from backend.interfaces.ws.server import ConnectionContext
+    from backend.modules.behavior.engine import BehaviorEngine
+    from backend.modules.chat.history import HistoryStore
 
 Handler = Callable[["ConnectionContext", ClientMessage], Awaitable[None]]
+
+#: tap_head 的轻量情绪回应（v1 不调 LLM；真正"回话"属 proactive，后续版本）
+_TAP_HEAD_EMOTION = "happy"
+_TAP_HEAD_INTENSITY = 0.9
+
+
+class _ConnectionSink:
+    """把 ConnectionContext 适配为行为引擎的 BehaviorSink（interfaces 层职责）。
+
+    引擎在 modules 层，不感知 WS 细节；连接存活检测依据 starlette WebSocket 的
+    client_state（消息循环收到 disconnect 后即变为 DISCONNECTED）。
+    """
+
+    def __init__(self, ctx: ConnectionContext) -> None:
+        self._ctx = ctx
+
+    async def send_event(
+        self, msg_type: str, data: Any = None, *, reply_to: str | None = None
+    ) -> bool:
+        if self.is_closed():
+            return False
+        await self._ctx.send_event(msg_type, data, reply_to=reply_to)
+        return True
+
+    def is_closed(self) -> bool:
+        ws = getattr(self._ctx, "ws", None)
+        state = getattr(ws, "client_state", None)
+        # 拿不到状态时保守视为未关闭（真实发送失败由 server 层日志兜底）
+        return state is not None and state != WebSocketState.CONNECTED
 
 
 class Dispatcher:
@@ -74,8 +110,15 @@ def build_dispatcher(
     sessions: SessionManager,
     token: str,
     app_version: str,
+    engine: BehaviorEngine | None = None,
+    history: HistoryStore | None = None,
 ) -> Dispatcher:
-    """装配默认事件路由（interfaces → application 的唯一接线点）。"""
+    """装配默认事件路由（interfaces → application 的唯一接线点）。
+
+    ``engine``：自主行为引擎（Phase 3，可为 None——未装配时 pet_event /
+    behavior_done / env_update 走惰性兜底分支，不阻断其余事件）。
+    ``history``：会话历史库（P3，可为 None——load_history 退化为空历史回填）。
+    """
     dispatcher = Dispatcher()
 
     async def on_ping(ctx: ConnectionContext, msg: ClientMessage) -> None:
@@ -122,6 +165,9 @@ def build_dispatcher(
             reply_to=msg.envelope.id,
         )
         logger.info("连接 {} 鉴权通过，session={}", ctx.id, session.id)
+        if engine is not None:
+            # 行为引擎绑定当前连接（全局单例向"当前连接"推送；断开由引擎自检清理）
+            engine.set_connection(_ConnectionSink(ctx))
 
     async def on_user_message(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """用户消息：以后台任务运行对话流水线，消息循环保持可用（可即时处理 interrupt）。"""
@@ -132,6 +178,8 @@ def build_dispatcher(
                 ErrorCode.BAD_MESSAGE, "user_message.text 不能为空", reply_to=msg.envelope.id
             )
             return
+        if engine is not None:
+            engine.note_conversation()  # 被聊 → mood ↑（软状态）
         session = sessions.start(data.session_id or ctx.session_id)
         ctx.session_id = session.id
         await ctx.spawn_reply(
@@ -147,8 +195,65 @@ def build_dispatcher(
         """
         await ctx.cancel_reply()
 
+    async def on_load_history(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """拉取历史消息（§3.2 load_history → §3.3 history）：气泡回填。
+
+        - ``session_id`` 缺省用当前连接会话；库里没有该会话（或未装配历史库）
+          时返回空列表——回填是软功能，不因此报错；
+        - 返回最近 ``limit`` 条（时间正序），字段见 HistoryStore.recent_messages。
+        """
+        data = cast(LoadHistoryData, msg.data)
+        session_id = (data.session_id or ctx.session_id or "").strip()
+        messages = (
+            history.recent_messages(session_id, limit=data.limit)
+            if history is not None and session_id
+            else []
+        )
+        await ctx.send_event(
+            "history",
+            {"session_id": session_id, "messages": messages},
+            reply_to=msg.envelope.id,
+        )
+        logger.info("历史回填 session={} 条数={}", session_id or "(无)", len(messages))
+
+    async def on_pet_event(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """宠物交互事件（§3.2）：tap_head → mood ↑ + 轻量情绪回应（v1 不调 LLM）。"""
+        data = cast(PetEventData, msg.data)
+        mood = engine.note_pet_event(data.kind) if engine is not None else None
+        if data.kind == "tap_head":
+            await ctx.send_event(
+                "emotion",
+                {
+                    "message_id": "",
+                    "emotion": _TAP_HEAD_EMOTION,
+                    "intensity": _TAP_HEAD_INTENSITY,
+                },
+            )
+            logger.info("tap_head：已推 emotion({})，mood={}", _TAP_HEAD_EMOTION, mood)
+        else:
+            # drag_end / idle_touch：v1 只记录（行为引擎不依赖，前端暂不上报）
+            logger.debug("pet_event kind={} payload={}（v1 无回应）", data.kind, data.payload)
+
+    async def on_behavior_done(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """行为执行完成/被中断回报（§7.4）：唤醒引擎中等待中的本轮行为。"""
+        data = cast(BehaviorDoneData, msg.data)
+        if engine is not None:
+            engine.on_behavior_done(data.id, data.interrupted)
+        else:
+            logger.debug("behavior_done id={}（未装配行为引擎，忽略）", data.id)
+
+    async def on_env_update(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """环境上报（§4.5.5）：更新引擎的环境快照（几何/系统空闲/宠物状态）。"""
+        data = cast(EnvUpdateData, msg.data)
+        if engine is not None:
+            engine.update_env(data)
+
     dispatcher.register("ping", on_ping)
     dispatcher.register("hello", on_hello)
     dispatcher.register("user_message", on_user_message)
     dispatcher.register("interrupt", on_interrupt)
+    dispatcher.register("load_history", on_load_history)
+    dispatcher.register("pet_event", on_pet_event)
+    dispatcher.register("behavior_done", on_behavior_done)
+    dispatcher.register("env_update", on_env_update)
     return dispatcher

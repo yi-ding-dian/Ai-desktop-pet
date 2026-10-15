@@ -99,9 +99,13 @@ class TestLlmData(EventData):
 
 
 class LoadHistoryData(EventData):
-    """拉取历史消息（气泡回填）。"""
+    """拉取历史消息（气泡回填；P3 实现）。
 
-    session_id: str
+    - ``session_id`` 缺省：回填**当前连接会话**（hello 建立/续用的会话）；
+    - ``limit``：返回最近 N 条（服务端再按 MAX_HISTORY_LIMIT 夹取）。
+    """
+
+    session_id: str | None = None
     limit: int = 20
 
 
@@ -113,11 +117,16 @@ class BehaviorDoneData(EventData):
 
 
 class EnvUpdateData(EventData):
-    """环境上报：屏幕/窗口几何（行为决策依据）。"""
+    """环境上报：屏幕/窗口几何 + 系统空闲 + 宠物状态（行为决策依据）。"""
 
     work_area: dict[str, Any] | None = None
     window_pos: dict[str, Any] | None = None
     window_size: dict[str, Any] | None = None
+    #: 系统空闲秒数（Electron powerMonitor.getSystemIdleTime）——"用户是否在用电脑"
+    system_idle_seconds: float | None = None
+    #: 渲染侧当前宠物状态（idle/walking/sleeping/thinking/speaking/dragging）——
+    #: 对话中引擎静默的依据（引擎不读 chat_pipeline，对话状态经此旁路上报）
+    pet_state: str | None = None
 
 
 class AudioChunkData(EventData):
