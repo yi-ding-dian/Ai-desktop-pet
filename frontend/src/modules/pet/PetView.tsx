@@ -52,6 +52,9 @@ export default function PetView({ client }: PetViewProps): ReactElement {
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
+    // 复位容器：防止上一次挂载（HMR 重建 / 异常路径）残留的 DOM 成为"隐形占位"顶坏布局
+    // （曾发生：残留的空 stage 把新 canvas 挤到容器外，兔子渲染又小又偏）
+    host.replaceChildren()
     // 渲染器由工厂决定缺省（当前为 'glb-model'：加载 Meshy GLB 兔子；
     // localStorage `pet-renderer` 可覆盖为 'three-d' / 'part-animation'）
     const renderer = createPetRenderer()

@@ -8,6 +8,7 @@ import { app, globalShortcut } from 'electron'
 import { join } from 'node:path'
 import { resolveWindowImpl } from './window/registry'
 import { registerIpcHandlers, pushDebugState, type IpcContext } from './ipc'
+import { IPC_EVENTS } from './ipc/channels'
 import { backendManager } from './backend-process'
 import type { PlatformWindow } from './window'
 
@@ -19,7 +20,9 @@ const PET_WINDOW_HEIGHT = 400
 const SHORTCUTS = {
   toggleClickThrough: 'Control+Shift+F9',
   toggleAlwaysOnTop: 'Control+Shift+F10',
-  toggleHitboxBorder: 'Control+Shift+F11'
+  toggleHitboxBorder: 'Control+Shift+F11',
+  /** 调试栏（顶部状态 + 底部调试信息）显隐切换；渲染侧持有显隐状态，主进程只转发切换事件 */
+  toggleDebugBar: 'Control+Shift+D'
 } as const
 
 const isDev = !app.isPackaged
@@ -100,6 +103,14 @@ function registerDebugShortcuts(): void {
     hitboxVisible = !hitboxVisible
     console.log(`[main] hitbox 边框 -> ${hitboxVisible ? '显示' : '隐藏'}`)
     pushDebugState(ipcCtx)
+  })
+
+  // 调试栏显隐：显隐状态由渲染侧持有（默认隐藏），主进程只转发"翻转"事件——
+  // 保证穿透/失焦时（窗口收不到按键）仍可经全局快捷键唤起调试信息
+  bind(SHORTCUTS.toggleDebugBar, () => {
+    if (!ipcCtx) return
+    console.log('[main] 调试栏显隐切换 → 通知渲染侧')
+    ipcCtx.window.webContents.send(IPC_EVENTS.WINDOW_TOGGLE_DEBUG_BAR)
   })
 }
 

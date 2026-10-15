@@ -50,6 +50,14 @@ const api: PetBridgeApi = {
       }
     },
 
+    onToggleDebugBar(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on(IPC_EVENTS.WINDOW_TOGGLE_DEBUG_BAR, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.WINDOW_TOGGLE_DEBUG_BAR, listener)
+      }
+    },
+
     moveTo(x: number, y: number, durationMs: number): Promise<MoveResult> {
       return ipcRenderer.invoke(IPC.WINDOW_MOVE_TO, x, y, durationMs)
     },

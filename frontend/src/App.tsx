@@ -1,5 +1,8 @@
 /**
- * 根组件：宠物（部件动画渲染器）+ 顶部状态栏（宠物状态 / 情绪）+ 对话面板 + 底部调试状态栏。
+ * 根组件：宠物（部件动画渲染器）+ 对话面板 + 开发向状态显示（顶部：宠物状态/情绪；底部：调试栏）。
+ *
+ * 开发向信息（顶部状态栏 / 底部调试栏）默认隐藏、不渲染（面向最终用户不应可见）；
+ * Ctrl+Shift+D 切换显隐：渲染侧本地监听（窗口有焦点时）+ 主进程 globalShortcut 转发（穿透/失焦时）。
  *
  * P1 打通后：WS 连接与后端状态经 shared/ws-client 与 pet-bridge 接入；
  * 宠物本体由 pet 域（§5.3 可插拔渲染器）提供——当前为程序化 SVG 部件动画，
@@ -75,6 +78,11 @@ export default function App(): ReactElement {
   const [voiceSpeaking, setVoiceSpeaking] = useState(false)
   /** 自主行为执行状态（P3 §4.5.5；null = 未在执行） */
   const [behaviorStatus, setBehaviorStatus] = useState<BehaviorStatus | null>(null)
+  /**
+   * 开发向信息显隐（顶部状态栏 + 底部调试栏共用）：默认隐藏、不渲染；
+   * Ctrl+Shift+D 切换（渲染侧 keydown + 主进程全局快捷键事件两条路径，均翻转本状态）
+   */
+  const [debugBarVisible, setDebugBarVisible] = useState(false)
   const hitboxRef = useRef<HTMLDivElement | null>(null)
   const statusBarRef = useRef<HTMLDivElement | null>(null)
   const chatPanelRef = useRef<HTMLDivElement | null>(null)
@@ -109,6 +117,27 @@ export default function App(): ReactElement {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  // ---- 调试栏显隐：Ctrl+Shift+D（渲染侧监听；窗口有焦点时生效，穿透/失焦场景由主进程全局快捷键兜底） ----
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.repeat) return
+      if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return
+      if (e.key.toLowerCase() !== 'd') return
+      e.preventDefault()
+      setDebugBarVisible((v) => !v)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  // ---- 调试栏显隐：主进程全局快捷键（Ctrl+Shift+D）转发事件（主进程只转发，不持有状态，避免双方状态漂移） ----
+  // 注意：新增的 bridge API 需重启 Electron 主进程才可用（dev 下主进程不热更）；
+  // 旧 preload 无该方法时静默跳过（渲染侧 keydown 路径仍可用，见上）
+  useEffect(() => {
+    const off = getPetBridge().window.onToggleDebugBar?.(() => setDebugBarVisible((v) => !v))
+    return () => off?.()
   }, [])
 
   // ---- 主进程/后端状态订阅 ----
@@ -224,14 +253,19 @@ export default function App(): ReactElement {
     }
   }, [])
 
-  // ---- 可交互区域上报（Linux 用作 X11 形状穿透的输入区；含宠物 hitbox、聊天面板、状态栏） ----
+  // ---- 可交互区域上报（Linux 用作 X11 形状穿透的输入区） ----
+  // 组成：宠物视觉包围盒（见下；必须 ≥ 渲染范围，防止被形状裁剪）+ hitbox + 聊天面板 + 状态栏（显示时）
   // 聊天面板尺寸会随消息变化，用 ResizeObserver 跟随，rAF 合并上报频次。
+  // 依赖 debugBarVisible：调试栏显隐时容器挂载/卸载，需重建观察并重报矩形（隐藏时不含状态栏）。
   useEffect(() => {
     const bridge = getPetBridge()
     let rafId = 0
 
     const doReport = (): void => {
-      const rects: Rect[] = []
+      // 宠物视觉包围盒（窗口坐标）：X11 setShape 会同时裁剪可见区域（verify-report 已知限制）——
+      // 形状矩形必须 ≥ 形象渲染范围（含 SVG 表情符号如头顶 Zzz/"？"），否则形象被裁。
+      // 调整形象尺寸 / 表情元素位置时，同步调整此值。
+      const rects: Rect[] = [{ x: 65, y: 8, width: 270, height: 340 }]
       for (const el of [hitboxRef.current, chatPanelRef.current, statusBarRef.current]) {
         if (!el) continue
         const r = el.getBoundingClientRect()
@@ -270,19 +304,22 @@ export default function App(): ReactElement {
       observers.forEach((ro) => ro.disconnect())
       window.removeEventListener('resize', report)
     }
-  }, [])
+  }, [debugBarVisible])
 
   return (
     <div className="app-root">
-      {/* 顶部状态栏：宠物状态 + 当前情绪（emotion 事件的占位表现） */}
-      <div className="pet-status-bar" data-testid="pet-status-bar">
-        <span className="pet-state" data-testid="pet-state">
-          {STATE_LABEL[petState]}
-        </span>
-        <span className="pet-emotion" data-testid="pet-emotion">
-          {emotionEmoji(emotion)} {emotion}
-        </span>
-      </div>
+      {/* 顶部状态显示：宠物状态 + 当前情绪（开发向信息，默认隐藏；Ctrl+Shift+D 唤出）。
+          条件渲染：隐藏时完全不占界面（absolute 定位，不影响宠物/对话面板布局） */}
+      {debugBarVisible ? (
+        <div className="pet-status-bar" data-testid="pet-status-bar">
+          <span className="pet-state" data-testid="pet-state">
+            {STATE_LABEL[petState]}
+          </span>
+          <span className="pet-emotion" data-testid="pet-emotion">
+            {emotionEmoji(emotion)} {emotion}
+          </span>
+        </div>
+      ) : null}
 
       {/* 宠物挂载容器（hitbox）：pet 域在此挂载当前渲染器（SVG 部件动画；将来可换 Live2D 画布）。
           注意：容器尺寸 = X11 交互形状（setInteractiveRects 上报），调整形象尺寸时需与之匹配 */}
@@ -297,20 +334,25 @@ export default function App(): ReactElement {
       {/* 对话域：输入框 + 气泡列表（订阅 WS token/emotion/reply_*） */}
       <ChatPanel client={wsClient} containerRef={chatPanelRef} />
 
-      <div className="status-bar" ref={statusBarRef}>
-        <div>
-          后端：{BACKEND_LABEL[backendState]} · WS：{WS_LABEL[wsState]}
-          {voiceSpeaking ? <span className="status-speaking"> · 🔊 说话中</span> : null}
-          {behaviorStatus
-            ? ` · 🐾 ${behaviorStatus.name}${behaviorStatus.detail ? `（${behaviorStatus.detail}）` : ''}`
-            : ''}
-          {lastError ? <span className="status-error"> · ⚠ {lastError}</span> : null}
+      {/* 底部调试栏（开发向信息，默认隐藏；Ctrl+Shift+D 唤出）。
+          条件渲染并在隐藏时不挂 ref：交互矩形上报与 ResizeObserver 均跳过该容器 */}
+      {debugBarVisible ? (
+        <div className="status-bar" ref={statusBarRef}>
+          <div>
+            后端：{BACKEND_LABEL[backendState]} · WS：{WS_LABEL[wsState]}
+            {voiceSpeaking ? <span className="status-speaking"> · 🔊 说话中</span> : null}
+            {behaviorStatus
+              ? ` · 🐾 ${behaviorStatus.name}${behaviorStatus.detail ? `（${behaviorStatus.detail}）` : ''}`
+              : ''}
+            {lastError ? <span className="status-error"> · ⚠ {lastError}</span> : null}
+          </div>
+          <div>
+            穿透 {debug.clickThrough ? '开' : '关'} · 置顶 {debug.alwaysOnTop ? '开' : '关'} · hitbox{' '}
+            {debug.hitboxVisible ? '显示' : '隐藏'} · F9/F10/F11 · W 走动 · N 打盹 · Ctrl+Shift+D
+            调试栏
+          </div>
         </div>
-        <div>
-          穿透 {debug.clickThrough ? '开' : '关'} · 置顶 {debug.alwaysOnTop ? '开' : '关'} · hitbox{' '}
-          {debug.hitboxVisible ? '显示' : '隐藏'} · F9/F10/F11 · W 走动 · N 打盹
-        </div>
-      </div>
+      ) : null}
     </div>
   )
 }

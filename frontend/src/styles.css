@@ -55,7 +55,7 @@ body,
   overflow: visible;
 }
 
-/* 顶部状态栏：宠物状态 + 当前情绪（emotion 事件占位展示） */
+/* 顶部状态显示：宠物状态 + 当前情绪（开发向信息，默认隐藏不渲染；Ctrl+Shift+D 唤出） */
 .pet-status-bar {
   position: absolute;
   top: 8px;
@@ -215,7 +215,7 @@ body,
   background: rgba(255, 72, 72, 1);
 }
 
-/* 状态栏：窗口底部调试/连接信息（两行紧凑展示） */
+/* 底部调试栏：窗口底部调试/连接信息（两行紧凑展示；开发向信息，默认隐藏不渲染，Ctrl+Shift+D 唤出） */
 .status-bar {
   position: absolute;
   left: 50%;

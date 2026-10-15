@@ -35,6 +35,8 @@ export const IPC = {
 export const IPC_EVENTS = {
   /** 调试状态变化（调试快捷键触发后推送） */
   WINDOW_DEBUG_STATE_CHANGED: 'window:debug-state-changed',
+  /** 切换调试栏显隐（Ctrl+Shift+D 全局快捷键触发后推送；渲染侧翻转本地显隐状态） */
+  WINDOW_TOGGLE_DEBUG_BAR: 'window:toggle-debug-bar',
   /** 窗口几何变化（移动/缩放后 debounce ~1s 推送；payload: WindowGeometry） */
   WINDOW_GEOMETRY_CHANGED: 'window:geometry-changed',
   /** 后端子进程状态变化（payload: BackendStatusPayload） */
@@ -99,6 +101,11 @@ export interface PetBridgeApi {
     getDebugState(): Promise<WindowDebugState>
     /** 订阅调试状态变化；返回取消订阅函数 */
     onDebugStateChanged(cb: (state: WindowDebugState) => void): () => void
+    /**
+     * 订阅"调试栏显隐切换"事件（主进程 Ctrl+Shift+D 全局快捷键触发；渲染侧翻转本地显隐状态）；
+     * 返回取消订阅函数
+     */
+    onToggleDebugBar(cb: () => void): () => void
     /** 缓动移动窗口到屏幕坐标 (x, y)；完成或被 cancelMove() 取消后 resolve（P3 行为引擎） */
     moveTo(x: number, y: number, durationMs: number): Promise<MoveResult>
     /** 取消进行中的缓动移动（用户交互打断行为时调用） */
