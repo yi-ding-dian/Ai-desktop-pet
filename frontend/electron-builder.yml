@@ -1,0 +1,52 @@
+# electron-builder 配置：Linux AppImage + deb 打包（Windows/NSIS 后续按需补）
+appId: com.yicaibao.aipet
+productName: AI 桌面宠物
+# 注：deb 打包器（fpm）还要求 homepage —— 该字段只能在 package.json 里给（见 frontend/package.json）
+electronVersion: 33.4.11
+# 命名约定：productName 决定用户看到的名称（应用菜单、窗口标题），保持中文；
+# 产物文件名（artifactName）一律 ASCII —— 中文名在下载 URL 里会被百分号编码、命令行和传输环节易乱码。
+# 只保留中英文语言包（locales 40M → ~2M，显著减小产物）
+electronLanguages:
+  - zh-CN
+  - en-US
+# 使用本地 electron 分发，跳过 GitHub 下载（避免网络卡死）
+electronDist: node_modules/electron/dist
+directories:
+  # 产物统一落项目根的 deploy/release/（本项目 npm 根是 frontend/，故为 ../）
+  output: ../deploy/release
+  buildResources: build
+files:
+  # 主/预加载/渲染进程全部产物；main 进程无外部 runtime 依赖（react/three 等已被 vite 打进 out/renderer），
+  # 故显式排除 node_modules（electron-builder 默认会把 production dependencies 收进 asar，纯属多余体积）。
+  # 若将来 main/preload 直接 import 外部依赖，需在此放开并补 files 规则。
+  - out/**/*
+  - '!node_modules/**/*'
+asar: true
+npmRebuild: false
+extraResources:
+  # PyInstaller 后端（deploy/build.sh 第 1 步产出）→ resources/backend/
+  # 运行期由 electron/backend-process/locate.ts 以 process.resourcesPath/backend/backend 定位
+  - from: resources/backend
+    to: backend
+    filter:
+      - '**/*'
+      - '!**/__pycache__/**'
+linux:
+  icon: build/icon.png
+  target:
+    - AppImage
+    - deb
+  artifactName: ai-desktop-pet-${version}-${arch}.${ext}
+  category: Utility
+  maintainer: yicaibao
+  synopsis: AI 桌面宠物（Electron 前端 + Python 后端）
+  executableName: ai-desktop-pet
+  # 窗口关联：desktopName（package.json 顶层）与 WM_CLASS 一致，桌面环境才能把窗口绑定到应用菜单条目
+  syncDesktopName: true
+# AppImage 压缩算法：保持 gzip（默认）。教训（2026-10-12 样板项目实测）：xz 产物虽小 22%，
+# 但 AppImage 每次启动都要从 squashfs 惰性解压（挂载是全新的、不吃页缓存），冷启动 1s → 22s ——
+# 启动速度远比省这 21MB 重要，不要改回 xz
+appImage:
+  compression: gzip
+deb:
+  artifactName: ai-desktop-pet-${version}-${arch}.${ext}
