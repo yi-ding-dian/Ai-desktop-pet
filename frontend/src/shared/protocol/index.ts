@@ -196,6 +196,17 @@ export interface HistoryData {
 /** 配置快照（Pydantic 侧 extra=allow，字段自由） */
 export type ConfigData = Record<string, unknown>
 
+/**
+ * 「测试连接」结果（§3.3，P4 设置面板 test_llm 的响应）：
+ * ok=false 时 message 为具体原因（连不上/401 Key 错/404 地址错…）；
+ * 成功且网关支持 `/v1/models` 时附模型列表（供设置页模型下拉）。
+ */
+export interface LlmTestResultData {
+  ok: boolean
+  message: string
+  models?: string[] | null
+}
+
 /** 错误；fatal=true 表示连接将关闭 */
 export interface ErrorData {
   code: string
@@ -257,6 +268,7 @@ export interface ServerEventMap {
   proactive: ProactiveData
   history: HistoryData
   config: ConfigData
+  llm_test_result: LlmTestResultData
   error: ErrorData
   pong: PongData
 }

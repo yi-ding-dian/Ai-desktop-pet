@@ -17,7 +17,7 @@
  * 并发安全：所有状态跃迁经 opSeq 序列号串行化——异步动画（滑入/折叠/滑出）完成后若发现
  * 期间已被新操作接管（enter/exit/fold/unfold 交错），则提前返回，不覆盖新状态、不广播陈旧状态。
  */
-import { app, BrowserWindow, ipcMain, screen, type WebContents } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
 import {
   IPC,
@@ -260,6 +260,12 @@ function createBoardWindow(initial: Rect): BrowserWindow {
       console.log(`[board-renderer] ${message}`)
     })
   }
+
+  // 外链走系统浏览器（板书 Markdown 里的 http(s) 链接），其余新窗口一律拒绝；返回时黑板重建也不受影响
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
 
   attachBoardEvents(win)
   loadBoardPage(win)

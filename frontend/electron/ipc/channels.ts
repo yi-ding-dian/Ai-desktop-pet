@@ -46,7 +46,11 @@ export const IPC = {
   /** 教学模式：黑板渲染就绪（主进程收到后下发首批数据） */
   TEACHING_READY: 'teaching:ready',
   /** 教学模式：查询状态（invoke → TeachingStatePayload） */
-  TEACHING_GET_STATE: 'teaching:get-state'
+  TEACHING_GET_STATE: 'teaching:get-state',
+  /** 设置窗口：请求打开独立设置窗口（托盘菜单与聊天关键词共用；单例，重复打开则聚焦已有） */
+  SETTINGS_OPEN: 'settings:open',
+  /** 设置窗口：请求重启应用（设置页"重启"按钮；主进程先走后端退出清理再 relaunch） */
+  APP_RESTART: 'app:restart'
 } as const
 
 /** 通道名：主 → 渲染（webContents.send 广播） */
@@ -253,6 +257,16 @@ export interface PetBridgeApi {
     ready(): void
     /** 黑板面：订阅收件箱（镜像 / 跳转 / 显隐命令）；返回取消订阅函数 */
     onBoardInbox(cb: (item: TeachingBoardInbox) => void): () => void
+  }
+  /** 设置窗口（P4 前置）：宠物面请求打开独立设置窗口 */
+  settings: {
+    /** 请求打开设置窗口（宠物窗口调用；托盘菜单与聊天关键词"打开设置"共用入口；单例——已打开则聚焦） */
+    open(): void
+  }
+  /** 应用级操作（设置页用） */
+  app: {
+    /** 请求重启应用（主进程先走后端退出清理链，再 relaunch——防孤儿后端进程） */
+    restart(): void
   }
   /** 后端子进程（设计文档 §5.2）：状态订阅 + 快照查询；渲染进程不直接管理进程 */
   backend: {

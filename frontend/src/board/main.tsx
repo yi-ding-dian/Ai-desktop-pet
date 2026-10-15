@@ -7,6 +7,10 @@ import { createRoot } from 'react-dom/client'
 import 'highlight.js/styles/github-dark.css'
 import BoardApp from './BoardApp'
 import './board.css'
+import { initTheme } from '../shared/theme'
+
+// 主题（§7.6.4）：黑板同享主题变量（浅色成"白板"）；设置窗切换 → 本窗即时变色
+initTheme()
 
 createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

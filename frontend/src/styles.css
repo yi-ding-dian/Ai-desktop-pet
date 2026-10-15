@@ -1,4 +1,7 @@
 /* 桌宠窗口全透明基础样式：任何背景都会破坏透明效果 */
+/* 主题变量（深/浅两套）：见 shared/theme/theme.css（设计文档 §7.6.4） */
+@import './shared/theme/theme.css';
+
 html,
 body,
 #root {
@@ -65,8 +68,8 @@ body,
   gap: 10px;
   padding: 4px 12px;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
+  background: var(--ui-overlay);
+  color: var(--ui-overlay-fg);
   font-size: 12px;
   line-height: 1.5;
   white-space: nowrap;
@@ -99,7 +102,7 @@ body,
   height: 96px;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.4) transparent;
+  scrollbar-color: var(--ui-scrollbar) transparent;
 }
 
 .chat-messages::-webkit-scrollbar {
@@ -107,7 +110,7 @@ body,
 }
 
 .chat-messages::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.4);
+  background: var(--ui-scrollbar);
   border-radius: 2px;
 }
 
@@ -123,20 +126,20 @@ body,
 
 .chat-bubble.user {
   align-self: flex-end;
-  background: rgba(64, 158, 255, 0.92);
-  color: #fff;
+  background: var(--chat-user-bg);
+  color: var(--chat-user-fg);
 }
 
 .chat-bubble.assistant {
   align-self: flex-start;
-  background: rgba(255, 255, 255, 0.92);
-  color: #222;
+  background: var(--chat-assistant-bg);
+  color: var(--chat-assistant-fg);
 }
 
 .chat-bubble.error {
   align-self: flex-start;
-  background: rgba(220, 80, 80, 0.94);
-  color: #fff;
+  background: var(--chat-error-bg);
+  color: var(--chat-error-fg);
 }
 
 .chat-bubble-emotion {
@@ -171,8 +174,8 @@ body,
   padding: 0 10px;
   border: none;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.92);
-  color: #222;
+  background: var(--chat-input-bg);
+  color: var(--chat-input-fg);
   font-size: 12px;
   outline: none;
   user-select: text;
@@ -188,8 +191,8 @@ body,
   padding: 0 12px;
   border: none;
   border-radius: 8px;
-  background: rgba(64, 158, 255, 0.92);
-  color: #fff;
+  background: var(--chat-user-bg);
+  color: var(--chat-user-fg);
   font-size: 12px;
   cursor: pointer;
 }
@@ -205,14 +208,14 @@ body,
   padding: 0 12px;
   border: none;
   border-radius: 8px;
-  background: rgba(255, 92, 92, 0.92);
-  color: #fff;
+  background: var(--chat-stop-bg);
+  color: var(--chat-error-fg);
   font-size: 12px;
   cursor: pointer;
 }
 
 .chat-stop:hover {
-  background: rgba(255, 72, 72, 1);
+  background: var(--chat-stop-hover);
 }
 
 /* 底部调试栏：窗口底部调试/连接信息（两行紧凑展示；开发向信息，默认隐藏不渲染，Ctrl+Shift+D 唤出） */
@@ -223,8 +226,8 @@ body,
   transform: translateX(-50%);
   padding: 5px 12px;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
+  background: var(--ui-overlay);
+  color: var(--ui-overlay-fg);
   font-size: 11px;
   line-height: 1.5;
   text-align: center;
@@ -234,12 +237,12 @@ body,
 }
 
 .status-error {
-  color: #ff9b9b;
+  color: var(--ui-danger);
 }
 
 /* 状态栏"🔊 说话中"提示（P2 语音） */
 .status-speaking {
-  color: #9fd8ff;
+  color: var(--ui-link);
 }
 
 /* ---------- 教学模式（P5 §7.5） ---------- */
@@ -266,8 +269,8 @@ body,
   line-height: 30px;
   padding: 0 10px;
   border-radius: 8px;
-  background: rgba(18, 20, 28, 0.85);
-  color: #e8ecf4;
+  background: var(--bubble-bg);
+  color: var(--bubble-fg);
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
@@ -278,7 +281,7 @@ body,
 }
 
 .teaching-bubble:hover {
-  background: rgba(48, 58, 82, 0.95);
+  background: var(--bubble-hover);
 }
 
 /* "+N" 小徽标：超过 4 条时提示省略的旧问题数 */
@@ -286,8 +289,8 @@ body,
   align-self: center;
   padding: 1px 8px;
   border-radius: 9px;
-  background: rgba(18, 20, 28, 0.7);
-  color: #cfd8e6;
+  background: var(--bubble-more-bg);
+  color: var(--bubble-more-fg);
   font-size: 11px;
   line-height: 16px;
 }

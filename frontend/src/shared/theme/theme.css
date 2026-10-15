@@ -1,0 +1,134 @@
+/* ============================================================================
+ * 主题变量体系（设计文档 §7.6.4）——跨窗口共享：设置窗 / 宠物窗（聊天面板与气泡）/ 黑板窗。
+ *
+ * 机制（v2 多配色）：
+ *  - 运行时的主题应用在 src/shared/theme/（palette.ts 由 4 个核心色派生全量变量，
+ *    index.ts 把结果**内联注入根元素**——内联值优先于本文件的任何规则）；
+ *  - 本文件是**无 JS 兜底 + 首帧基线**：:root/[data-theme='dark'] = 暗夜（默认），
+ *    [data-theme='light'] = 明亮；initTheme() 挂载后会立即以内联变量覆盖为实际主题
+ *    （墨蓝/紫夜/暖米/薄荷/自定义等）；
+ *  - 使用方：styles.css / board.css / settings/settings.css 各自 @import 本文件（vite 内联）；
+ *  - 变量清单应与 palette.ts 的 THEME_VAR_KEYS 保持一致。
+ * 宠物 3D 本体不受影响（渲染层不消费这些变量）。
+ * ========================================================================= */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- 通用（面板/文本/边框/交互） ---- */
+  --ui-bg: #12141c; /* 页面/板体主背景（深色实底） */
+  --ui-bg-soft: #171a24; /* 次级背景（侧栏 / 底栏） */
+  --ui-panel: rgba(255, 255, 255, 0.05); /* 卡片/面板底 */
+  --ui-panel-strong: rgba(255, 255, 255, 0.09); /* 选中/高一层级的底 */
+  --ui-panel-faint: rgba(255, 255, 255, 0.015); /* 微弱区分的底（输入条工具区） */
+  --ui-fg: #e8eaf1; /* 主前景 */
+  --ui-fg-dim: #98a1b3; /* 次要前景（说明/标签） */
+  --ui-fg-faint: #6b7486; /* 更弱（占位符/角标文字） */
+  --ui-accent: #a78bfa; /* 强调色（紫，与黑板同族） */
+  --ui-accent-strong: #b9a5f8; /* 强调色 hover */
+  --ui-accent-fg: #17121f; /* 强调底色上的前景 */
+  --ui-accent-soft: rgba(167, 139, 250, 0.16); /* 强调色弱底（徽标） */
+  --ui-link: #7dd3fc; /* 链接/信息蓝 */
+  --ui-border: rgba(255, 255, 255, 0.12);
+  --ui-border-soft: rgba(255, 255, 255, 0.07);
+  --ui-hover: rgba(255, 255, 255, 0.08); /* 悬停底（半透明，叠加在面板上） */
+  --ui-solid-hover: #1e222e; /* 悬停底（不透明面专用：板体/角标 hover） */
+  --ui-input-bg: rgba(255, 255, 255, 0.06);
+  --ui-input-border: rgba(255, 255, 255, 0.1);
+  --ui-danger: #ff6b6b; /* 错误/危险 */
+  --ui-success: #4ade80; /* 成功（✅ 提示） */
+  --ui-shadow: 0 14px 44px rgba(0, 0, 0, 0.45);
+  --ui-scrollbar: rgba(255, 255, 255, 0.18);
+
+  /* ---- 浮层（状态栏/调试栏/头顶气泡的通用底与前景） ---- */
+  --ui-overlay: rgba(18, 20, 28, 0.85);
+  --ui-overlay-strong: rgba(18, 20, 28, 0.95);
+  --ui-overlay-fg: #e8ecf4;
+
+  /* ---- 代码（黑板正文） ---- */
+  --ui-code-bg: #14161d;
+  --ui-code-inline-bg: rgba(255, 255, 255, 0.09);
+  --ui-code-fg: #c9d1d9;
+
+  /* ---- 聊天（宠物窗：气泡/输入/按钮；深色值 = 现状） ---- */
+  --chat-user-bg: rgba(64, 158, 255, 0.92);
+  --chat-user-fg: #ffffff;
+  --chat-assistant-bg: rgba(255, 255, 255, 0.92);
+  --chat-assistant-fg: #222222;
+  --chat-error-bg: rgba(220, 80, 80, 0.94);
+  --chat-error-fg: #ffffff;
+  --chat-input-bg: rgba(255, 255, 255, 0.92);
+  --chat-input-fg: #222222;
+  --chat-stop-bg: rgba(255, 92, 92, 0.92);
+  --chat-stop-hover: rgba(255, 72, 72, 1);
+
+  /* ---- 头顶问题气泡（教学模式，宠物窗；深色值 = 现状） ---- */
+  --bubble-bg: rgba(18, 20, 28, 0.85);
+  --bubble-fg: #e8ecf4;
+  --bubble-hover: rgba(48, 58, 82, 0.95);
+  --bubble-more-bg: rgba(18, 20, 28, 0.7);
+  --bubble-more-fg: #cfd8e6;
+
+  /* ---- 板体（黑板窗；深色值 = 现状） ---- */
+  --board-bg: rgba(18, 20, 28, 0.92);
+}
+
+[data-theme='dark'] {
+  /* 与 :root 同值——显式声明便于阅读（JS 会把 data-theme 设成 dark/light） */
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+
+  --ui-bg: #f2f3f7;
+  --ui-bg-soft: #e9ebf1;
+  --ui-panel: rgba(255, 255, 255, 0.85);
+  --ui-panel-strong: rgba(255, 255, 255, 0.98);
+  --ui-panel-faint: rgba(17, 24, 39, 0.02);
+  --ui-fg: #232936;
+  --ui-fg-dim: #5c6575;
+  --ui-fg-faint: #8a92a2;
+  --ui-accent: #6d4aec;
+  --ui-accent-strong: #5b3ad6;
+  --ui-accent-fg: #ffffff;
+  --ui-accent-soft: rgba(109, 74, 236, 0.12);
+  --ui-link: #0369a1;
+  --ui-border: rgba(17, 24, 39, 0.16);
+  --ui-border-soft: rgba(17, 24, 39, 0.09);
+  --ui-hover: rgba(17, 24, 39, 0.06);
+  --ui-solid-hover: #e6e9f0;
+  --ui-input-bg: #ffffff;
+  --ui-input-border: rgba(17, 24, 39, 0.18);
+  --ui-danger: #cf3535;
+  --ui-success: #15803d;
+  --ui-shadow: 0 12px 32px rgba(17, 24, 39, 0.18);
+  --ui-scrollbar: rgba(17, 24, 39, 0.24);
+
+  --ui-overlay: rgba(255, 255, 255, 0.92);
+  --ui-overlay-strong: rgba(255, 255, 255, 0.97);
+  --ui-overlay-fg: #232936;
+
+  --ui-code-bg: #eef0f4;
+  --ui-code-inline-bg: rgba(17, 24, 39, 0.07);
+  --ui-code-fg: #24292f;
+
+  --chat-user-bg: rgba(37, 99, 235, 0.95);
+  --chat-user-fg: #ffffff;
+  --chat-assistant-bg: #ffffff;
+  --chat-assistant-fg: #232936;
+  --chat-error-bg: rgba(203, 54, 54, 0.95);
+  --chat-error-fg: #ffffff;
+  --chat-input-bg: #ffffff;
+  --chat-input-fg: #232936;
+  --chat-stop-bg: rgba(214, 69, 69, 0.95);
+  --chat-stop-hover: rgba(190, 48, 48, 1);
+
+  --bubble-bg: rgba(255, 255, 255, 0.92);
+  --bubble-fg: #2a3040;
+  --bubble-hover: rgba(240, 243, 250, 0.98);
+  --bubble-more-bg: rgba(255, 255, 255, 0.75);
+  --bubble-more-fg: #5c6575;
+
+  --board-bg: rgba(250, 250, 248, 0.95);
+}

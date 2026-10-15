@@ -2,8 +2,11 @@
  * 黑板页样式（board 域，设计文档 §7.5）
  *  - html/body/#root 全透明：窗口本体 frameless + 透明，圆角/深色底都是"板体"样式；
  *  - 布局全部 100vw/100vh 自适应（窗口尺寸由主进程控制：展开态大矩形 / 折叠态 24×140）；
- *  - 内容可选中（教学板书要能复制代码），与宠物窗的强交互区不同。
+ *  - 内容可选中（教学板书要能复制代码），与宠物窗的强交互区不同；
+ *  - 主题（§7.6.4）：颜色全部走 shared/theme 变量——深色 = 原观感；浅色 = "白板"，可读性优先。
  * ========================================================================= */
+
+@import '../shared/theme/theme.css';
 
 html,
 body,
@@ -15,7 +18,7 @@ body,
   background: transparent;
   overflow: hidden;
   font-family: system-ui, 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif;
-  color: #e8eaf1;
+  color: var(--ui-fg);
 }
 
 .board-root {
@@ -32,11 +35,11 @@ body,
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  background: rgba(18, 20, 28, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--board-bg);
+  border: 1px solid var(--ui-border-soft);
   border-radius: 20px;
   overflow: hidden;
-  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--ui-shadow);
 }
 
 /* 顶栏：小标题 + 右上角 ×（下课） */
@@ -46,13 +49,13 @@ body,
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px 10px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--ui-border-soft);
 }
 
 .board-title {
   font-size: 12px;
   letter-spacing: 0.32em;
-  color: #8f9aad;
+  color: var(--ui-fg-dim);
   user-select: none;
 }
 
@@ -64,7 +67,7 @@ body,
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #98a1b3;
+  color: var(--ui-fg-dim);
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
@@ -72,8 +75,8 @@ body,
 }
 
 .board-close:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffb4b4;
+  background: var(--ui-hover);
+  color: var(--ui-danger);
 }
 
 /* 内容滚动区 */
@@ -83,7 +86,7 @@ body,
   overflow-x: hidden;
   padding: 6px 24px 22px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  scrollbar-color: var(--ui-scrollbar) transparent;
   scroll-behavior: auto;
 }
 
@@ -92,12 +95,12 @@ body,
 }
 
 .board-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--ui-scrollbar);
   border-radius: 4px;
 }
 
 .board-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--ui-scrollbar);
 }
 
 /* 空板欢迎态 */
@@ -108,7 +111,7 @@ body,
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: #8f9aad;
+  color: var(--ui-fg-dim);
   user-select: none;
 }
 
@@ -132,7 +135,7 @@ body,
 .board-card-question {
   margin: 22px 0 10px;
   padding-left: 12px;
-  border-left: 3px solid #a78bfa;
+  border-left: 3px solid var(--ui-accent);
 }
 
 .board-card-question:first-child {
@@ -153,8 +156,8 @@ body,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(167, 139, 250, 0.16);
-  color: #a78bfa;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
   font-size: 13px;
   font-weight: 700;
   transform: translateY(2px);
@@ -165,7 +168,7 @@ body,
   font-size: 16px;
   font-weight: 600;
   line-height: 1.55;
-  color: #eef0f7;
+  color: var(--ui-fg);
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;
@@ -176,7 +179,7 @@ body,
   margin: 0 0 20px;
   font-size: 14.5px;
   line-height: 1.78;
-  color: #dce0ea;
+  color: var(--ui-fg);
 }
 
 /* 思考中：三个跳动点 */
@@ -191,7 +194,7 @@ body,
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #7c8698;
+  background: var(--ui-fg-faint);
   animation: board-think 1.2s ease-in-out infinite;
 }
 
@@ -220,19 +223,20 @@ body,
 .board-note {
   margin-top: 8px;
   font-size: 12px;
-  color: #8f9aad;
+  color: var(--ui-fg-dim);
   user-select: none;
 }
 
 /* goto 跳转的 600ms 高亮闪烁（连续跳同一目标：类先移除再强制重排重启动画） */
 @keyframes board-goto-flash {
   0% {
-    background-color: rgba(125, 211, 252, 0.22);
-    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.7), 0 0 26px rgba(125, 211, 252, 0.4);
+    background-color: color-mix(in srgb, var(--ui-link) 22%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-link) 70%, transparent),
+      0 0 26px color-mix(in srgb, var(--ui-link) 40%, transparent);
   }
   100% {
-    background-color: rgba(125, 211, 252, 0);
-    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0), 0 0 0 rgba(125, 211, 252, 0);
+    background-color: color-mix(in srgb, var(--ui-link) 0%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-link) 0%, transparent), 0 0 0 transparent;
   }
 }
 
@@ -260,7 +264,7 @@ body,
 .md-body h4 {
   margin: 1.05em 0 0.45em;
   line-height: 1.4;
-  color: #f2f4fa;
+  color: var(--ui-fg);
 }
 
 .md-body h1 {
@@ -290,16 +294,16 @@ body,
 }
 
 .md-body li::marker {
-  color: #a78bfa;
+  color: var(--ui-accent);
 }
 
 .md-body blockquote {
   margin: 0.65em 0;
   padding: 0.35em 1em;
-  border-left: 3px solid rgba(125, 211, 252, 0.65);
+  border-left: 3px solid color-mix(in srgb, var(--ui-link) 65%, transparent);
   border-radius: 0 8px 8px 0;
-  background: rgba(125, 211, 252, 0.07);
-  color: #aeb7c8;
+  background: color-mix(in srgb, var(--ui-link) 7%, transparent);
+  color: var(--ui-fg-dim);
 }
 
 .md-body blockquote p {
@@ -307,19 +311,19 @@ body,
 }
 
 .md-body a {
-  color: #7dd3fc;
+  color: var(--ui-link);
   text-decoration: none;
-  border-bottom: 1px dashed rgba(125, 211, 252, 0.5);
+  border-bottom: 1px dashed color-mix(in srgb, var(--ui-link) 50%, transparent);
 }
 
 .md-body strong {
-  color: #f2f4fa;
+  color: var(--ui-fg);
 }
 
 .md-body hr {
   margin: 1em 0;
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: 1px solid var(--ui-border);
 }
 
 .md-body img {
@@ -331,18 +335,18 @@ body,
 .md-body code {
   font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
   font-size: 0.9em;
-  background: rgba(255, 255, 255, 0.09);
-  color: #c9d1d9;
+  background: var(--ui-code-inline-bg);
+  color: var(--ui-code-fg);
   padding: 0.14em 0.4em;
   border-radius: 5px;
 }
 
-/* 代码块（highlight.js 深色主题 github-dark 之上做板体化覆盖） */
+/* 代码块（highlight.js 深色主题 github-dark 之上做板体化覆盖；浅色主题覆盖见文末） */
 .md-body pre {
   margin: 0.7em 0;
   padding: 11px 14px;
-  background: #14161d;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--ui-code-bg);
+  border: 1px solid var(--ui-border-soft);
   border-radius: 10px;
   overflow: auto;
 }
@@ -357,7 +361,7 @@ body,
 }
 
 /* 代码块内容（github-dark 主题的 .hljs{background:#0d1117} 会命中 pre.hljs——
-   已被上方 .md-body pre 规则以更高特异性覆盖为板体化深色底 #14161d，无需再清 pre 背景；
+   已被上方 .md-body pre 规则以更高特异性覆盖为板体化底色（--ui-code-bg），无需再清 pre 背景；
    此条仅兜底清掉未来 code 若带 hljs 类时的默认 padding/背景） */
 .md-body pre code.hljs {
   background: transparent;
@@ -374,12 +378,12 @@ body,
 .md-body th,
 .md-body td {
   padding: 5px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--ui-border);
 }
 
 .md-body th {
-  background: rgba(255, 255, 255, 0.06);
-  color: #f2f4fa;
+  background: var(--ui-panel);
+  color: var(--ui-fg);
   font-weight: 600;
 }
 
@@ -390,8 +394,8 @@ body,
   display: flex;
   gap: 9px;
   padding: 10px 14px 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.015);
+  border-top: 1px solid var(--ui-border-soft);
+  background: var(--ui-panel-faint);
 }
 
 .board-input {
@@ -399,10 +403,10 @@ body,
   min-width: 0;
   box-sizing: border-box;
   padding: 9px 13px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--ui-input-border);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #e8eaf1;
+  background: var(--ui-input-bg);
+  color: var(--ui-fg);
   font-size: 14px;
   font-family: inherit;
   outline: none;
@@ -410,12 +414,12 @@ body,
 }
 
 .board-input::placeholder {
-  color: #6b7486;
+  color: var(--ui-fg-faint);
 }
 
 .board-input:focus {
-  border-color: rgba(167, 139, 250, 0.65);
-  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.14);
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-accent-soft);
 }
 
 .board-send {
@@ -423,8 +427,8 @@ body,
   padding: 0 16px;
   border: none;
   border-radius: 10px;
-  background: rgba(167, 139, 250, 0.85);
-  color: #17121f;
+  background: var(--ui-accent);
+  color: var(--ui-accent-fg);
   font-size: 13.5px;
   font-weight: 600;
   font-family: inherit;
@@ -433,7 +437,7 @@ body,
 }
 
 .board-send:hover:not(:disabled) {
-  background: #b9a5f8;
+  background: var(--ui-accent-strong);
 }
 
 .board-send:disabled {
@@ -456,10 +460,10 @@ body,
   gap: 10px;
   padding: 0;
   margin: 0;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--ui-border);
   border-radius: 12px;
-  background: rgba(18, 20, 28, 0.92);
-  color: #a78bfa;
+  background: var(--board-bg);
+  color: var(--ui-accent);
   cursor: pointer;
   outline: none;
   user-select: none;
@@ -468,13 +472,79 @@ body,
 }
 
 .board-badge:hover {
-  background: rgba(30, 34, 46, 0.95);
-  color: #c4b5fd;
+  background: var(--ui-solid-hover);
+  color: var(--ui-accent-strong);
 }
 
 .board-badge-label {
   writing-mode: vertical-rl;
   font-size: 10px;
   letter-spacing: 0.24em;
-  color: #7c8698;
+  color: var(--ui-fg-faint);
+}
+
+/* ============================================================================
+ * 浅色主题下的代码高亮覆盖（设计文档 §7.6.4：黑板成"白板"，可读性优先）
+ * 页面加载的 highlight.js 主题是 github-dark（深色 token 配色）；浅色下按
+ * GitHub Light 配色覆盖常用 token 类。深色主题不受影响。
+ * ========================================================================= */
+
+[data-theme='light'] .md-body pre code.hljs,
+[data-theme='light'] .md-body code.hljs {
+  color: #24292f;
+}
+
+[data-theme='light'] .md-body .hljs-comment,
+[data-theme='light'] .md-body .hljs-quote {
+  color: #6e7781;
+}
+
+[data-theme='light'] .md-body .hljs-keyword,
+[data-theme='light'] .md-body .hljs-selector-tag,
+[data-theme='light'] .md-body .hljs-type,
+[data-theme='light'] .md-body .hljs-deletion {
+  color: #cf222e;
+}
+
+[data-theme='light'] .md-body .hljs-string,
+[data-theme='light'] .md-body .hljs-meta .hljs-string,
+[data-theme='light'] .md-body .hljs-regexp {
+  color: #0a3069;
+}
+
+[data-theme='light'] .md-body .hljs-title,
+[data-theme='light'] .md-body .hljs-section,
+[data-theme='light'] .md-body .hljs-title.class_,
+[data-theme='light'] .md-body .hljs-title.function_ {
+  color: #8250df;
+}
+
+[data-theme='light'] .md-body .hljs-number,
+[data-theme='light'] .md-body .hljs-literal,
+[data-theme='light'] .md-body .hljs-symbol,
+[data-theme='light'] .md-body .hljs-bullet {
+  color: #0550ae;
+}
+
+[data-theme='light'] .md-body .hljs-built_in,
+[data-theme='light'] .md-body .hljs-variable,
+[data-theme='light'] .md-body .hljs-template-variable,
+[data-theme='light'] .md-body .hljs-attr,
+[data-theme='light'] .md-body .hljs-attribute,
+[data-theme='light'] .md-body .hljs-addition {
+  color: #953800;
+}
+
+[data-theme='light'] .md-body .hljs-name,
+[data-theme='light'] .md-body .hljs-selector-id,
+[data-theme='light'] .md-body .hljs-selector-class {
+  color: #116329;
+}
+
+[data-theme='light'] .md-body .hljs-emphasis {
+  font-style: italic;
+}
+
+[data-theme='light'] .md-body .hljs-strong {
+  font-weight: 600;
 }

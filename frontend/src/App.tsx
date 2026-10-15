@@ -272,7 +272,32 @@ export default function App(): ReactElement {
     return () => offs.forEach((off) => off())
   }, [wsClient])
 
-  /** 教学模式展开态（气泡显示 + 聊天面板收起；折叠=让路态：气泡藏、聊天面板恢复可打字） */
+  // ---- 首启引导检测（P4 §7.6.5）：LLM 未配置（base_url 空）→ 自动打开设置窗 ----
+  // （引导模式由设置页自行判定——它读到空 base_url 即展示服务商预设欢迎条，无需参数）
+  // 仅本次会话首次连接时检测一次：用户本轮暂不配置就不再打扰，下次启动再弹
+  useEffect(() => {
+    let checked = false
+    const offState = wsClient.onStateChange((s) => {
+      if (s === 'connected' && !checked) {
+        checked = true
+        wsClient.send('get_config', {})
+      }
+    })
+    const offConfig = wsClient.on('config', (d) => {
+      const llm = (d as { llm?: { base_url?: unknown } }).llm
+      const baseUrl = typeof llm?.base_url === 'string' ? llm.base_url : ''
+      if (baseUrl.trim() === '') {
+        console.log('[pet] 首启引导：LLM 未配置（base_url 空），自动打开设置窗口')
+        getPetBridge().settings?.open?.()
+      }
+    })
+    return () => {
+      offState()
+      offConfig()
+    }
+  }, [wsClient])
+
+  /** 教学模式展开态（气泡显示 + 聊天面板收起；折叠让路态：气泡也藏——面板已随教学模式整体收起） */
   const teachingExpanded = teachingState.mode === 'teaching' && !teachingState.folded
 
   // ---- 悬停接管：mousemove 检测光标是否在宠物 hitbox 内 ----

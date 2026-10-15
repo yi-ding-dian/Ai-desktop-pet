@@ -180,6 +180,18 @@ const api: PetBridgeApi = {
     }
   },
 
+  settings: {
+    open(): void {
+      ipcRenderer.send(IPC.SETTINGS_OPEN)
+    }
+  },
+
+  app: {
+    restart(): void {
+      ipcRenderer.send(IPC.APP_RESTART)
+    }
+  },
+
   backend: {
     getSnapshot(): Promise<BackendSnapshot> {
       return ipcRenderer.invoke(IPC.BACKEND_GET_SNAPSHOT)

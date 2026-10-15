@@ -4,7 +4,7 @@
  * 职责边界：本文件不直接写平台特化代码——窗口创建与能力一律经 window/registry 解析平台实现（设计文档 §5.1）；
  * Python 子进程管理一律经 backend-process 域（设计文档 §5.2）；托盘一律经 tray 域。
  */
-import { app, globalShortcut, type Tray } from 'electron'
+import { app, globalShortcut, shell, type Tray } from 'electron'
 import { join } from 'node:path'
 import { resolveWindowImpl } from './window/registry'
 import { registerIpcHandlers, pushDebugState, type IpcContext } from './ipc'
@@ -14,6 +14,7 @@ import { createTray } from './tray'
 import { runHideAnimation, runShowAnimation, destroyFx } from './fx'
 import { runAnchorSelfTest } from './fx/anchor'
 import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
+import { destroySettings, initSettings } from './settings'
 import type { PlatformWindow } from './window'
 
 /** 宠物窗口尺寸（逻辑基准 400x400；渲染侧按 100vw/100vh 自适应） */
@@ -53,6 +54,12 @@ function createPetWindow(): PlatformWindow {
       console.log(`[renderer] ${message}`)
     })
   }
+
+  // 外链走系统浏览器（聊天气泡/板书里的 http(s) 链接）；其余新窗口一律拒绝
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
 
   window.once('ready-to-show', () => {
     window.show()
@@ -154,6 +161,9 @@ if (!app.requestSingleInstanceLock()) {
     // 教学模式（P5，设计文档 §7.5）编排中心：注册 IPC（托盘菜单/渲染面请求都进这里）；
     // 黑板窗口由它按需创建（进入教学模式前不存在）
     initTeaching(petWin)
+    // 设置窗口域（P4 前置，设计文档 §7.6）：注册 IPC（托盘菜单/聊天关键词 → SETTINGS_OPEN；
+    // 设置页「重启」→ APP_RESTART）；设置窗口本身懒创建（首次打开时建立，单例）
+    initSettings()
     // 后端子进程与窗口并行启动（design §3.4）；就绪后经 IPC 下发 port/token
     backendManager.start()
 
@@ -194,5 +204,7 @@ if (!app.requestSingleInstanceLock()) {
     destroyFx()
     // 黑板窗口（若存在）同样直接销毁（教学模式编排中心复位为 normal）
     destroyTeaching()
+    // 设置窗口（若存在）直接销毁并清引用
+    destroySettings()
   })
 }

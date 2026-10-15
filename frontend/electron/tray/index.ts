@@ -2,7 +2,7 @@
  * 系统托盘域（设计文档 §1.1：托盘/全局快捷键/单例锁属主进程职责）。
  *
  * 职责：在系统托盘区（DDE 右下角小图标区）提供常驻入口——
- *  - 菜单：显示/隐藏宠物（win.show/hide 切换）、退出（app.quit → 既有 before-quit 清理链路）；
+ *  - 菜单：显示/隐藏宠物、教学模式、设置、退出（退出走 app.quit → 既有 before-quit 清理链路）；
  *  - 单击切换显隐（尽力而为：Linux 走 StatusNotifierItem，宿主行为有差异，见下方注释）。
  *
  * 图标加载（dev/生产双路径，模式同 backend-process/locate.ts）：
@@ -23,6 +23,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { runHideAnimation, runShowAnimation } from '../fx'
 import { enterTeaching } from '../teaching'
+import { openSettings } from '../settings'
 
 /**
  * 托盘图标基准边长（px）。Linux 托盘区常见高度 22~24px，22 是 Electron 官方建议值；
@@ -108,6 +109,14 @@ export function createTray(win: BrowserWindow): Tray | null {
         void enterTeaching('menu')
       }
     },
+    {
+      label: '设置',
+      // 打开独立设置窗口（P4 前置，§7.6.1）：单例——已打开则聚焦（窗口生命周期归 settings 域）
+      click: () => {
+        console.log('[tray] 菜单：打开设置窗口')
+        openSettings()
+      }
+    },
     { type: 'separator' },
     {
       label: '退出',
@@ -134,6 +143,6 @@ export function createTray(win: BrowserWindow): Tray | null {
     void runShowAnimation(win)
   })
 
-  console.log('[tray] 托盘已创建（菜单：显示/隐藏宠物、教学模式、退出）')
+  console.log('[tray] 托盘已创建（菜单：显示/隐藏宠物、教学模式、设置、退出）')
   return tray
 }
