@@ -4,10 +4,13 @@
  * 依赖方向：ipc（协议层）→ window（平台能力），单向。
  * 渲染进程永远不直接操作窗口（设计文档 §1.1 核心原则 1），一律经由这里转发。
  */
-import { ipcMain, type BrowserWindow } from 'electron'
+import { ipcMain, powerMonitor, type BrowserWindow } from 'electron'
 import { IPC, IPC_EVENTS, type WindowDebugState } from './channels'
 import { backendManager } from '../backend-process'
 import type { Point, Rect, WindowCapability } from '../window'
+
+/** 窗口几何推送的 debounce 时长（ms）：拖拽/缓动期间大量 move 事件只推一次最终值 */
+const GEOMETRY_PUSH_DEBOUNCE_MS = 1000
 
 export interface IpcContext {
   capability: WindowCapability
@@ -56,6 +59,29 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   })
 
   ipcMain.handle(IPC.WINDOW_GET_DEBUG_STATE, () => buildDebugState(ctx))
+
+  // P3 行为引擎：缓动移动（invoke 配对一次移动；完成/取消 resolve）
+  ipcMain.handle(IPC.WINDOW_MOVE_TO, (_event, x: number, y: number, durationMs: number) =>
+    cap.moveTo(x, y, durationMs)
+  )
+  ipcMain.on(IPC.WINDOW_MOVE_CANCEL, () => {
+    cap.cancelMove()
+  })
+  ipcMain.handle(IPC.WINDOW_GET_GEOMETRY, () => cap.getGeometry())
+  ipcMain.handle(IPC.SYSTEM_GET_IDLE_SECONDS, () => powerMonitor.getSystemIdleTime())
+
+  // 窗口几何变化 → debounce 后推送（拖拽/缓动/系统移动统一收口，渲染侧据此上报 env_update）
+  let geometryPushTimer: NodeJS.Timeout | null = null
+  const scheduleGeometryPush = (): void => {
+    if (geometryPushTimer) clearTimeout(geometryPushTimer)
+    geometryPushTimer = setTimeout(() => {
+      geometryPushTimer = null
+      if (ctx.window.isDestroyed()) return
+      ctx.window.webContents.send(IPC_EVENTS.WINDOW_GEOMETRY_CHANGED, cap.getGeometry())
+    }, GEOMETRY_PUSH_DEBOUNCE_MS)
+  }
+  ctx.window.on('move', scheduleGeometryPush)
+  ctx.window.on('resize', scheduleGeometryPush)
 
   // 后端状态快照：渲染进程晚于 ready 订阅时补状态（否则会漏掉一次性 ready 事件）
   ipcMain.handle(IPC.BACKEND_GET_SNAPSHOT, () => backendManager.getSnapshot())

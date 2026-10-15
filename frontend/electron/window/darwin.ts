@@ -11,6 +11,7 @@
  */
 import { BrowserWindow, screen } from 'electron'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
+import { createEasedMover, readGeometry } from './move'
 
 export function createDarwinWindow(opts: PetWindowOptions): PlatformWindow {
   const win = new BrowserWindow({
@@ -40,6 +41,8 @@ export function createDarwinWindow(opts: PetWindowOptions): PlatformWindow {
   )
 
   let dragOrigin: { start: Point; bounds: Rect } | null = null
+  /** 缓动移动器（P3 行为引擎：walk 的窗口移动） */
+  const mover = createEasedMover(win)
 
   const capability: WindowCapability = {
     // 降级：无穿透（恒不拦截，即恒接收事件；此处语义为"关"）
@@ -91,7 +94,12 @@ export function createDarwinWindow(opts: PetWindowOptions): PlatformWindow {
 
     getWorkArea(): Rect {
       return screen.getDisplayMatching(win.getBounds()).workArea
-    }
+    },
+
+    // P3 自主行为引擎：缓动移动（单次 IPC 一次移动；完成/取消 resolve）
+    moveTo: (x, y, durationMs) => mover.moveTo(x, y, durationMs),
+    cancelMove: () => mover.cancelMove(),
+    getGeometry: () => readGeometry(win)
   }
 
   return {

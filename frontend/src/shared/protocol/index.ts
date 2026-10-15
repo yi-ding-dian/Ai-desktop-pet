@@ -75,11 +75,35 @@ export interface BehaviorDoneData {
   interrupted: boolean
 }
 
-/** 环境上报：屏幕/窗口几何（行为决策依据） */
+/** 屏幕坐标点（与 electron/window Point 结构一致；协议层独立定义避免依赖 electron 目录） */
+export interface EnvPoint {
+  x: number
+  y: number
+}
+
+/** 窗口尺寸 */
+export interface EnvSize {
+  width: number
+  height: number
+}
+
+/** 工作区矩形（屏幕坐标 + 尺寸） */
+export interface EnvRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** 环境上报：屏幕/窗口几何 + 系统空闲 + 宠物状态（行为决策依据，§4.5.5） */
 export interface EnvUpdateData {
-  work_area?: Record<string, unknown> | null
-  window_pos?: Record<string, unknown> | null
-  window_size?: Record<string, unknown> | null
+  work_area?: EnvRect | null
+  window_pos?: EnvPoint | null
+  window_size?: EnvSize | null
+  /** 系统空闲秒数（主进程 powerMonitor.getSystemIdleTime）——"用户是否在用电脑" */
+  system_idle_seconds?: number | null
+  /** 渲染侧当前宠物状态——对话中引擎静默的旁路信号（引擎不读 chat_pipeline） */
+  pet_state?: PetState | null
 }
 
 /** Phase 2：音频输入走二进制帧（§3.5），文本帧侧仅占位 */

@@ -12,7 +12,7 @@ import {
   type PetBridgeApi,
   type WindowDebugState
 } from './ipc/channels'
-import type { Point, Rect } from './window'
+import type { MoveResult, Point, Rect, WindowGeometry } from './window'
 
 const api: PetBridgeApi = {
   platform: process.platform,
@@ -48,6 +48,32 @@ const api: PetBridgeApi = {
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.WINDOW_DEBUG_STATE_CHANGED, listener)
       }
+    },
+
+    moveTo(x: number, y: number, durationMs: number): Promise<MoveResult> {
+      return ipcRenderer.invoke(IPC.WINDOW_MOVE_TO, x, y, durationMs)
+    },
+
+    cancelMove(): void {
+      ipcRenderer.send(IPC.WINDOW_MOVE_CANCEL)
+    },
+
+    getGeometry(): Promise<WindowGeometry> {
+      return ipcRenderer.invoke(IPC.WINDOW_GET_GEOMETRY)
+    },
+
+    onGeometryChanged(cb: (geo: WindowGeometry) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, geo: WindowGeometry): void => cb(geo)
+      ipcRenderer.on(IPC_EVENTS.WINDOW_GEOMETRY_CHANGED, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.WINDOW_GEOMETRY_CHANGED, listener)
+      }
+    }
+  },
+
+  system: {
+    getIdleSeconds(): Promise<number> {
+      return ipcRenderer.invoke(IPC.SYSTEM_GET_IDLE_SECONDS)
     }
   },
 

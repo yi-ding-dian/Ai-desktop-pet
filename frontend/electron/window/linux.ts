@@ -14,6 +14,7 @@
  */
 import { BrowserWindow, screen } from 'electron'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
+import { createEasedMover, readGeometry } from './move'
 
 /** X11 / Wayland 会话检测 */
 function isWaylandSession(): boolean {
@@ -62,6 +63,8 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
   let interactiveRects: Rect[] = []
   /** 拖拽会话：起始光标屏幕坐标 + 起始窗口 bounds */
   let dragOrigin: { start: Point; bounds: Rect } | null = null
+  /** 缓动移动器（P3 行为引擎：walk 的窗口移动；与拖拽互斥由调用方保证） */
+  const mover = createEasedMover(win)
 
   /** 全窗矩形（穿透关 / 可交互区未上报时的兜底形状） */
   const fullWindowRect = (): Rect => ({ x: 0, y: 0, width: opts.width, height: opts.height })
@@ -134,7 +137,12 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
     setInteractiveRects(rects: Rect[]) {
       interactiveRects = rects
       applyShape()
-    }
+    },
+
+    // P3 自主行为引擎：缓动移动（单次 IPC 一次移动；完成/取消 resolve）
+    moveTo: (x, y, durationMs) => mover.moveTo(x, y, durationMs),
+    cancelMove: () => mover.cancelMove(),
+    getGeometry: () => readGeometry(win)
   }
 
   // 启动即穿透：可交互矩形未上报前保持全窗形状（亚秒级瞬态），上报后立即收缩为宠物矩形

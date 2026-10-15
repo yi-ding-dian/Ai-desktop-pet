@@ -11,7 +11,13 @@ import { setupWsFromBridge } from './shared/ws-client/bridge'
 import type { WsClient, WsConnectionState } from './shared/ws-client'
 import { emotionEmoji } from './modules/chat/emotions'
 import ChatPanel from './modules/chat/ChatPanel'
-import { PetView } from './modules/pet'
+import {
+  PetView,
+  setupPetBehaviors,
+  interruptPetBehavior,
+  subscribeBehaviorStatus,
+  type BehaviorStatus
+} from './modules/pet'
 import {
   setupVoice,
   subscribeVoiceSpeaking,
@@ -67,6 +73,8 @@ export default function App(): ReactElement {
   const [lastError, setLastError] = useState<string | null>(null)
   /** 本地语音是否在播（voice 域 §4.4；状态栏"🔊 说话中"提示） */
   const [voiceSpeaking, setVoiceSpeaking] = useState(false)
+  /** 自主行为执行状态（P3 §4.5.5；null = 未在执行） */
+  const [behaviorStatus, setBehaviorStatus] = useState<BehaviorStatus | null>(null)
   const hitboxRef = useRef<HTMLDivElement | null>(null)
   const statusBarRef = useRef<HTMLDivElement | null>(null)
   const chatPanelRef = useRef<HTMLDivElement | null>(null)
@@ -81,6 +89,12 @@ export default function App(): ReactElement {
 
   // 本地"说话中"状态（状态栏提示）
   useEffect(() => subscribeVoiceSpeaking(setVoiceSpeaking), [])
+
+  // ---- 自主行为接线（P3 §4.5.5/§7.4）：behavior 指令执行 + 环境上报（env_update） ----
+  useEffect(() => setupPetBehaviors(wsClient), [wsClient])
+
+  // 行为执行状态（状态栏展示"它正在做什么"；须在 setup 的 effect 之后声明）
+  useEffect(() => subscribeBehaviorStatus(setBehaviorStatus), [])
 
   // ---- dev 调试：V 键播放合成测试音（验证"帧→播放→口型→清理"全链路；输入框内不拦截） ----
   useEffect(() => {
@@ -166,6 +180,9 @@ export default function App(): ReactElement {
 
     const handlePointerDown = (e: PointerEvent): void => {
       if (e.button !== 0 || draggingRef.current) return
+      // 用户开始摸头/拖拽 → 立即中止自主行为（设计文档 §4.5.2 不打扰原则：
+      // 行为永不抢占用户交互；中止后执行器会上报 behavior_done{interrupted:true}）
+      interruptPetBehavior('用户触摸/抓取')
       draggingRef.current = true
       el.setPointerCapture(e.pointerId)
       console.log('[pet] drag start')
@@ -284,11 +301,14 @@ export default function App(): ReactElement {
         <div>
           后端：{BACKEND_LABEL[backendState]} · WS：{WS_LABEL[wsState]}
           {voiceSpeaking ? <span className="status-speaking"> · 🔊 说话中</span> : null}
+          {behaviorStatus
+            ? ` · 🐾 ${behaviorStatus.name}${behaviorStatus.detail ? `（${behaviorStatus.detail}）` : ''}`
+            : ''}
           {lastError ? <span className="status-error"> · ⚠ {lastError}</span> : null}
         </div>
         <div>
           穿透 {debug.clickThrough ? '开' : '关'} · 置顶 {debug.alwaysOnTop ? '开' : '关'} · hitbox{' '}
-          {debug.hitboxVisible ? '显示' : '隐藏'} · F9/F10/F11
+          {debug.hitboxVisible ? '显示' : '隐藏'} · F9/F10/F11 · W 走动 · N 打盹
         </div>
       </div>
     </div>

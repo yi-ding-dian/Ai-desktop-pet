@@ -14,6 +14,7 @@ import type { WsClient } from '../../shared/ws-client'
 import { EMOTION_VALUES } from '../../shared/protocol'
 import { createPetRenderer, type PetRenderer } from './renderers'
 import { setActivePetRenderer } from './controller'
+import { debugTriggerBehavior } from './behaviors'
 
 /** dev 态日志（转发到主进程日志，便于无 devtools 验证）；生产构建自动剔除 */
 const devLog = (msg: string): void => {
@@ -25,11 +26,10 @@ const TAP_MOVE_THRESHOLD = 6
 
 /**
  * 摸头是否上报后端（pet_event{tap_head}）。
- * 现状（2026-10-14）：后端流水线尚未实现 pet_event → 上报会收到 NOT_IMPLEMENTED error 事件
- * （chat 域显示错误气泡、状态栏出现 ⚠ 文本，体验变差），故默认关闭；
- * 后端实现该事件后把本开关置 true 即可（协议模型 PetEventData 已就绪，发送路径已留）。
+ * 现状（2026-10-14，P3）：后端 dispatcher.on_pet_event 已实现（mood ↑ + 推送轻量
+ * emotion 回应），本开关翻为 true；上报失败（未连接）由 ws-client 日志兜底。
  */
-const REPORT_TAP_HEAD_TO_BACKEND = false
+const REPORT_TAP_HEAD_TO_BACKEND = true
 
 /** 调试键是否发生在输入场景（输入框/文本域/可编辑区）：是则不拦截 */
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -52,7 +52,9 @@ export default function PetView({ client }: PetViewProps): ReactElement {
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
-    const renderer = createPetRenderer('part-animation')
+    // 渲染器由工厂决定缺省（当前为 'glb-model'：加载 Meshy GLB 兔子；
+    // localStorage `pet-renderer` 可覆盖为 'three-d' / 'part-animation'）
+    const renderer = createPetRenderer()
     renderer.mount(host)
     rendererRef.current = renderer
     // 注册到 pet 域控制器：voice 域口型驱动（setPetMouth）经此转发到当前渲染器
@@ -127,12 +129,21 @@ export default function PetView({ client }: PetViewProps): ReactElement {
   }, [client])
 
   // ---- ④ 调试快捷键（窗口聚焦时；输入框内不拦截）----
-  // 按住 M：口型开合模拟（TTS 未接，验证 setMouth）；数字 1–8：预览 8 种情绪；0：回 neutral
+  // 按住 M：口型开合模拟（TTS 未接，验证 setMouth）；数字 1–8：预览 8 种情绪；0：回 neutral；
+  // W：本地注入一条 walk 行为指令；N：注入一条 nap 打盹（30s）——均走真实执行/回报路径
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
       if (isTypingTarget(e.target)) return
       if (e.key === 'm' || e.key === 'M') {
         if (!e.repeat) rendererRef.current?.setMouth(1)
+        return
+      }
+      if (e.key === 'w' || e.key === 'W') {
+        if (!e.repeat) debugTriggerBehavior('walk', { direction: 'right', distance: 300, duration_ms: 2200 })
+        return
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        if (!e.repeat) debugTriggerBehavior('nap', { duration_ms: 30_000 })
         return
       }
       if (/^[0-8]$/.test(e.key)) {

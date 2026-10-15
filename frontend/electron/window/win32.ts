@@ -13,6 +13,7 @@
  */
 import { BrowserWindow, screen } from 'electron'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
+import { createEasedMover, readGeometry } from './move'
 
 export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
   const win = new BrowserWindow({
@@ -44,6 +45,8 @@ export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
 
   let clickThrough = false
   let dragOrigin: { start: Point; bounds: Rect } | null = null
+  /** 缓动移动器（P3 行为引擎：walk 的窗口移动） */
+  const mover = createEasedMover(win)
 
   const capability: WindowCapability = {
     setClickThrough(on: boolean) {
@@ -98,7 +101,12 @@ export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
 
     getWorkArea(): Rect {
       return screen.getDisplayMatching(win.getBounds()).workArea
-    }
+    },
+
+    // P3 自主行为引擎：缓动移动（单次 IPC 一次移动；完成/取消 resolve）
+    moveTo: (x, y, durationMs) => mover.moveTo(x, y, durationMs),
+    cancelMove: () => mover.cancelMove(),
+    getGeometry: () => readGeometry(win)
 
     // setInteractiveRects 不实现：Windows 上 forward 有保证，渲染侧 mousemove 检测即可
   }

@@ -3,7 +3,7 @@
  *
  * 本文件只含常量与纯类型（不 import electron 运行时），preload / 渲染侧可安全引用。
  */
-import type { Point, Rect } from '../window'
+import type { MoveResult, Point, Rect, WindowGeometry } from '../window'
 
 /** 通道名：渲染 → 主（send / invoke） */
 export const IPC = {
@@ -19,6 +19,14 @@ export const IPC = {
   WINDOW_REPORT_INTERACTIVE_RECTS: 'window:report-interactive-rects',
   /** 查询窗口调试状态（invoke → WindowDebugState） */
   WINDOW_GET_DEBUG_STATE: 'window:get-debug-state',
+  /** 缓动移动窗口到屏幕坐标（invoke (x, y, durationMs) → MoveResult；P3 行为引擎） */
+  WINDOW_MOVE_TO: 'window:move-to',
+  /** 取消进行中的缓动移动（无 payload） */
+  WINDOW_MOVE_CANCEL: 'window:move-cancel',
+  /** 查询窗口几何（invoke → WindowGeometry；行为执行 + env 上报用） */
+  WINDOW_GET_GEOMETRY: 'window:get-geometry',
+  /** 查询系统空闲秒数（invoke → number；powerMonitor.getSystemIdleTime） */
+  SYSTEM_GET_IDLE_SECONDS: 'system:get-idle-seconds',
   /** 查询后端状态快照（invoke → BackendSnapshot；渲染进程晚订阅时补状态） */
   BACKEND_GET_SNAPSHOT: 'backend:get-snapshot'
 } as const
@@ -27,6 +35,8 @@ export const IPC = {
 export const IPC_EVENTS = {
   /** 调试状态变化（调试快捷键触发后推送） */
   WINDOW_DEBUG_STATE_CHANGED: 'window:debug-state-changed',
+  /** 窗口几何变化（移动/缩放后 debounce ~1s 推送；payload: WindowGeometry） */
+  WINDOW_GEOMETRY_CHANGED: 'window:geometry-changed',
   /** 后端子进程状态变化（payload: BackendStatusPayload） */
   BACKEND_STATUS_CHANGED: 'backend:status-changed',
   /** 后端就绪（payload: BackendReadyPayload，含 WS 端口与 hello token） */
@@ -89,6 +99,19 @@ export interface PetBridgeApi {
     getDebugState(): Promise<WindowDebugState>
     /** 订阅调试状态变化；返回取消订阅函数 */
     onDebugStateChanged(cb: (state: WindowDebugState) => void): () => void
+    /** 缓动移动窗口到屏幕坐标 (x, y)；完成或被 cancelMove() 取消后 resolve（P3 行为引擎） */
+    moveTo(x: number, y: number, durationMs: number): Promise<MoveResult>
+    /** 取消进行中的缓动移动（用户交互打断行为时调用） */
+    cancelMove(): void
+    /** 查询窗口几何（位置/尺寸/工作区；行为执行与 env 上报用） */
+    getGeometry(): Promise<WindowGeometry>
+    /** 订阅窗口几何变化（主进程已 debounce ~1s）；返回取消订阅函数 */
+    onGeometryChanged(cb: (geo: WindowGeometry) => void): () => void
+  }
+  /** 系统状态（env_update 上报依据） */
+  system: {
+    /** 系统空闲秒数（用户多久没有键鼠操作） */
+    getIdleSeconds(): Promise<number>
   }
   /** 后端子进程（设计文档 §5.2）：状态订阅 + 快照查询；渲染进程不直接管理进程 */
   backend: {
