@@ -6,8 +6,16 @@ export { default as PetView } from './PetView'
 export { createPetRenderer, PENGUIN_CONFIG } from './renderers'
 export type { PetRenderer, PetReactionKind, PetRendererKind } from './renderers'
 // 轻量控制器：voice 域口型驱动 → setPetMouth；行为执行器 → setPetState/playPetReaction；
-// setActivePetRenderer 仅供 PetView 使用
-export { setActivePetRenderer, setPetMouth, setPetState, playPetReaction } from './controller'
+// setPetEmotion 供 PetView（WS 情绪入口，带自动回落）；setPetConversationActive 供 App
+// （转发"对话/说话进行中"信号）；setActivePetRenderer 仅供 PetView 使用
+export {
+  setActivePetRenderer,
+  setPetMouth,
+  setPetState,
+  playPetReaction,
+  setPetEmotion,
+  setPetConversationActive
+} from './controller'
 // 自主行为接线（Phase 3）：App 挂载时 setup；打断/调试入口给 App 与 PetView 用
 export {
   setupPetBehaviors,

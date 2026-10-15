@@ -19,6 +19,7 @@ import {
   setupPetBehaviors,
   interruptPetBehavior,
   subscribeBehaviorStatus,
+  setPetConversationActive,
   type BehaviorStatus
 } from './modules/pet'
 import {
@@ -97,6 +98,12 @@ export default function App(): ReactElement {
 
   // 本地"说话中"状态（状态栏提示）
   useEffect(() => subscribeVoiceSpeaking(setVoiceSpeaking), [])
+
+  // ---- 情绪回落挂起信号（pet 域 controller）：对话/说话进行中情绪不回落，说完才倒计时 ----
+  // 信号 = WS thinking（它在想/在回复）+ 本地语音播放中（后端推 idle 只是帧发完、嗓子还在响）
+  useEffect(() => {
+    setPetConversationActive(petState === 'thinking' || petState === 'speaking' || voiceSpeaking)
+  }, [petState, voiceSpeaking])
 
   // ---- 自主行为接线（P3 §4.5.5/§7.4）：behavior 指令执行 + 环境上报（env_update） ----
   useEffect(() => setupPetBehaviors(wsClient), [wsClient])

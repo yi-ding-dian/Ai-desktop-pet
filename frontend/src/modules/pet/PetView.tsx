@@ -14,7 +14,7 @@ import type { WsClient } from '../../shared/ws-client'
 import { EMOTION_VALUES } from '../../shared/protocol'
 import { getPetBridge } from '../../shared/pet-bridge'
 import { createPetRenderer, type PetRenderer } from './renderers'
-import { setActivePetRenderer } from './controller'
+import { setActivePetRenderer, setPetEmotion } from './controller'
 import { debugTriggerBehavior, interruptPetBehavior } from './behaviors'
 
 /** dev 态日志（转发到主进程日志，便于无 devtools 验证）；生产构建自动剔除 */
@@ -75,7 +75,8 @@ export default function PetView({ client }: PetViewProps): ReactElement {
     const offs = [
       client.on('emotion', ({ emotion, intensity }) => {
         devLog(`ws emotion -> ${emotion}`)
-        rendererRef.current?.setEmotion(emotion, intensity || 1)
+        // 经控制器走"自动回落"策略：挂 N 秒后淡回 neutral；对话/说话中挂起（见 controller.ts）
+        setPetEmotion(emotion, intensity || 1)
       }),
       client.on('state', ({ state }) => {
         devLog(`ws state -> ${state}`)
@@ -149,7 +150,8 @@ export default function PetView({ client }: PetViewProps): ReactElement {
   }, [client])
 
   // ---- ④ 调试快捷键（窗口聚焦时；输入框内不拦截）----
-  // 按住 M：口型开合模拟（TTS 未接，验证 setMouth）；数字 1–8：预览 8 种情绪；0：回 neutral；
+  // 按住 M：口型开合模拟（TTS 未接，验证 setMouth）；数字 1–8：预览 8 种情绪
+  // （直连渲染器、不参与自动回落——秒切不会 5 秒后被吞掉，便于定格检查）；0：回 neutral；
   // W：本地注入一条 walk 行为指令；N：注入一条 nap 打盹（30s）——均走真实执行/回报路径
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
