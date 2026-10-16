@@ -172,6 +172,66 @@ def test_html_like_tag_not_stripped() -> None:
     assert joined_text(parts) == "<emotion>一段文字</emotion>"
 
 
+# ---------------------------------------------------------------- 宽容剥离（2026-10-16）
+# 模型（deepseek-flash 实测）偶发把标签写成 HTML 风格（</emo> / <emo> / <emo/>）——
+# 变体就地剥离、不产生情绪事件（无情绪名）；标准 <emo:name> 行为不受影响。
+
+
+def test_loose_close_tag_stripped() -> None:
+    """实报场景：回复里漏出 "</emo>" 字面。"""
+    parts = parse_all(["还是随便聊聊？</emo>我随时待命"])
+    assert emotions(parts) == []
+    assert joined_text(parts) == "还是随便聊聊？我随时待命"
+
+
+def test_loose_open_tag_stripped() -> None:
+    parts = parse_all(["<emo>你好呀"])
+    assert emotions(parts) == []
+    assert joined_text(parts) == "你好呀"
+
+
+def test_loose_self_closing_and_space_variants_stripped() -> None:
+    for variant in ["<emo/>", "</emo/>", "<emo >", "</emo >", "<EMO>"]:
+        parts = parse_all([f"前{variant}后"])
+        assert emotions(parts) == [], variant
+        assert joined_text(parts) == "前后", variant
+
+
+def test_loose_tag_split_across_chunks_stripped() -> None:
+    """半个变体标签跨分片：等补齐后剥离（不提前吐字、不漏标签）。"""
+    parts = parse_all(["你好</em", "o>世界"])
+    assert emotions(parts) == []
+    assert joined_text(parts) == "你好世界"
+
+
+def test_loose_tag_char_by_char_stripped() -> None:
+    """逐字符喂入的变体标签同样被剥。"""
+    parts = parse_all(list("嗨<emo>呀</emo>！"))
+    assert emotions(parts) == []
+    assert joined_text(parts) == "嗨呀！"
+
+
+def test_standard_and_loose_mixed() -> None:
+    """标准标签照常产生情绪事件；混排的变体被剥且不产生事件。"""
+    parts = parse_all(["<emo:happy>嗨，你来啦～</emo>我随时待命"])
+    assert emotions(parts) == ["happy"]
+    assert joined_text(parts) == "嗨，你来啦～我随时待命"
+
+
+def test_emotion_word_still_not_stripped() -> None:
+    """<emotion> 完整单词不受宽容剥离影响（原行为保持——见上方同名用例）。"""
+    parts = parse_all(["</emotion>保留"])
+    assert emotions(parts) == []
+    assert joined_text(parts) == "</emotion>保留"
+
+
+def test_plain_lt_adjacent_letters_kept() -> None:
+    """'<e' 后跟非 emo 字母：不当半标签卡住，正常吐出。"""
+    parts = parse_all(["a<ex>b"])
+    assert emotions(parts) == []
+    assert joined_text(parts) == "a<ex>b"
+
+
 def test_uppercase_name_not_a_tag() -> None:
     parts = parse_all(["<emo:HAPPY>"])
     assert emotions(parts) == []
