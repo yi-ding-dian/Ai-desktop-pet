@@ -88,6 +88,11 @@ export class GlbModelRenderer implements PetRenderer {
   private webgl: THREE.WebGLRenderer | null = null
   private webglFailed = false
 
+  // ---- 像素级命中（空气让路 §5.1 增补：调用方节流调用的射线求交通道） ----
+  private readonly raycaster = new THREE.Raycaster()
+  /** 射线 NDC 坐标缓冲（逐次复用，避免每次判定分配） */
+  private readonly hitNdc = new THREE.Vector2()
+
   // ---- 模型 ----
   /** 姿态根组（原点 = 模型脚底中心；所有姿态只写这一层） */
   private root: THREE.Group | null = null
@@ -513,6 +518,35 @@ export class GlbModelRenderer implements PetRenderer {
 
   private renderOnce(): void {
     if (this.webgl) this.webgl.render(this.scene, this.camera)
+  }
+
+  // ------------------------------------------------------------------ 像素级命中（空气让路 §5.1 增补）
+
+  /**
+   * 像素级命中判定（PetRenderer.hitTest 实现）：从相机穿过 (x,y) 发射线，
+   * 与姿态根组下的模型网格（含全部子节点）求交——命中 = 实体像素，未命中 = 透明空气。
+   *
+   * 要点：
+   * - **不读像素**（不需要 preserveDrawingBuffer / 截图），纯 CPU 射线求交，可随时调用；
+   * - 与渲染循环共用同一相机与场景：正常路径下 tick 里 renderOnce 已刷新世界矩阵，
+   *   此处再 updateMatrixWorld 兜底（WebGL 不可用 / 挂载首帧等未渲染场景同样正确）；
+   * - 坐标换算：窗口内 CSS 像素（clientX/clientY）→ 容器内坐标 → NDC；相机 aspect 与
+   *   容器一致（applySize），与投影出来的画面完全对齐；
+   * - 模型未就绪（加载中/失败/已卸载）返回 false——无实体 = 空气（窗口此时也是空的）。
+   */
+  hitTest(x: number, y: number): boolean {
+    const root = this.root
+    const container = this.container
+    if (!root || !container) return false
+    const rect = container.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return false
+    this.hitNdc.set(((x - rect.left) / rect.width) * 2 - 1, -(((y - rect.top) / rect.height) * 2 - 1))
+    // 矩阵新鲜化（兜底）：与渲染循环共用矩阵，不引入第二套坐标系
+    this.camera.updateMatrixWorld()
+    root.updateMatrixWorld()
+    this.raycaster.setFromCamera(this.hitNdc, this.camera)
+    // 含耳朵形变后的顶点（EarsOverlay 直接改原几何；其已放宽 boundingSphere，见 ears/overlay.ts）
+    return this.raycaster.intersectObject(root, true).length > 0
   }
 
   // ------------------------------------------------------------------ SVG 表情层跟随
