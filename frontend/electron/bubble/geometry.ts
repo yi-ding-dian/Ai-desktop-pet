@@ -20,11 +20,14 @@ import type { Point, Rect, Size } from '../window'
 /**
  * 尾尖在窗内的位置（px）——必须与渲染侧对齐（两处约定，改则同步）：
  *  - TAIL_INSET_X：尾尖距窗左缘的水平距离 = bubble.css 的 stage 左留白（32）+ 尾巴方块水平偏移（12+4）；
- *  - TAIL_INSET_Y：尾尖距窗"尾侧"边缘（tail=down 时=下缘、tail=up 时=上缘）的垂直距离
- *    = bubble.css 的 stage 上下留白（12）- 尾巴外伸量（~4）。
+ *  - TAIL_INSET_Y_DOWN：tail=down 时尾尖距窗**下缘** = stage 下留白（12）- 尾巴外伸量（~4）；
+ *  - TAIL_INSET_Y_UP：tail=up 时尾尖距窗**上缘** = 说话气泡悬浮条区（28）+ stage 上留白（12）
+ *    - 尾巴外伸量（~4）——条区加在窗顶（PetBubble 的 PAD.top=40 对所有形态生效：说话气泡悬浮
+ *    工具条占顶部 28px，菜单/确认同布局保持对齐一致）。
  */
 export const TAIL_INSET_X = 48
-export const TAIL_INSET_Y = 8
+export const TAIL_INSET_Y_DOWN = 8
+export const TAIL_INSET_Y_UP = 36
 /** 尾巴尖与锚点之间的垂直间隙（px；留一点缝，尾巴"指"向锚点而不贴合） */
 export const TAIL_GAP = 2
 /** 窗口与工作区边缘的最小边距（px） */
@@ -62,8 +65,8 @@ export function computeBubblePlacement(anchor: Point, size: Size, workArea: Rect
 
   // 纵向：先试后上（tail=down）。窗顶 += TAIL_INSET_Y - TAIL_GAP：让"窗内 tailInsetY 处的尾尖"
   // 恰好落在锚点上方 TAIL_GAP 处（尾尖 → 锚点的视觉连接由窗内布局承担，见文件头对齐约定）
-  const above = Math.round(anchor.y + TAIL_INSET_Y - TAIL_GAP - h)
-  const below = Math.round(anchor.y - TAIL_INSET_Y + TAIL_GAP)
+  const above = Math.round(anchor.y + TAIL_INSET_Y_DOWN - TAIL_GAP - h)
+  const below = Math.round(anchor.y - TAIL_INSET_Y_UP + TAIL_GAP)
   let y: number
   let tail: 'down' | 'up'
   if (above >= minY) {

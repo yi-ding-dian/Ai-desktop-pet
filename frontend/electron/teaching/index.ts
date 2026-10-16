@@ -521,9 +521,11 @@ async function gotoMessage(messageId: string): Promise<void> {
 
 // ------------------------------------------------------------------ IPC 接线（渲染 → 主）
 
-/** 校验进入来源（白名单外退回 'keyword'，仅日志意义） */
+/** 校验进入来源（白名单外退回 'keyword'，仅日志意义）；'bubble' = 说话气泡「展开」（带记录进教学） */
 function normalizeEnterReason(reason: unknown): TeachingEnterReason {
-  return reason === 'menu' || reason === 'keyword' || reason === 'debug' ? reason : 'keyword'
+  return reason === 'menu' || reason === 'keyword' || reason === 'debug' || reason === 'bubble'
+    ? reason
+    : 'keyword'
 }
 
 /** 注册教学模式 IPC 处理器（main.ts 在 app ready 后调用一次） */

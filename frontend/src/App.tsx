@@ -17,13 +17,23 @@
  *
  * 工具机制（§4.7）：后端 tool_call 事件 → 前端按 name 执行（如 open_settings 打开设置窗），
  * 执行器在 modules/tools 域内实现，App 只做接线。
+ *
+ * 说话气泡（§5.4，2026-10-16）：聊天回复/错误以气泡展示在兔子头部旁（chat 域 speech.ts 驱动，
+ * 气泡窗归 electron/bubble 域）——App 只做接线 + 抑制协调（教学/向导中不弹，进入抑制态时收起）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { getPetBridge } from './shared/pet-bridge'
 import { setupWsFromBridge } from './shared/ws-client/bridge'
 import type { WsClient, WsConnectionState } from './shared/ws-client'
-import { emotionEmoji } from './modules/chat/emotions'
-import ChatPanel from './modules/chat/ChatPanel'
+// chat 域入口（输入行组件 + 说话气泡驱动 + 会话记录 + 情绪映射）
+import {
+  ChatPanel,
+  setupSpeechBubble,
+  dismissSpeechBubble,
+  setupChatHistory,
+  getChatHistory,
+  emotionEmoji
+} from './modules/chat'
 import {
   PetView,
   setupPetBehaviors,
@@ -40,6 +50,7 @@ import {
   subscribeTeachingBubbles,
   gotoTeachingBubble,
   notifyTeachingDragStart,
+  seedBoardHistory,
   TeachingBubbles,
   type TeachingBubbleItem
 } from './modules/teaching'
@@ -166,6 +177,22 @@ export default function App(): ReactElement {
   // ---- 工具执行器接线（§4.7 工具机制）：后端 tool_call 事件 → 前端按 name 执行（如 open_settings 开设置窗） ----
   useEffect(() => setupToolExecutor(wsClient), [wsClient])
 
+  // ---- 说话气泡接线（chat 域 §5.4）：回复/错误以气泡展示在兔子头部旁 ----
+  // 抑制判定经 ref 现读（setup 只跑一次，闭包捕获的状态会过期）：教学（内容在黑板）/向导（有萌语气泡）
+  // 中不弹；进入抑制态时立即收起正在显示的说话气泡（让位）
+  const speechSuppressedRef = useRef(false)
+  useEffect(() => {
+    speechSuppressedRef.current = teachingState.mode === 'teaching' || guideActive
+    if (speechSuppressedRef.current) dismissSpeechBubble()
+  }, [teachingState.mode, guideActive])
+  useEffect(
+    () => setupSpeechBubble(wsClient, { shouldSuppress: () => speechSuppressedRef.current }),
+    [wsClient]
+  )
+
+  // ---- 会话记录接线（chat 域）：本次会话问答记录——说话气泡「展开」进教学时预填黑板的数据源 ----
+  useEffect(() => setupChatHistory(wsClient), [wsClient])
+
   /**
    * 讲台走位（进入教学模式 / 折叠恢复时）：宠物走回讲台位（复用 moveTo 缓动）。
    * - 距离 ≤30px 不动（已在讲台位）；
@@ -214,6 +241,11 @@ export default function App(): ReactElement {
   useEffect(() => {
     const offState = subscribeTeachingState((state) => {
       setTeachingState(state)
+      // 说话气泡「展开」进教学（reason='bubble'）：把本次会话记录预填给黑板——
+      // "和右键开始教学一样的效果，只不过是有聊天内容而已"（2026-10-16 用户定稿）
+      if (state.mode === 'teaching' && state.reason === 'bubble') {
+        seedBoardHistory(getChatHistory())
+      }
       if (state.mode !== 'teaching') {
         // 退出教学模式：在跑的讲台走位一并取消（气泡已由 teaching 域清空）
         cancelTeachingWalk('退出教学模式')

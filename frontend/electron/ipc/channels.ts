@@ -136,6 +136,12 @@ export const IPC_BUBBLE = {
   READY: 'bubble:ready',
   /** 气泡窗 → 主：内容尺寸上报（payload: {width,height}；主进程据此 setBounds 动态调窗 + 防出屏重定位） */
   REPORT_SIZE: 'bubble:report-size',
+  /**
+   * 气泡窗 → 主：内容交互矩形上报（payload: Rect[]，窗内坐标）——说话气泡要悬浮（出现 展开/✕ 工具条）
+   * 就得接鼠标；Linux 用窗口形状（win.setShape，宠物窗"空气让路"同款）把输入区裁到"气泡 + 工具条区"，
+   * 其余透明区域保持完全穿透（不挡桌面）。非 Linux 平台主进程忽略（整窗可交互）。
+   */
+  REPORT_SHAPE: 'bubble:report-shape',
   /** 气泡窗 → 主：用户动作（payload: string，项 id / 确认取消；主进程按当前内容白名单校验后分发执行） */
   ACTION: 'bubble:action',
   /** 气泡窗 → 主：退场动画播毕（窗口可 hide；主进程隐藏并复位——用户点击/失焦收起都走"先播后报"） */
@@ -145,16 +151,32 @@ export const IPC_BUBBLE = {
   /** 主 → 气泡窗：请求收起（渲染侧播退场动画后回报 CLOSED；主进程有超时兜底强制 hide） */
   REQUEST_CLOSE: 'bubble:request-close',
   /** 主 → 气泡窗：尾巴朝向更新（payload: BubbleTail；尺寸上报引发翻向时下发，仅换样式不重播动画） */
-  SET_TAIL: 'bubble:set-tail'
+  SET_TAIL: 'bubble:set-tail',
+  /** 宠物窗 → 主：说话气泡出现（回复开始；气泡显于兔子头部旁，文本随后经 SAY_TEXT 流式刷新） */
+  SAY_BEGIN: 'bubble:say-begin',
+  /** 宠物窗 → 主：说话气泡文本快照（payload: BubbleSayTextPayload；渲染侧节流后发全文覆盖） */
+  SAY_TEXT: 'bubble:say-text',
+  /** 宠物窗 → 主：说话结束（payload: BubbleSayEndPayload；缺省=按字数停留后自动收，immediate=被打断立即收） */
+  SAY_END: 'bubble:say-end',
+  /** 主 → 气泡窗：同 session 内容更新（payload: BubbleUpdatePayload；只换文字不重播入场——说话气泡流式刷新） */
+  UPDATE: 'bubble:update'
 } as const
 
 /** 尾巴朝向：down = 尾巴在气泡左下角（气泡悬于锚点上方，指向下方的宠物）；up = 翻向（气泡在锚点下方） */
 export type BubbleTail = 'down' | 'up'
 
-/** 运动预设：hand = 手来手回（小光点从爪子方向飞入展开 / 退场收回）；none = 直接显隐（预留） */
-export type BubbleMotion = { enter: 'hand' | 'none'; exit: 'hand' | 'none' }
+/**
+ * 运动预设：
+ *  - hand = 手来手回（小光点从爪子方向飞入展开 / 退场收回——右键菜单、清空确认用）；
+ *  - light = 轻量展开（气泡自尾巴处弹性绽放 / 收拢淡出，无光点——说话气泡用，高频不闹）；
+ *  - none = 直接显隐（预留）。
+ */
+export type BubbleMotion = {
+  enter: 'hand' | 'light' | 'none' | 'instant'
+  exit: 'hand' | 'light' | 'none' | 'instant'
+}
 
-/** 气泡形态预设（text 给说话气泡预留，本期不落地） */
+/** 气泡形态预设（menu = 右键菜单；confirm = 清空确认；text = 说话气泡——聊天回复展示在兔子头部旁） */
 export type BubbleVariant = 'menu' | 'confirm' | 'text'
 
 /** 菜单项载荷（icon = shared/icons 的图标名——'teaching' | 'settings' | 'broom' | 'sleep'；未知名渲染为无图标） */
@@ -178,10 +200,26 @@ export type BubbleOpenPayload = { session: number; tail: BubbleTail; motion: Bub
 /** 气泡请求（渲染面 → 主）：本期只有宠物窗右键菜单一种入口 */
 export type BubbleRequest = { kind: 'menu' }
 
+/** 说话气泡文本快照载荷（宠物面 → 主；全文覆盖式更新——渲染侧已节流，主进程转发气泡窗） */
+export interface BubbleSayTextPayload {
+  text: string
+}
+
+/** 说话气泡结束载荷（宠物面 → 主）：immediate = 被打断，不等停留立即收 */
+export interface BubbleSayEndPayload {
+  immediate?: boolean
+}
+
+/** 同 session 内容更新载荷（主 → 气泡窗；说话气泡流式刷新——只换文字不重播入场，尺寸变化由既有 REPORT_SIZE 链路重摆） */
+export interface BubbleUpdatePayload {
+  session: number
+  message: string
+}
+
 // ------------------------------------------------------------------ 教学模式（P5，设计文档 §7.5）
 
-/** 进入教学模式的触发来源（日志/调试用） */
-export type TeachingEnterReason = 'menu' | 'keyword' | 'debug'
+/** 进入教学模式的触发来源（日志/调试用）；'bubble' = 说话气泡悬浮条的「展开」（带聊天记录进教学） */
+export type TeachingEnterReason = 'menu' | 'keyword' | 'debug' | 'bubble'
 
 /** 教学模式状态（主进程为唯一权威；两渲染面只读） */
 export interface TeachingStatePayload {
@@ -375,22 +413,33 @@ export interface PetBridgeApi {
   }
   /**
    * 气泡系统（独立透明气泡窗）：
-   *  - 宠物面：requestOpen 请求弹出（右键菜单等入口；定位/防出屏/两态全在主进程）；
-   *  - 气泡面（bubble.html）：ready/reportSize/action/notifyClosed + onOpen/onRequestClose/onSetTail。
+   *  - 宠物面：requestOpen 请求弹出（右键菜单等入口）+ 说话气泡三件套 sayBegin/sayText/sayEnd
+   *    （聊天回复展示在兔子头部旁；定位/防出屏/两态/停留收起全在主进程）；
+   *  - 气泡面（bubble.html）：ready/reportSize/action/notifyClosed + onOpen/onRequestClose/onSetTail/onUpdate。
    */
   bubble: {
     /** 宠物面：请求弹出气泡（主进程定位+防出屏（窗随内容动）+防重窗；重复请求收敛为刷新） */
     requestOpen(request: BubbleRequest): void
+    /** 宠物面：说话气泡出现（回复开始；气泡显于兔子头部旁，纯展示态不抢焦点/不挡鼠标） */
+    sayBegin(): void
+    /** 宠物面：说话气泡文本快照（全文覆盖式更新；渲染侧已节流，主进程转发气泡窗走同 session UPDATE） */
+    sayText(text: string): void
+    /** 宠物面：说话结束（缺省按字数停留后自动收；immediate=true 被打断立即收） */
+    sayEnd(immediate?: boolean): void
     /** 气泡面：渲染就绪（React 挂载完成；主进程收到后补发内容，防订阅前丢首帧） */
     ready(): void
     /** 气泡面：上报内容尺寸（ResizeObserver 驱动；主进程据此 setBounds 动态调窗） */
     reportSize(size: { width: number; height: number }): void
+    /** 气泡面：上报内容交互矩形（说话气泡悬浮交互用；Linux 主进程据此 setShape 裁输入区，其余穿透） */
+    reportShape(rects: Rect[]): void
     /** 气泡面：用户动作（项 id / 确认取消；主进程按当前内容校验后分发） */
     action(id: string): void
     /** 气泡面：退场动画播毕（主进程隐藏窗口并复位） */
     notifyClosed(): void
     /** 气泡面：订阅打开/换内容载荷（每次下发重播入场）；返回取消订阅函数 */
     onOpen(cb: (payload: BubbleOpenPayload) => void): () => void
+    /** 气泡面：订阅同 session 内容更新（说话气泡流式刷新；只换文字不重播入场）；返回取消订阅函数 */
+    onUpdate(cb: (payload: BubbleUpdatePayload) => void): () => void
     /** 气泡面：订阅收起请求（渲染侧播退场动画后 notifyClosed）；返回取消订阅函数 */
     onRequestClose(cb: () => void): () => void
     /** 气泡面：订阅尾巴朝向更新（防出屏翻向；仅换样式）；返回取消订阅函数 */

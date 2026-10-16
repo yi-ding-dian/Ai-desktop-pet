@@ -55,6 +55,8 @@ const tokenAccum = new Map<string, string>()
 
 const stateSubscribers = new Set<(state: TeachingStatePayload) => void>()
 const bubbleSubscribers = new Set<(items: TeachingBubbleItem[]) => void>()
+/** "已发送的用户消息"订阅者（chat 域会话记录用——统一发送入口成功送出后广播） */
+const sentSubscribers = new Set<(text: string) => void>()
 
 /** 订阅教学模式状态（App：面板收起/气泡显隐/讲台走位）；返回取消订阅函数 */
 export function subscribeTeachingState(cb: (state: TeachingStatePayload) => void): () => void {
@@ -69,6 +71,24 @@ export function subscribeTeachingBubbles(cb: (items: TeachingBubbleItem[]) => vo
   bubbleSubscribers.add(cb)
   return () => {
     bubbleSubscribers.delete(cb)
+  }
+}
+
+/** 订阅"已发送的用户消息"（chat 域会话记录用——两条发送路径统一从此广播）；返回取消订阅函数 */
+export function subscribeSentUserMessages(cb: (text: string) => void): () => void {
+  sentSubscribers.add(cb)
+  return () => {
+    sentSubscribers.delete(cb)
+  }
+}
+
+function emitSent(text: string): void {
+  for (const cb of [...sentSubscribers]) {
+    try {
+      cb(text)
+    } catch (err) {
+      console.error('[teaching] 发送订阅者抛错：', err)
+    }
   }
 }
 
@@ -170,6 +190,9 @@ export function sendUserMessage(client: WsClient, text: string): boolean {
   // ② 照常发往后端（消息本身不受教学模式影响）
   if (!client.send('user_message', { text })) return false
 
+  // ②b 已发送广播（chat 域会话记录——"展开进教学"预填黑板的数据源）
+  emitSent(text)
+
   // ③ 教学模式中：推入头顶气泡 + 镜像给黑板（localId 一并带上，黑板据此建立问题→段落映射）
   if (isTeachingMode()) {
     const localId = pushBubble(text)
@@ -178,6 +201,31 @@ export function sendUserMessage(client: WsClient, text: string): boolean {
     devLog(`镜像 user_message（localId=${localId}）：${text.slice(0, 24)}`)
   }
   return true
+}
+
+/**
+ * 把聊天记录预填给黑板（说话气泡「展开」进教学后由 App 接线层调用，2026-10-16 定稿：
+ * "和右键开始教学一样的效果，只不过是有聊天内容而已"）。
+ *  - user 消息逐条 pushBubble：顺带进入头顶问题气泡（"显示刚刚的所有问题"），新 localId 作
+ *    history 消息 id——头顶点击 → goto(localId) → 黑板经 aliases 命中该问题段落（闭环）；
+ *  - assistant 消息以记录自带 id（reply 的 messageId）落段。
+ * history 是黑板"整板替换"快照指令（BoardApp 已实现）；主进程有 pendingInbox 缓存，
+ * 黑板未就绪时按序回放——seed 无时序竞态（宠物面发送序即主进程处理序）。
+ */
+export function seedBoardHistory(
+  items: { id: string; role: 'user' | 'assistant'; text: string }[]
+): void {
+  if (items.length === 0) {
+    devLog('seed 黑板 history：无记录，跳过')
+    return
+  }
+  const messages = items.map((it) =>
+    it.role === 'user'
+      ? { id: pushBubble(it.text), role: 'user' as const, text: it.text }
+      : { id: it.id, role: 'assistant' as const, text: it.text }
+  )
+  reportMirror({ kind: 'history', messages })
+  devLog(`seed 黑板 history：${messages.length} 条（${items.filter((i) => i.role === 'user').length} 问）`)
 }
 
 // ------------------------------------------------------------------ 接线

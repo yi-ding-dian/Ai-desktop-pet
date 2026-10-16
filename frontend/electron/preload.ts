@@ -14,6 +14,7 @@ import {
   type BubbleOpenPayload,
   type BubbleRequest,
   type BubbleTail,
+  type BubbleUpdatePayload,
   type FxCommand,
   type FxPetReactionPayload,
   type PetBridgeApi,
@@ -247,12 +248,25 @@ const api: PetBridgeApi = {
   },
 
   /**
-   * 气泡系统：宠物面 requestOpen（请求弹出）+ 气泡面整套协议（ready/尺寸上报/动作/收起回报 + 订阅）。
+   * 气泡系统：宠物面 requestOpen（请求弹出）+ 说话气泡（sayBegin/sayText/sayEnd）+
+   * 气泡面整套协议（ready/尺寸上报/动作/收起回报 + 订阅）。
    * 同一份 preload 注入到所有渲染窗——各方法在"非本面"窗口调用为无害空操作（主进程按 sender 过滤）。
    */
   bubble: {
     requestOpen(request: BubbleRequest): void {
       ipcRenderer.send(IPC.BUBBLE_REQUEST_OPEN, request)
+    },
+
+    sayBegin(): void {
+      ipcRenderer.send(IPC_BUBBLE.SAY_BEGIN)
+    },
+
+    sayText(text: string): void {
+      ipcRenderer.send(IPC_BUBBLE.SAY_TEXT, { text })
+    },
+
+    sayEnd(immediate = false): void {
+      ipcRenderer.send(IPC_BUBBLE.SAY_END, { immediate })
     },
 
     ready(): void {
@@ -261,6 +275,10 @@ const api: PetBridgeApi = {
 
     reportSize(size: { width: number; height: number }): void {
       ipcRenderer.send(IPC_BUBBLE.REPORT_SIZE, size)
+    },
+
+    reportShape(rects: Rect[]): void {
+      ipcRenderer.send(IPC_BUBBLE.REPORT_SHAPE, rects)
     },
 
     action(id: string): void {
@@ -277,6 +295,15 @@ const api: PetBridgeApi = {
       ipcRenderer.on(IPC_BUBBLE.OPEN, listener)
       return () => {
         ipcRenderer.removeListener(IPC_BUBBLE.OPEN, listener)
+      }
+    },
+
+    onUpdate(cb: (payload: BubbleUpdatePayload) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, payload: BubbleUpdatePayload): void =>
+        cb(payload)
+      ipcRenderer.on(IPC_BUBBLE.UPDATE, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_BUBBLE.UPDATE, listener)
       }
     },
 

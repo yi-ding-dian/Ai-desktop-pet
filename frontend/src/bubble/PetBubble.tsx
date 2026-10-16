@@ -1,29 +1,34 @@
 /**
  * 标准气泡组件（PetBubble）——气泡窗内使用（用户定稿"气泡系统"的标准件：
- * 后续右键菜单、清空确认、说话气泡（场景3）都坐落在它上面，填参数微调、跟随主题）。
+ * 右键菜单、清空确认、说话气泡都坐落在它上面，填参数微调、跟随主题）。
  *
  * 形态预设 variant：
  *  - menu：彩色图标 + 文字菜单项（items 驱动；点击回传 item.id）；
  *  - confirm：一句问询 +【确认】【取消】（点击回传 'confirm' / 'cancel'——通用语义 id，
  *    具体业务含义由调用方（主进程动作分发）解释）；
- *  - text：纯文本气泡（说话气泡预留，本期只做基础渲染）。
+ *  - text：说话气泡——聊天回复展示在兔子头部旁（内容经同 session UPDATE 流式刷新）；
+ *    悬浮（鼠标移上气泡）时气泡上方淡出工具条「⤢ 展开｜✕」（回传 action 'expand' / 'close'，
+ *    2026-10-16 用户定稿：展开=带聊天记录进教学、✕=收掉消息）。
  *
- * 动画（用户定稿"手来手回"，motion 参数化；本组件只负责**窗内表演**，窗口显隐由主进程经
+ * 动画（motion 参数化；本组件只负责**窗内表演**，窗口显隐由主进程经
  * REQUEST_CLOSE/CLOSED 编排）：
  *  - 入场（enter='hand'）：小光点从窗内爪侧（尾部朝向的对面——左下/左上）沿弧线飞到气泡尾处
  *    （ENTER_FLY_MS 140ms）→ 气泡自尾巴处弹性展开（CSS 关键帧 210ms，延迟 130ms 衔接）
  *    + 菜单项 stagger 淡入；总计 ~350ms；
  *  - 退场（exit='hand'）：气泡收拢回尾巴处（EXIT_SHRINK_MS 140ms）→ 光点从该处弧线飞回爪侧
  *    （EXIT_FLY_MS 140ms）→ 回调 onExited（调用方据此回报主进程 hide）；总计 ~280ms；
+ *  - 'light'（轻量展开，说话气泡）：光点不参与，气泡自尾巴处弹性绽放 / 收拢淡出（纯 CSS，
+ *    EXIT_LIGHT_MS 160ms 后退场回报）——说话高频，不飞光点不闹；
  *  - 'none'：直接显隐（预留）。
  *
  * 主题：颜色全部吃 shared/theme 变量（--bubble-bg/--bubble-fg 家族——与向导/教学头顶气泡
  * 同族观感、独立类名互不牵连）。尾巴 = 旋转 45° 的小方块（::after，settings-guide.css 手法），
  * 位置由 tail 朝向（down=左下指向宠物 / up=翻向）决定。
  *
- * 尺寸上报：ResizeObserver 观察气泡本体（offsetWidth/Height——不受入场 scale 影响），
+ * 尺寸/形状上报：ResizeObserver 观察气泡本体（offsetWidth/Height——不受入场 scale 影响），
  * 加窗内留白常量 PAD（与 bubble.css 定位值、geometry.ts 的 TAIL_INSET_* 三方对齐）经 onSize
- * 回传——主进程据此 setBounds 动态调窗（窗随内容自适应）。
+ * 回传——主进程据此 setBounds 动态调窗（窗随内容自适应）；onShape 回传"气泡 + 悬浮工具条"
+ * 的交互矩形——主进程（Linux）据此 setShape 裁输入区（说话气泡悬浮可点、其余透明区完全穿透）。
  */
 import { useEffect, useRef, type CSSProperties, type ReactElement } from 'react'
 import {
@@ -33,6 +38,7 @@ import {
   IconTeaching,
   type PetIconProps
 } from '../shared/icons'
+import type { Rect } from '../../electron/window'
 import type {
   BubbleMenuItemPayload,
   BubbleMotion,
@@ -47,13 +53,17 @@ const ENTER_FLY_MS = 140
 const EXIT_SHRINK_MS = 140
 /** 退场：光点飞回时长 */
 const EXIT_FLY_MS = 140
+/** 退场（light）：气泡收拢淡出时长（与 css .pet-bubble-closing-light 动画一致） */
+const EXIT_LIGHT_MS = 160
 
 /**
  * 气泡窗内固定留白（px；尺寸上报 = 气泡本体 + 本留白）。
- * 与 bubble.css 的 .pet-bubble 定位值（left/bottom 32/12 等）、electron/bubble/geometry.ts
- * 的 TAIL_INSET_X/Y 三方对齐——调外观留白时三处同步。
+ * top=40 = 悬浮工具条区 28 + 原上留白 12（说话气泡的「展开｜✕」条恒占窗顶——鼠标进条区即触发
+ * 悬浮显示；菜单/确认气泡同布局，保证尾巴对齐规则统一）。
+ * 与 bubble.css 的 .pet-bubble/.pet-bubble-toolbar 定位值、electron/bubble/geometry.ts
+ * 的 TAIL_INSET_X/Y_DOWN/Y_UP 三方对齐——调外观留白时三处同步。
  */
-const PAD = { top: 12, right: 16, bottom: 12, left: 32 } as const
+const PAD = { top: 40, right: 16, bottom: 12, left: 32 } as const
 
 /** 菜单图标注册表（icon 名 → 组件；未知名渲染为无图标——宽容降级）。加图标见 shared/icons 注释 */
 const ICONS: Record<string, (p: PetIconProps) => ReactElement> = {
@@ -86,6 +96,8 @@ export interface PetBubbleProps {
   onExited?: () => void
   /** 内容尺寸（含窗内留白；主进程动态调窗/防出屏用） */
   onSize?: (size: { width: number; height: number }) => void
+  /** 交互形状（气泡 + 悬浮工具条矩形，窗内坐标；主进程 Linux setShape 裁输入区——其余穿透） */
+  onShape?: (rects: Rect[]) => void
 }
 
 /** 光点当前置点（元素本体定位在 (0,0)，用 transform 平移——性能友好） */
@@ -150,18 +162,26 @@ export default function PetBubble({
   closing = false,
   onAction,
   onExited,
-  onSize
+  onSize,
+  onShape
 }: PetBubbleProps): ReactElement {
   const dotRef = useRef<HTMLDivElement | null>(null)
   const bubbleRef = useRef<HTMLDivElement | null>(null)
+  /** 悬浮工具条（text 形态；其 rect 参与形状上报——形状恒定，鼠标进条区即触发悬浮显示） */
+  const toolbarRef = useRef<HTMLDivElement | null>(null)
   /** 入场飞行取消句柄（退场开始时打断在途入场） */
   const flyCancelRef = useRef<(() => void) | null>(null)
   /** onExited 只回报一次（StrictMode/异常路径防重复） */
   const exitedRef = useRef(false)
 
-  /** 手来手回预设（缺省 motion 也按 hand；'none' 直接显隐） */
-  const handEnter = motion?.enter !== 'none'
-  const handExit = motion?.exit !== 'none'
+  /** 运动预设（缺省 hand）：
+   *  - hand = 手来手回（光点飞行 + 气泡弹性展开；右键菜单/清空确认）；
+   *  - light = 轻量展开（光点不参与，气泡自尾巴处弹性绽放 / 收拢淡出；说话气泡——高频不闹）；
+   *  - none = 直接显隐（预留）。 */
+  const enterMode = motion?.enter ?? 'hand'
+  const exitMode = motion?.exit ?? 'hand'
+  const handEnter = enterMode === 'hand'
+  const handExit = exitMode === 'hand'
 
   // ---- 入场：光点从爪侧（尾部朝向的对面）弧线飞到气泡尾处；气泡弹性展开由 CSS 承担 ----
   // 只在挂载时播一次（BubbleApp 以 key=session 重挂——补发同载荷不会重播）；tail 后续变化只管样式
@@ -192,6 +212,16 @@ export default function PetBubble({
     if (!closing || exitedRef.current) return
     const bubble = bubbleRef.current
     const dot = dotRef.current
+    // light 退场：气泡收拢淡出由 CSS 承担（.pet-bubble-closing-light），播毕回报
+    if (exitMode === 'light' && bubble) {
+      const t = window.setTimeout(() => {
+        if (!exitedRef.current) {
+          exitedRef.current = true
+          onExited?.()
+        }
+      }, EXIT_LIGHT_MS + 30)
+      return () => window.clearTimeout(t)
+    }
     // 非 hand 退场：立即回报（窗口直接隐藏——'none' 预设）
     if (!handExit || !bubble || !dot) {
       const t = window.setTimeout(() => {
@@ -234,21 +264,37 @@ export default function PetBubble({
       window.clearTimeout(t2)
       cancelFly?.()
     }
-  }, [closing, handExit, onExited, tail])
+  }, [closing, exitMode, handExit, onExited, tail])
 
-  // ---- 尺寸上报：气泡本体布局尺寸（offsetWidth/Height 不受入场 scale 影响）+ 窗内留白 ----
+  // ---- 尺寸 / 形状上报：气泡本体布局尺寸（offsetWidth/Height 不受入场 scale 影响）+ 窗内留白；
+  // 形状 = 气泡矩形（外扩 4 含尾巴伪元素外伸）+ 悬浮工具条矩形（恒定，条区用 opacity 显隐不塌布局） ----
   useEffect(() => {
     const el = bubbleRef.current
-    if (!el || !onSize) return
+    if (!el || (!onSize && !onShape)) return
     let raf = 0
     const report = (): void => {
       if (raf) return
       raf = requestAnimationFrame(() => {
         raf = 0
-        onSize({
+        onSize?.({
           width: el.offsetWidth + PAD.left + PAD.right,
           height: el.offsetHeight + PAD.top + PAD.bottom
         })
+        if (onShape) {
+          const b = el.getBoundingClientRect()
+          const rects: Rect[] = []
+          const t = toolbarRef.current?.getBoundingClientRect()
+          if (t && t.width > 0) {
+            rects.push({ x: t.left - 2, y: t.top - 2, width: t.width + 4, height: t.height + 4 })
+          }
+          rects.push({
+            x: b.left - 4,
+            y: b.top - 4,
+            width: b.width + 8,
+            height: b.height + 8
+          })
+          onShape(rects)
+        }
       })
     }
     const ro = new ResizeObserver(report)
@@ -258,15 +304,48 @@ export default function PetBubble({
       if (raf) cancelAnimationFrame(raf)
       ro.disconnect()
     }
-  }, [onSize])
+  }, [onSize, onShape])
 
-  const closingCls = closing && handExit ? ' pet-bubble-closing' : ''
-  const stageCls = `bubble-stage tail-${tail} motion-${handEnter ? 'hand' : 'none'}`
+  const closingCls = closing
+    ? exitMode === 'hand'
+      ? ' pet-bubble-closing'
+      : exitMode === 'light'
+        ? ' pet-bubble-closing-light'
+        : ''
+    : ''
+  const stageCls = `bubble-stage tail-${tail} motion-${enterMode}`
 
   return (
     <div className={stageCls} data-testid="bubble-stage">
       {/* 光点（手来手回的主角；绝对定位 + transform 弧线飞行） */}
       <div ref={dotRef} className="pet-bubble-dot" aria-hidden="true" />
+
+      {/* 悬浮工具条（说话气泡专属）：气泡上方「⤢ 展开｜✕」，stage:hover 淡入（css 控显隐，
+          恒定占位——形状上报含它，鼠标进条区即触发；点击回传 action） */}
+      {variant === 'text' ? (
+        <div className="pet-bubble-toolbar" ref={toolbarRef} data-testid="speech-toolbar">
+          <button
+            type="button"
+            className="pet-bubble-tool"
+            data-testid="speech-tool-expand"
+            title="展开（带着聊天记录进入教学）"
+            onClick={() => onAction('expand')}
+          >
+            <ExpandIcon />
+            <span>展开</span>
+          </button>
+          <button
+            type="button"
+            className="pet-bubble-tool pet-bubble-tool-icon"
+            data-testid="speech-tool-close"
+            title="收掉这条消息"
+            aria-label="收掉这条消息"
+            onClick={() => onAction('close')}
+          >
+            <CloseIcon />
+          </button>
+        </div>
+      ) : null}
 
       <div
         ref={bubbleRef}
@@ -326,5 +405,48 @@ export default function PetBubble({
         {variant === 'text' ? <div className="pet-bubble-message">{message}</div> : null}
       </div>
     </div>
+  )
+}
+
+// ------------------------------------------------------------------ 悬浮工具条图标（线稿，currentColor）
+
+/** 展开（四向箭头）：带聊天记录进入教学 */
+function ExpandIcon(): ReactElement {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M15 3h6v6" />
+      <path d="M9 21H3v-6" />
+      <path d="M21 3l-7 7" />
+      <path d="M3 21l7-7" />
+    </svg>
+  )
+}
+
+/** 关闭（✕）：收掉这条消息 */
+function CloseIcon(): ReactElement {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M5 5l14 14" />
+      <path d="M19 5L5 19" />
+    </svg>
   )
 }

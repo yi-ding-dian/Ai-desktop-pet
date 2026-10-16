@@ -16,7 +16,8 @@ import {
   EDGE_MARGIN,
   TAIL_GAP,
   TAIL_INSET_X,
-  TAIL_INSET_Y
+  TAIL_INSET_Y_DOWN,
+  TAIL_INSET_Y_UP
 } from './geometry'
 import type { Rect, Size } from '../window'
 
@@ -42,7 +43,7 @@ const SIZE: Size = { width: 216, height: 200 }
 function tailPoint(p: { x: number; y: number; tail: 'down' | 'up' }): { x: number; y: number } {
   return {
     x: p.x + TAIL_INSET_X,
-    y: p.tail === 'down' ? p.y + SIZE.height - TAIL_INSET_Y : p.y + TAIL_INSET_Y
+    y: p.tail === 'down' ? p.y + SIZE.height - TAIL_INSET_Y_DOWN : p.y + TAIL_INSET_Y_UP
   }
 }
 
@@ -88,7 +89,7 @@ function tailPoint(p: { x: number; y: number; tail: 'down' | 'up' }): { x: numbe
     p.x + SIZE.width <= WA.x + WA.width - EDGE_MARGIN,
     `x=${p.x} right=${p.x + SIZE.width}`
   )
-  check('纵向仍为后上放置', p.tail === 'down' && p.y + SIZE.height === anchor.y + TAIL_INSET_Y - TAIL_GAP)
+  check('纵向仍为后上放置', p.tail === 'down' && p.y + SIZE.height === anchor.y + TAIL_INSET_Y_DOWN - TAIL_GAP)
 }
 
 // 4. 水平越界（左侧）→ clamp 内收

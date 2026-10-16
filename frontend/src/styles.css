@@ -84,83 +84,18 @@ body,
   opacity: 0.9;
 }
 
-/* 对话面板：气泡列表 + 输入框（设计文档 §5.4） */
+/* 对话面板：仅输入行（消息列表已去掉，2026-10-16 定稿——聊天回复以"说话气泡"展示在兔子头部旁，
+   见 chat 域 speech.ts + electron/bubble 域）。位置上移到兔子脚下附近：
+   窗口 400 高，bottom 110 → 输入行顶边 y≈262（兔子脚底 y≈242 + 20px 缝）——
+   贴脚就近说话，不在窗口底部喊话。改形象尺寸/窗口尺寸时同步 */
 .chat-panel {
   position: absolute;
   left: 16px;
   right: 16px;
-  bottom: 72px;
+  bottom: 110px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-
-.chat-messages {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  height: 96px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ui-scrollbar) transparent;
-}
-
-.chat-messages::-webkit-scrollbar {
-  width: 4px;
-}
-
-.chat-messages::-webkit-scrollbar-thumb {
-  background: var(--ui-scrollbar);
-  border-radius: 2px;
-}
-
-.chat-bubble {
-  max-width: 88%;
-  padding: 4px 8px;
-  border-radius: 10px;
-  font-size: 12px;
-  line-height: 1.45;
-  word-break: break-word;
-  white-space: pre-wrap;
-}
-
-.chat-bubble.user {
-  align-self: flex-end;
-  background: var(--chat-user-bg);
-  color: var(--chat-user-fg);
-}
-
-.chat-bubble.assistant {
-  align-self: flex-start;
-  background: var(--chat-assistant-bg);
-  color: var(--chat-assistant-fg);
-}
-
-.chat-bubble.error {
-  align-self: flex-start;
-  background: var(--chat-error-bg);
-  color: var(--chat-error-fg);
-}
-
-.chat-bubble-emotion {
-  margin-right: 4px;
-}
-
-.chat-caret {
-  opacity: 0.7;
-  animation: chat-caret-blink 1s steps(1) infinite;
-}
-
-@keyframes chat-caret-blink {
-  50% {
-    opacity: 0.1;
-  }
-}
-
-.chat-interrupted {
-  margin-left: 4px;
-  opacity: 0.6;
-  font-size: 11px;
 }
 
 .chat-input-row {
