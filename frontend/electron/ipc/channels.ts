@@ -101,6 +101,8 @@ export const IPC_FX = {
  */
 export type FxCommand =
   | { type: 'reset' }
+  /** 原地凝聚显现：球体在窗口中心从无到有（光点渐入 + 微脉动），durationMs 由主进程计时——到点发下一条指令 */
+  | { type: 'spawn'; durationMs: number }
   /** 进入飞行表现（拖尾/公转星点；cargo=true 时球内载宠物剪影——去程空载、回程携带） */
   | { type: 'flight'; cargo: boolean }
   /** 捕获爆闪：球心爆闪并吸附脉动（球窗原地停留 holdMs，期间宠物窗口缩小） */

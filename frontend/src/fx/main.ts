@@ -8,7 +8,8 @@
  * 还原"球飞过、身后留下一路星屑"的观感（方向感无需 IPC 指令，screenX/Y 差分即得）。
  *
  * 状态机（由 fx:command 驱动）：
- *   idle →（flight）飞行表现（球 + 尾迹 + 星屑）
+ *   idle →（spawn）原地凝聚显现（光点从无到有 + 微脉动；设置向导 relocate 的起手式）
+ *        →（flight）飞行表现（球 + 尾迹 + 星屑）
  *        →（capture-burst / release-burst）爆散表现（420ms，球消失、粒子/光晕/环）
  *        →（flight again，回程/显示段）重新点亮
  *        →（fade-out）整层渐隐（随后主进程隐藏球窗）
@@ -47,7 +48,7 @@ const FRAME_MS = 1000 / 60
 
 // ------------------------------------------------------------------ 状态
 
-type Mode = 'idle' | 'flight' | 'burst' | 'fade'
+type Mode = 'idle' | 'spawn' | 'flight' | 'burst' | 'fade'
 
 /** 星屑/爆散粒子（照参考的 Particle 结构；速度单位 = px/帧 @60fps） */
 interface Particle {
@@ -72,6 +73,8 @@ let mode: Mode = 'idle'
 let cargo = false
 /** 进入当前 mode 的时刻（rAF 时间戳；flight 渐入 / burst 进度用） */
 let modeStartTs = 0
+/** 凝聚时长（spawn 模式；由主进程经指令下发） */
+let spawnDurationMs = 250
 /** 爆散开始时刻 */
 let burstT0 = 0
 /** 淡出开始时刻与时长 */
@@ -99,6 +102,13 @@ function handleCommand(cmd: FxCommand): void {
       mode = 'flight'
       cargo = cmd.cargo
       modeStartTs = now
+      break
+    case 'spawn':
+      // 原地凝聚显现（设置向导 relocate 的起手式）：光点从无到有 + 微脉动；
+      // 时长由主进程计时（到点发 capture-burst），渲染侧只按跨度做渐入曲线
+      mode = 'spawn'
+      modeStartTs = now
+      spawnDurationMs = Math.max(1, cmd.durationMs)
       break
     case 'capture-burst':
       // 抵达爆散（捕获与释放共用同一套视觉；holdMs 由主进程计时——到点会发下一条指令，
@@ -358,13 +368,19 @@ function draw(now: number): void {
   // ② 星屑/爆散粒子
   drawParticles(globalAlpha)
 
-  // ③ 球体 / 抵达爆散
+  // ③ 球体 / 凝聚显现 / 抵达爆散
   if (mode === 'flight') {
     // 渐入（约 140ms），防指令到达瞬间"生硬出现"
     const appear = clamp01((now - modeStartTs) / 140)
     const r = FX_VISUAL.ballRadius * (cargo ? FX_VISUAL.cargoBallScale : 1)
     drawBall(cx, cy, r, appear)
     if (cargo) drawCargo(cx, cy, r, now)
+  } else if (mode === 'spawn') {
+    // 原地凝聚显现：alpha 从无到有（easeOut）+ 半径轻微"呼吸"脉动（观感=光点凝聚成形）
+    const p = clamp01((now - modeStartTs) / spawnDurationMs)
+    const eased = 1 - Math.pow(1 - p, 3)
+    const pulse = 1 + 0.07 * Math.sin((now - modeStartTs) / 48) * p
+    drawBall(cx, cy, FX_VISUAL.ballRadius * (0.72 + 0.28 * eased) * pulse, eased)
   } else if (mode === 'burst') {
     drawBurst(cx, cy, now)
   }

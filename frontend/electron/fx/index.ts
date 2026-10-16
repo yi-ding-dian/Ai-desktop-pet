@@ -8,6 +8,10 @@
  *   **全点击穿透**（setIgnoreMouseEvents(true)——窗口不吃任何鼠标事件，不影响用户操作）；
  * - **飞行 = 移动球窗本身**（setBounds 缓动，复用 window/move.ts 风格）：从托盘锚点滑到
  *   宠物窗口中心；"跨屏/长距离飞行"都只是移动这个小窗；
+ * - **移动（relocate，设置向导）保留完整魔法流程，仅起手不同**：球**在宠物所在处
+ *   原地凝聚**（spawn 指令，relocateSpawnMs）→ 爆闪捕获 → 携宠沿拱线飞行 → 释放——
+ *   不经过托盘锚点（"不经托盘飞出"，2026-10-16 用户定稿）；托盘隐藏/显示
+ *   （hide/show）的托盘进出语义不变；
  * - **锚点自动定位**：托盘兔头图标的屏幕坐标由 `fx/anchor.ts` 每轮动画前"抓屏 + 模板匹配"
  *   现场定位（图标位置无 API 可查且会漂移），失败回退兜底配置 TRAY_ANCHOR（见 fx/config.ts）；
  * - 球窗内容（src/fx/main.ts）：Canvas 2D 程序化绘制魔法球（球固定在窗口中心）；
@@ -511,27 +515,30 @@ async function showFlow(
 // ------------------------------------------------------------------ 移动流程（设置向导 §7.6.6）
 
 /**
- * 移动动画（relocate，"假隐藏真移动"）：
- * ① 球（空载）从托盘飞到宠物中心 → ② 捕获爆闪（宠物原地缩至 shrinkScale，**不隐藏**）→
- * ③ 球拎着缩小态宠物沿拱线飞到目标位 → ④ 释放爆闪 + 宠物在目标位放大归位 → ⑤ 球淡出收窗。
- * 与 hide/show 的唯一差别：③ 的终点是 target（而非托盘/旧家），且全程不 hide——
- * 完成后宠物窗口在 target、可见、状态正常（供设置向导把宠物摆到设置窗下沿）。
+ * 移动动画（relocate，"原地凝聚起手"的完整魔法流程，2026-10-16 用户定稿）：
+ * ① 球**直接在宠物所在处凝聚显现**（spawn 指令；不走"从托盘锚点飞来"的绕路）→
+ * ② 爆闪捕获（宠物原地缩至 shrinkScale + 挣扎反应）→ ③ 球拎着缩小态宠物沿拱线
+ * 飞到目标位 → ④ 释放爆闪 + 宠物放大归位 → ⑤ 球淡出收窗。
  *
- * 防御：宠物当前隐藏时（向导流程理论上总在可见时触发；竞态下可能赶上隐藏）——
- * 只静默 setBounds(target)（不播动画、**不把它显示出来**：避免"回位"把用户刚隐藏的宠物
- * 弹出，见 settings 域回位约定），保持可见性状态不变。
+ * 魔法视觉与 hide/show 完全同源（同一套球窗/爆闪/星屑）；与旧实现的唯一差别 =
+ * 起手不再"球从托盘飞来"。沿革：旧实现起手 = 球从托盘锚点飞来（用户指出多余）→
+ * 曾误改为"宠物本体裸飞"（魔法效果全删，用户当场纠正）→ 现版 = 魔法流程原地起手。
+ *
+ * 入位（原位置 → 设置窗底沿）与回位（向导位 → 原位置）共用本流程。
  */
 async function relocateFlow(
   win: BrowserWindow,
   ball: BrowserWindow,
   wa: Rect,
-  anchor: Point,
   target: Rect,
   ctx: FlowContext
 ): Promise<void> {
   const t0 = Date.now()
   const stamp = (msg: string): void => console.log(`[fx] t=${Date.now() - t0}ms ${msg}`)
 
+  // 防御：宠物当前隐藏时（向导流程理论上总在可见时触发；竞态下可能赶上隐藏）——
+  // 只静默 setBounds(target)（不播动画、不显示：避免"回位"把用户刚隐藏的宠物弹出，
+  // 保持可见性状态不变，见 settings 域回位约定）
   if (!win.isVisible()) {
     console.log(`[fx] 移动动画：宠物当前隐藏 → 仅静默改坐标至 ${rectStr(target)}（不播动画、不显示）`)
     win.setBounds(target)
@@ -540,12 +547,22 @@ async function relocateFlow(
 
   const from = win.getBounds()
   const petCenter = centerOf(from)
-  stamp(`移动动画开始：宠物 ${rectStr(from)} → 目标 ${rectStr(target)}，锚点 ${ptStr(anchor)}`)
+  const toCenter = centerOf(target)
 
-  // ① 球（空载）从托盘飞到宠物中心
-  await flyBallFromAnchor(ball, anchor, petCenter, wa, false, ctx)
+  // 起点与终点几乎重合（如"回位"时宠物恰在原位）：一步到位，不播动画
+  if (Math.hypot(toCenter.x - petCenter.x, toCenter.y - petCenter.y) < 8) {
+    win.setBounds(target)
+    stamp(`移动动画：起点与目标几乎重合 → 一步到位（${rectStr(target)}）`)
+    return
+  }
+  stamp(`移动动画开始（原地凝聚）：宠物 ${rectStr(from)} → ${rectStr(target)}`)
+
+  // ① 球在宠物处原地凝聚显现（球窗定位到宠物中心；fx 页从无到有画出光球 + 微脉动）
+  ball.setBounds(boundsAround(petCenter, FX_CONFIG.ballWindowSize, FX_CONFIG.ballWindowSize))
+  sendCommand(ball, { type: 'spawn', durationMs: FX_CONFIG.relocateSpawnMs })
+  await sleep(FX_CONFIG.relocateSpawnMs, ctx)
   assertLive(ctx)
-  stamp(`球到达宠物（flight ${FX_CONFIG.flightMs}ms）`)
+  stamp(`球凝聚完成（原地 ${FX_CONFIG.relocateSpawnMs}ms）`)
 
   // ② 捕获爆闪：宠物原地缩小（只改几何，不 hide）
   await capturePetAt(win, ball, petCenter, ctx)
@@ -559,7 +576,7 @@ async function relocateFlow(
     ball,
     win,
     petCenter,
-    centerOf(target),
+    toCenter,
     wa,
     { width: petShrunk.width, height: petShrunk.height },
     FX_CONFIG.returnMs,
@@ -606,25 +623,41 @@ async function runFlow(
     console.warn(`[fx] ${label}动画超时（>${FX_CONFIG.totalTimeoutMs}ms），看门狗中止`)
   }, FX_CONFIG.totalTimeoutMs)
   try {
-    const ball = ensureBallWindow()
-    // fx 页就绪等待 与 锚点自动定位（抓屏+模板匹配）并行 —— 降低"按下到球起飞"的感知延迟；
-    // 定位失败/超时都返回兜底值，绝不影响动画播放
-    const [ready, anchorRes] = await Promise.all([
-      waitFxReady(FX_CONFIG.readyTimeoutMs),
-      locateTrayAnchor()
-    ])
-    if (!ready) {
-      console.warn(`[fx] 动画页未就绪（>${FX_CONFIG.readyTimeoutMs}ms），本次降级为直接${label}`)
-      degrade()
-      return
+    if (direction === 'relocate') {
+      // 移动方向（原地凝聚起手）：需要球窗与 fx 页就绪（完整魔法效果）；
+      // 不定位托盘锚点（球不走"从托盘飞来"的绕路，直接在宠物处凝聚）
+      if (!target) return
+      const ball = ensureBallWindow()
+      const ready = await waitFxReady(FX_CONFIG.readyTimeoutMs)
+      if (!ready) {
+        console.warn(`[fx] 动画页未就绪（>${FX_CONFIG.readyTimeoutMs}ms），本次降级为直接${label}`)
+        degrade()
+        return
+      }
+      sendCommand(ball, { type: 'reset' })
+      ball.showInactive()
+      const wa = screen.getPrimaryDisplay().workArea
+      await relocateFlow(win, ball, wa, target, ctx)
+    } else {
+      const ball = ensureBallWindow()
+      // fx 页就绪等待 与 锚点自动定位（抓屏+模板匹配）并行 —— 降低"按下到球起飞"的感知延迟；
+      // 定位失败/超时都返回兜底值，绝不影响动画播放
+      const [ready, anchorRes] = await Promise.all([
+        waitFxReady(FX_CONFIG.readyTimeoutMs),
+        locateTrayAnchor()
+      ])
+      if (!ready) {
+        console.warn(`[fx] 动画页未就绪（>${FX_CONFIG.readyTimeoutMs}ms），本次降级为直接${label}`)
+        degrade()
+        return
+      }
+      sendCommand(ball, { type: 'reset' })
+      ball.showInactive()
+      const wa = screen.getPrimaryDisplay().workArea
+      const anchor: Point = { x: anchorRes.x, y: anchorRes.y }
+      if (direction === 'hide') await hideFlow(win, ball, wa, anchor, ctx)
+      else await showFlow(win, ball, wa, anchor, ctx)
     }
-    sendCommand(ball, { type: 'reset' })
-    ball.showInactive()
-    const wa = screen.getPrimaryDisplay().workArea
-    const anchor: Point = { x: anchorRes.x, y: anchorRes.y }
-    if (direction === 'hide') await hideFlow(win, ball, wa, anchor, ctx)
-    else if (direction === 'show') await showFlow(win, ball, wa, anchor, ctx)
-    else if (target) await relocateFlow(win, ball, wa, anchor, target, ctx)
   } catch (err) {
     console.error(`[fx] ${label}动画异常，兜底直接${label}：`, err)
     if (!win.isDestroyed()) {
@@ -696,8 +729,9 @@ function waitBusyFree(timeoutMs: number): Promise<boolean> {
 }
 
 /**
- * 移动流程（设置向导 §7.6.6）：把宠物从当前位「假隐藏真移动」到 target
- * （捕获爆闪 → 球窗携宠飞行 → 释放爆闪 + 宠物落地反应 → 宠物出现在 target）。
+ * 移动流程（设置向导 §7.6.6）：把宠物从当前位挪到 target——**完整魔法流程**
+ * （球**在宠物处原地凝聚** → 捕获爆闪 → 携宠沿拱线飞行 → 释放爆闪；见 relocateFlow；
+ * 不经托盘锚点——"不用经过托盘图标飞出"）。
  *
  * 与隐藏/显示不同：relocate 是向导编排（入位/回位）的关键一步，不采用"忙则忽略"——
  * 在途动画优先收尾（上限 FX_CONFIG.relocateBusyWaitMs），超时才放弃本次（日志警告；
