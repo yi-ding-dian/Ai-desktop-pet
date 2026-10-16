@@ -8,10 +8,11 @@
  *   **全点击穿透**（setIgnoreMouseEvents(true)——窗口不吃任何鼠标事件，不影响用户操作）；
  * - **飞行 = 移动球窗本身**（setBounds 缓动，复用 window/move.ts 风格）：从托盘锚点滑到
  *   宠物窗口中心；"跨屏/长距离飞行"都只是移动这个小窗；
- * - **移动（relocate，设置向导）保留完整魔法流程，仅起手不同**：球**在宠物所在处
- *   原地凝聚**（spawn 指令，relocateSpawnMs）→ 爆闪捕获 → 携宠沿拱线飞行 → 释放——
- *   不经过托盘锚点（"不经托盘飞出"，2026-10-16 用户定稿）；托盘隐藏/显示
- *   （hide/show）的托盘进出语义不变；
+ * - **移动（relocate，设置向导）按距离分档**（2026-10-16 用户定稿）：
+ *   远距（≥ relocateMagicMinPx）→ 完整魔法：球**在宠物所在处原地凝聚**（spawn 指令，
+ *   relocateSpawnMs）→ 爆闪捕获 → 携宠沿拱线飞行 → 释放（不经过托盘锚点）；近距
+ *   （< 上限）→ 平滑移位（relocateGlideMs 小弧滑行，无球无爆闪）/ 太近
+ *   （< relocateNearStepPx）直接落位；托盘隐藏/显示（hide/show）的托盘进出语义不变；
  * - **锚点自动定位**：托盘兔头图标的屏幕坐标由 `fx/anchor.ts` 每轮动画前"抓屏 + 模板匹配"
  *   现场定位（图标位置无 API 可查且会漂移），失败回退兜底配置 TRAY_ANCHOR（见 fx/config.ts）；
  * - 球窗内容（src/fx/main.ts）：Canvas 2D 程序化绘制魔法球（球固定在窗口中心）；
@@ -515,18 +516,20 @@ async function showFlow(
 // ------------------------------------------------------------------ 移动流程（设置向导 §7.6.6）
 
 /**
- * 移动动画（relocate，"原地凝聚起手"的完整魔法流程，2026-10-16 用户定稿）：
+ * 移动动画·**远距魔法档**（relocate，"原地凝聚起手"的完整魔法流程，2026-10-16 用户定稿；
+ * 仅当距离 ≥ relocateMagicMinPx 时由 runFlow 分流至此）：
  * ① 球**直接在宠物所在处凝聚显现**（spawn 指令；不走"从托盘锚点飞来"的绕路）→
  * ② 爆闪捕获（宠物原地缩至 shrinkScale + 挣扎反应）→ ③ 球拎着缩小态宠物沿拱线
  * 飞到目标位 → ④ 释放爆闪 + 宠物放大归位 → ⑤ 球淡出收窗。
  *
  * 魔法视觉与 hide/show 完全同源（同一套球窗/爆闪/星屑）；与旧实现的唯一差别 =
  * 起手不再"球从托盘飞来"。沿革：旧实现起手 = 球从托盘锚点飞来（用户指出多余）→
- * 曾误改为"宠物本体裸飞"（魔法效果全删，用户当场纠正）→ 现版 = 魔法流程原地起手。
+ * 曾误改为"宠物本体裸飞"（魔法效果全删，用户当场纠正）→ 现版 = 魔法流程原地起手
+ * （近距另走 relocateGlideFlow——"离得近就别表演了"）。
  *
  * 入位（原位置 → 设置窗底沿）与回位（向导位 → 原位置）共用本流程。
  */
-async function relocateFlow(
+async function relocateMagicFlow(
   win: BrowserWindow,
   ball: BrowserWindow,
   wa: Rect,
@@ -548,14 +551,7 @@ async function relocateFlow(
   const from = win.getBounds()
   const petCenter = centerOf(from)
   const toCenter = centerOf(target)
-
-  // 起点与终点几乎重合（如"回位"时宠物恰在原位）：一步到位，不播动画
-  if (Math.hypot(toCenter.x - petCenter.x, toCenter.y - petCenter.y) < 8) {
-    win.setBounds(target)
-    stamp(`移动动画：起点与目标几乎重合 → 一步到位（${rectStr(target)}）`)
-    return
-  }
-  stamp(`移动动画开始（原地凝聚）：宠物 ${rectStr(from)} → ${rectStr(target)}`)
+  stamp(`移动动画开始（远距魔法）：宠物 ${rectStr(from)} → ${rectStr(target)}`)
 
   // ① 球在宠物处原地凝聚显现（球窗定位到宠物中心；fx 页从无到有画出光球 + 微脉动）
   ball.setBounds(boundsAround(petCenter, FX_CONFIG.ballWindowSize, FX_CONFIG.ballWindowSize))
@@ -595,6 +591,57 @@ async function relocateFlow(
   stamp('移动动画完成')
 }
 
+/**
+ * 移动动画·**近距档**（relocate 距离分档，2026-10-16 用户定稿；距离 < relocateMagicMinPx
+ * 时由 runFlow 分流至此）：宠物原样沿小弧**平滑滑过去**——无球无爆闪（"离设置很近就别
+ * 表演整套魔法了"）；**太近**（< relocateNearStepPx）则直接落位（"太近了不用飞"）。
+ *
+ * 与魔法档共用同一条贝塞尔拱线（makeArcPath），仅时长与视觉分量不同；不依赖球窗/fx 页
+ * （纯窗口移动）。防御与魔法档一致：宠物隐藏时只静默改坐标。
+ */
+async function relocateGlideFlow(
+  win: BrowserWindow,
+  wa: Rect,
+  target: Rect,
+  ctx: FlowContext
+): Promise<void> {
+  const t0 = Date.now()
+  const stamp = (msg: string): void => console.log(`[fx] t=${Date.now() - t0}ms ${msg}`)
+
+  if (!win.isVisible()) {
+    console.log(`[fx] 移动动画：宠物当前隐藏 → 仅静默改坐标至 ${rectStr(target)}（不播动画、不显示）`)
+    win.setBounds(target)
+    return
+  }
+
+  const from = win.getBounds()
+  const fromCenter = centerOf(from)
+  const toCenter = centerOf(target)
+  const dist = Math.hypot(toCenter.x - fromCenter.x, toCenter.y - fromCenter.y)
+
+  if (dist < FX_CONFIG.relocateNearStepPx) {
+    win.setBounds(target)
+    stamp(
+      `移动动画：距离 ${Math.round(dist)}px < ${FX_CONFIG.relocateNearStepPx}px → 直接落位（太近了不用飞）`
+    )
+    return
+  }
+
+  stamp(`移动动画开始（近距平滑移位 ${Math.round(dist)}px）：宠物 ${rectStr(from)} → ${rectStr(target)}`)
+  const path = makeArcPath(fromCenter, toCenter, wa)
+  await animateWindowBounds(
+    win,
+    FX_CONFIG.relocateGlideMs,
+    easeInOutCubic,
+    (e) => boundsAround(path(e), from.width, from.height),
+    ctx
+  )
+  assertLive(ctx)
+  // 精确落位：曲线数值收口（防浮点累积让落点差 1~2px）
+  if (!win.isDestroyed()) win.setBounds(target)
+  stamp(`平滑移位完成（${rectStr(target)}）`)
+}
+
 // ------------------------------------------------------------------ 对外流程（锁 + 兜底）
 
 /** 动画方向（对外三流程：隐藏 / 显示 / 移动） */
@@ -608,7 +655,8 @@ async function runFlow(
   win: BrowserWindow,
   direction: FlowDirection,
   degrade: () => void,
-  target?: Rect
+  target?: Rect,
+  forceGlide = false
 ): Promise<void> {
   const label = direction === 'hide' ? '隐藏' : direction === 'show' ? '显示' : '移动'
   if (win.isDestroyed()) return
@@ -624,20 +672,31 @@ async function runFlow(
   }, FX_CONFIG.totalTimeoutMs)
   try {
     if (direction === 'relocate') {
-      // 移动方向（原地凝聚起手）：需要球窗与 fx 页就绪（完整魔法效果）；
-      // 不定位托盘锚点（球不走"从托盘飞来"的绕路，直接在宠物处凝聚）
+      // 移动方向按距离分档（2026-10-16 用户定稿）：
+      //   远距（≥ relocateMagicMinPx）：完整魔法，需要球窗与 fx 页就绪；不定位托盘锚点
+      //     （球不走"从托盘飞来"的绕路，直接在宠物处凝聚）；
+      //   近距（< 上限）：平滑移位 / 太近直接落位——纯窗口移动，不建球窗、不等 fx 页。
       if (!target) return
-      const ball = ensureBallWindow()
-      const ready = await waitFxReady(FX_CONFIG.readyTimeoutMs)
-      if (!ready) {
-        console.warn(`[fx] 动画页未就绪（>${FX_CONFIG.readyTimeoutMs}ms），本次降级为直接${label}`)
-        degrade()
-        return
-      }
-      sendCommand(ball, { type: 'reset' })
-      ball.showInactive()
       const wa = screen.getPrimaryDisplay().workArea
-      await relocateFlow(win, ball, wa, target, ctx)
+      const fromC = centerOf(win.getBounds())
+      const toC = centerOf(target)
+      const dist = Math.hypot(toC.x - fromC.x, toC.y - fromC.y)
+      if (dist < FX_CONFIG.relocateMagicMinPx || forceGlide) {
+        // 近距档 / 强制滑步（教学入位）：平滑移位或直接落位——不建球窗、不等 fx 页
+        await relocateGlideFlow(win, wa, target, ctx)
+      } else {
+        const ball = ensureBallWindow()
+        const ready = await waitFxReady(FX_CONFIG.readyTimeoutMs)
+        if (!ready) {
+          console.warn(`[fx] 动画页未就绪（>${FX_CONFIG.readyTimeoutMs}ms），本次降级为直接${label}`)
+          degrade()
+          return
+        }
+        sendCommand(ball, { type: 'reset' })
+        ball.moveTop() // 与宠物同为 screen-saver 层：显示前 raise 自保（球要盖在宠物上表现吸进/放出）
+        ball.showInactive()
+        await relocateMagicFlow(win, ball, wa, target, ctx)
+      }
     } else {
       const ball = ensureBallWindow()
       // fx 页就绪等待 与 锚点自动定位（抓屏+模板匹配）并行 —— 降低"按下到球起飞"的感知延迟；
@@ -652,6 +711,7 @@ async function runFlow(
         return
       }
       sendCommand(ball, { type: 'reset' })
+      ball.moveTop() // 与宠物同为 screen-saver 层：显示前 raise 自保（球要盖在宠物上表现吸进/放出）
       ball.showInactive()
       const wa = screen.getPrimaryDisplay().workArea
       const anchor: Point = { x: anchorRes.x, y: anchorRes.y }
@@ -676,7 +736,7 @@ async function runFlow(
     clearTimeout(watchdog)
     if (!win.isDestroyed()) {
       // 结果语义兜底（幂等）：隐藏方向一定不可见；显示方向一定可见
-      // （移动方向不改可见性：由 relocateFlow 自己保证"可见进 → 可见出"）
+      // （移动方向不改可见性：由 relocate 流程自己保证"可见进 → 可见出"）
       if (direction === 'hide' && win.isVisible()) win.hide()
       if (direction === 'show' && !win.isVisible()) win.showInactive()
     }
@@ -729,9 +789,10 @@ function waitBusyFree(timeoutMs: number): Promise<boolean> {
 }
 
 /**
- * 移动流程（设置向导 §7.6.6）：把宠物从当前位挪到 target——**完整魔法流程**
- * （球**在宠物处原地凝聚** → 捕获爆闪 → 携宠沿拱线飞行 → 释放爆闪；见 relocateFlow；
- * 不经托盘锚点——"不用经过托盘图标飞出"）。
+ * 移动流程（设置向导 §7.6.6）：把宠物从当前位挪到 target——**按距离分档**（2026-10-16 定稿）：
+ *   ≥ relocateMagicMinPx：完整魔法（球**在宠物处原地凝聚** → 捕获爆闪 → 携宠沿拱线飞行
+ *     → 释放爆闪；见 relocateMagicFlow；不经托盘锚点——"不用经过托盘图标飞出"）；
+ *   < 上限：近距平滑移位 / 太近直接落位（见 relocateGlideFlow）。
  *
  * 与隐藏/显示不同：relocate 是向导编排（入位/回位）的关键一步，不采用"忙则忽略"——
  * 在途动画优先收尾（上限 FX_CONFIG.relocateBusyWaitMs），超时才放弃本次（日志警告；
@@ -739,8 +800,15 @@ function waitBusyFree(timeoutMs: number): Promise<boolean> {
  * 结果语义：宠物窗口在 target；可见性保持调用前状态（可见进可见出；隐藏态只搬家不弹出）。
  *
  * @param target 目标矩形（屏幕坐标，含尺寸——异常兜底按此一步到位）
+ * @param opts.forceGlide 强制走"近距平滑移位"档（跳过魔法/球窗流程）——教学入位专用：
+ *   兔子"滑步就位"（去讲课，不搞"被魔法球捕获"）；同时天然**不受 moveTo 的工作区夹取**
+ *   限制（allowOverflow 语义——讲台位窗底允许超出工作区下沿）。
  */
-export async function runRelocateAnimation(win: BrowserWindow, target: Rect): Promise<void> {
+export async function runRelocateAnimation(
+  win: BrowserWindow,
+  target: Rect,
+  opts?: { forceGlide?: boolean }
+): Promise<void> {
   if (!win || win.isDestroyed()) return
   if (!FX_CONFIG.ENABLED) {
     win.setBounds(target)
@@ -755,7 +823,7 @@ export async function runRelocateAnimation(win: BrowserWindow, target: Rect): Pr
   }
   if (win.isDestroyed()) return
   // 隐藏态早退（在锁空闲之后判断：此刻无在途动画、窗口静止）——只搬家不显示、不播动画，
-  // 也避免白闪一个空球窗；"就绪等待期间被隐藏"的竞态由 relocateFlow 内防御分支兜底
+  // 也避免白闪一个空球窗；"就绪等待期间被隐藏"的竞态由 relocate 流程内防御分支兜底
   if (!win.isVisible()) {
     console.log(`[fx] 移动动画：宠物当前隐藏 → 仅静默改坐标至 ${rectStr(target)}（不播动画、不显示）`)
     win.setBounds(target)
@@ -768,6 +836,7 @@ export async function runRelocateAnimation(win: BrowserWindow, target: Rect): Pr
       // 降级：瞬时落位（fx 页未就绪/超时——不播动画，位置语义照旧）
       win.setBounds(target)
     },
-    target
+    target,
+    opts?.forceGlide
   )
 }

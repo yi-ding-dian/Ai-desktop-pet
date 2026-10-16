@@ -57,6 +57,19 @@ export const FX_CONFIG = {
    */
   relocateSpawnMs: 250,
 
+  // ---- 移动动画的距离分档（2026-10-16 用户定稿）----
+  /**
+   * 分档阈值（px；按"宠物当前位置 ↔ 向导位"的直线距离）：
+   *   ≥ relocateMagicMinPx（远）：完整魔法（原地凝聚 → 捕获 → 携宠飞 → 释放）；
+   *   ≥ relocateNearStepPx 且 < 上限（近）：**平滑移位**——宠物原样沿小弧滑过去，无球无爆闪
+   *     （"离得很近就别表演整套魔法了"）；
+   *   < relocateNearStepPx（太近）：直接落位（"太近了不用飞"，不折腾）。
+   */
+  relocateMagicMinPx: 300,
+  relocateNearStepPx: 60,
+  /** 近距平滑移位的时长（ms） */
+  relocateGlideMs: 450,
+
   /**
    * 移动动画（relocate，设置向导 §7.6.6）等待在途动画收尾的上限（ms）。
    * 与 hide/show 的「忙则忽略」不同：向导入位/回位不可静默丢失，忙时短暂等待

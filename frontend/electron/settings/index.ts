@@ -7,14 +7,15 @@
  *    用户预期是正常窗口；刻意**不**照抄宠物窗/黑板窗的「无边框 + 透明 + 置顶 + skipTaskbar +
  *    Linux type:'toolbar'」悬浮窗技术（那是给「不该出现在任务栏的桌宠层」用的）；
  *  - 向导编排（§7.6.6）：设置窗打开 → 记宠物原位 + 广播 SETTINGS_VISIBILITY{opened} +
- *    fx 域 relocate 宠物到"扒窗沿"向导位（几何纯函数见 settings/geometry.ts）；保存成功
- *    （SETTINGS_SAVED）/ 关闭设置窗 → 反向 relocate 回原位 + 广播 saved/closed。
+ *    fx 域 relocate 宠物到"扒窗沿"向导位（几何纯函数见 settings/geometry.ts）；
+ *    **保存不回位**（SETTINGS_SAVED 只记日志——宠物留在向导位候命，2026-10-16 用户定稿）；
+ *    **关闭设置窗**（closed 链）→ 反向 relocate 回原位 + 广播 closed。
  *    状态机（wizardActive / returning）防重入：已回位不重复回位；
  *  - 页面加载：settings.html（dev 走 ELECTRON_RENDERER_URL 同目录换名、生产 out/renderer/settings.html，
  *    与 teaching 的 board.html 同法）；
  *  - IPC 契约（channels.ts 已写死）：
  *      IPC.SETTINGS_OPEN   —— 托盘菜单 / 聊天关键词共用入口 → openSettings()（单例收敛）；
- *      IPC.SETTINGS_SAVED  —— 设置面保存成功上报 → 宠物反向 relocate 回原位；
+ *      IPC.SETTINGS_SAVED  —— 设置面保存成功上报 → 宠物留在向导位（关闭窗口才回位）；
  *      IPC.APP_RESTART     —— 设置页「重启」→ restartApp()：先停后端（防孤儿进程）再 relaunch。
  *
  * 数据流（§7.6.2）：设置页**自持 WS 连接**（经 backend.getSnapshot() 取 port/token 自行连接），
@@ -27,6 +28,7 @@ import { IPC, IPC_EVENTS, type SettingsVisibilityPhase } from '../ipc/channels'
 import { backendManager } from '../backend-process'
 import { runRelocateAnimation } from '../fx'
 import { wizardPetRect } from './geometry'
+import { getTeachingMode } from '../teaching'
 import { probeXWindowAlive, type XWindowAlive } from './window-health'
 import type { Rect } from '../window'
 
@@ -133,7 +135,7 @@ function createSettingsWindow(): BrowserWindow {
     // 宠物在向导位 → 反向 relocate 回原位 + 广播 closed（"已回位则不重复"由状态机保证）。
     // 用户关闭、加载失败/渲染崩溃的兜底销毁、健康巡检清理统一走这里；退出链路
     // （destroySettings 预置 wizardActive=false）自然 no-op，不做回位/广播
-    void returnPetHome('closed')
+    void returnPetHome()
   })
 
   // 加载失败/渲染崩溃兜底：关闭窗口并清引用（单例不卡在坏窗口上，用户下次点击即重建重试）。
@@ -216,7 +218,7 @@ async function openSettingsChecked(): Promise<void> {
       if (settingsWin === existing) {
         settingsWin = null
         stopHealthWatch()
-        // destroy 触发 closed handler → returnPetHome('closed')（宠物若还在向导位则回位 + 广播）
+        // destroy 触发 closed handler → returnPetHome()（宠物若还在向导位则回位 + 广播）
         if (!existing.isDestroyed()) existing.destroy()
       }
     } else {
@@ -294,9 +296,9 @@ async function healthCheck(win: BrowserWindow): Promise<void> {
     )
     settingsWin = null
     stopHealthWatch()
-    // destroy 触发 closed handler → returnPetHome('closed')；已销毁的极端情形手动兜一次
+    // destroy 触发 closed handler → returnPetHome()；已销毁的极端情形手动兜一次
     if (!win.isDestroyed()) win.destroy()
-    else void returnPetHome('closed')
+    else void returnPetHome()
   } finally {
     healthProbing = false
   }
@@ -327,6 +329,8 @@ const rectStr = (r: Rect): string => `${r.x},${r.y} ${r.width}x${r.height}`
  * 开始向导（设置窗 ready-to-show 后调用）：
  * 记宠物原位 → 广播 opened（宠物面立即收面板 + 冒泡萌语）→ relocate 至"扒窗沿"向导位。
  * 防重入：wizardActive 已置位时忽略（重复打开设置走 openSettings 的聚焦分支，不会进这里）。
+ * **教学模式中例外**（2026-10-16 用户定稿）：兔子留在讲台**不动**——跳过向导位编排，
+ * 只广播 opened（关闭时同样不动，见 returnPetHome 的空原位路径）。
  */
 async function beginWizard(): Promise<void> {
   const pet = getPetWindow()
@@ -340,6 +344,16 @@ async function beginWizard(): Promise<void> {
     // 不重复 relocate，但重发 opened 广播（幂等：宠物面据此回向导 UI 态）
     console.log('[settings] 向导已在进行（宠物应在向导位），仅重发 opened 广播')
     broadcastVisibility('opened')
+    return
+  }
+
+  // 教学模式中：**兔子不动**（用户定稿"处于教学模式时，打开设置时，兔子不要动"）——
+  // 不记原位、不 relocate；petHomeRect 保持 null → 关闭时 returnPetHome 走"宠物窗/原位
+  // 不可用，仅广播"路径，同样不动兔子。wizardActive/opened 广播照旧（教学态面板本已收起，无害）。
+  if (getTeachingMode() === 'teaching') {
+    wizardActive = true
+    broadcastVisibility('opened')
+    console.log('[settings] 教学模式中打开设置：跳过向导位编排（兔子留在讲台不动）')
     return
   }
 
@@ -357,13 +371,14 @@ async function beginWizard(): Promise<void> {
 }
 
 /**
- * 回位（saved/closed 共用）：宠物在向导位时反向 relocate 回原位 + 广播对应 phase。
+ * 回位（**关闭设置窗时**触发；保存不再触发——2026-10-16 用户定稿）：宠物在向导位时
+ * 反向 relocate 回原位 + 广播 closed。
  *  - 已回位（wizardActive=false）→ no-op（"已回位则不重复"）；
  *  - 宠物隐藏中 → 直接 setBounds 回原位（不播动画：relocate 的释放段会把宠物"显示出来"，
  *    违背用户刚做的隐藏动作）；
  *  - 广播在回位完成后发（宠物面"面板恢复"与宠物落位同步；异常/放弃路径也保证广播）。
  */
-async function returnPetHome(phase: 'saved' | 'closed'): Promise<void> {
+async function returnPetHome(): Promise<void> {
   if (!wizardActive) return
   if (returning) {
     console.log('[settings] 回位进行中，忽略重复回位请求')
@@ -381,14 +396,14 @@ async function returnPetHome(phase: 'saved' | 'closed'): Promise<void> {
     }
     if (!pet.isVisible()) {
       pet.setBounds(home)
-      console.log(`[settings] 回位（${phase}）：宠物隐藏中 → 静默改坐标回 ${rectStr(home)}`)
+      console.log(`[settings] 回位：宠物隐藏中 → 静默改坐标回 ${rectStr(home)}`)
       return
     }
-    console.log(`[settings] 回位（${phase}）：relocate 回 ${rectStr(home)}`)
+    console.log(`[settings] 回位：relocate 回 ${rectStr(home)}`)
     await runRelocateAnimation(pet, home)
   } finally {
     returning = false
-    broadcastVisibility(phase)
+    broadcastVisibility('closed')
   }
 }
 
@@ -444,12 +459,12 @@ export function initSettings(pet: BrowserWindow): void {
     openSettings()
   })
 
-  // 保存成功上报（设置面 → 主）：宠物在向导位时反向 relocate 回原位 + 广播 saved。
+  // 保存成功上报（设置面 → 主）：**保存不回位**（2026-10-16 用户定稿）——宠物留在向导位
+  // 继续候命（用户可能接着改），只记日志；关闭设置窗（closed 链）才反向 relocate 回原位。
   // sender 校验：仅受管设置窗（其它渲染面误发一律忽略）
   ipcMain.on(IPC.SETTINGS_SAVED, (event) => {
     if (!isSettingsSender(event.sender)) return
-    console.log('[settings] 收到设置面保存成功上报')
-    void returnPetHome('saved')
+    console.log('[settings] 收到设置面保存成功上报（宠物留在向导位，关闭窗口时回位）')
   })
 
   // 重启应用（设置页「重启」按钮）：先走后端退出清理链再 relaunch，防孤儿后端进程
