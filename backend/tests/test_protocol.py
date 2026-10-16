@@ -154,6 +154,7 @@ SERVER_MIN_DATA: dict[str, dict] = {
     "emotion": {"message_id": "m1", "emotion": "happy", "intensity": 1.0},
     "audio": {},
     "reply_end": {"message_id": "m1", "full_text": "a"},
+    "tool_call": {"id": "call_1", "name": "open_settings", "args": {}},
     "proactive": {"message_id": "m1", "text": "hi"},
     "history": {"session_id": "s1"},
     "config": {},

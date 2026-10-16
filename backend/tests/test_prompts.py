@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+
+import pytest
 
 from backend.modules.chat.emotion import EMOTION_VALUES
+from backend.modules.llm import prompts
 from backend.modules.llm.prompts import (
     build_system_prompt,
+    load_capabilities,
     load_emotion_directive,
     load_persona,
 )
@@ -72,3 +77,38 @@ def test_pet_name_composes_with_persona_override() -> None:
     assert prompt.startswith("你是测试角色小白。")
     assert "你的名字叫「毛毛」" in prompt
     assert "<emo:happy>" in prompt
+
+
+# ---------------------------------------------------------------- 能力清单（§4.7 工具机制）
+
+
+def test_capabilities_injected_into_system_prompt() -> None:
+    """能力清单恒定注入：模型据此知道可调用 open_settings（而非只给操作步骤）。"""
+    prompt = build_system_prompt()
+    assert "open_settings" in prompt
+    assert "设置面板" in prompt
+    assert "工具" in prompt
+
+
+def test_capabilities_injected_with_persona_override_and_name() -> None:
+    """叠加不破坏既有结构：人格/名字在前，能力清单收尾。"""
+    prompt = build_system_prompt(persona_text="你是测试角色小白。", pet_name="毛毛")
+    assert prompt.startswith("你是测试角色小白。")
+    assert prompt.index("你的名字叫「毛毛」") < prompt.index("open_settings")
+
+
+def test_capabilities_file_loaded() -> None:
+    """能力清单来自 capabilities.md（非兜底）：含工具名与口语回应要求。"""
+    text = load_capabilities()
+    assert "open_settings" in text
+    assert "好嘞" in text  # "调用前后用一句自然口语回应"的示例
+
+
+def test_capabilities_fallback_when_file_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """capabilities.md 缺失时用模块内兜底常量（服务不因资产缺失而技能清单为空）。"""
+    monkeypatch.setattr(prompts, "_PROMPTS_DIR", tmp_path)
+    text = load_capabilities()
+    assert text == prompts._FALLBACK_CAPABILITIES
+    assert "open_settings" in text

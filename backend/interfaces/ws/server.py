@@ -31,8 +31,8 @@ class ConnectionContext:
     """一条 WS 连接的运行时上下文。
 
     实现 application.chat_pipeline.ReplySink 出站端口（state / reply_start / token /
-    emotion / sentence / reply_end / error / send_binary），并提供通用 send_event /
-    send_error 与回复任务的生命周期管理。
+    emotion / sentence / reply_end / tool_call / error / send_binary），并提供通用
+    send_event / send_error 与回复任务的生命周期管理。
 
     ``voice``（可选）：连接级语音出站（application.voice.VoiceOut），由装配层
     注入——失败降级状态跨轮存活于连接上（"本次连接内禁用 TTS"，任务书第 5 条）。
@@ -77,6 +77,14 @@ class ConnectionContext:
         if interrupted:
             data["interrupted"] = True
         await self.send_event("reply_end", data)
+
+    async def tool_call(self, tool_id: str, name: str, args: dict) -> None:
+        """ReplySink 端口：本轮工具调用（§4.7；快通道命中或模型 tool_calls）。
+
+        在对应回复的 reply_end 之后推送，字段对齐协议 ToolCallData
+        （id / name / args）；前端按 name 执行（如 open_settings → 打开设置窗）。
+        """
+        await self.send_event("tool_call", {"id": tool_id, "name": name, "args": args})
 
     async def error(self, code: str, message: str) -> None:
         """ReplySink 端口：把流水线的业务错误（如 LlmError / TTS_FAILED）推给前端。"""

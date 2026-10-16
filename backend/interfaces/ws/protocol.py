@@ -201,6 +201,19 @@ class ReplyEndData(EventData):
     interrupted: bool | None = None
 
 
+class ToolCallData(EventData):
+    """工具调用（服务端 → 客户端执行，§4.7 工具机制）。
+
+    模型本轮请求调用的内置工具（如 ``open_settings`` → 前端打开设置窗）。
+    在对应回复的 ``reply_end`` 之后推送；``id`` 为本次调用的唯一标识
+    （将来"结果回传续写"按 id 配对，当前前端仅按 ``name`` 执行、无需回执）。
+    """
+
+    id: str
+    name: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProactiveData(EventData):
     """主动消息（问候/提醒），无对应用户输入。"""
 
@@ -274,6 +287,7 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "emotion": EmotionData,
     "audio": AudioData,
     "reply_end": ReplyEndData,
+    "tool_call": ToolCallData,
     "proactive": ProactiveData,
     "history": HistoryData,
     "config": ConfigData,

@@ -24,13 +24,26 @@
   最后回到 idle——保证前端不会卡在 thinking；
 - TTS 失败（任务书第 5 条）：单句失败跳过该句（对话不受影响）；连续失败达阈值
   由语音层停用本次连接的 TTS 并推一次 error{TTS_FAILED}（非 fatal）。
+- 工具机制（§4.7）：注入 ``tools`` 注册表后启用——三层保底：
+  1) 快通道：用户输入命中内置指令词表（match_directive）→ **不调 LLM**，
+     本地 ack 走正常事件流（thinking → reply_start → token → happy →
+     reply_end → tool_call → idle），用户消息与 ack 照常落库——"打开设置"
+     这类高频指令必须必达，不能被模型的不确定性拖累；
+  2) 模型路径：请求携带 tools → 流式累积 ``Chunk.tool_delta``（按 index 归组
+     拼接 arguments）→ ``reply_end`` 之后派发 ``sink.tool_call``；模型只调工具、
+     没产出正文时（真机实测会发生），用该工具 spec 的 ack 补一句（走 token/分句
+     路径，TTS 可播报），避免用户端静默；
+  3) 降级：带 tools 的请求被 LLM_BAD_REQUEST 拒绝且本轮无任何产出（疑似网关/
+     模型不支持 tools）→ 摘除 tools 重放一次；再败以第一次错误收尾。降级置
+     **进程级标记**（模块变量）——后续轮不再携带 tools（快通道不受影响）。
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
-from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 
 from loguru import logger
 
@@ -45,8 +58,9 @@ from backend.modules.chat.emotion import (
 from backend.modules.llm.prompts import build_system_prompt
 from backend.modules.llm.provider import ChatMessage, LLMProvider
 from backend.modules.memory.format import build_memory_block
+from backend.modules.tools import ToolRegistry, ToolSpec, match_directive
 from backend.modules.voice.splitter import SentenceSplitter
-from backend.shared.errors import LlmError
+from backend.shared.errors import LlmError, LlmErrorCode
 
 if TYPE_CHECKING:  # 仅类型注解；运行时经 Protocol/鸭子类型协作（避免循环 import）
     from backend.application.voice import ReplyVoice, VoiceOut
@@ -71,6 +85,13 @@ class ReplySink(Protocol):
         self, message_id: str, full_text: str, *, interrupted: bool = False
     ) -> None: ...
 
+    async def tool_call(self, tool_id: str, name: str, args: dict) -> None:
+        """本轮模型请求的工具调用（§4.7）：前端执行（如 open_settings → 开设置窗）。
+
+        reply_end 之后推送；首版前端不回收执（"结果回传续写"属知识库阶段扩展）。
+        """
+        ...
+
     async def error(self, code: str, message: str) -> None: ...
 
     async def send_binary(self, frame: bytes) -> None: ...
@@ -79,6 +100,29 @@ class ReplySink(Protocol):
 #: 句子是否"可发音"（含字母/数字/汉字才值得合成）——纯标点、空白、emoji 跳过
 def _is_speakable(text: str) -> bool:
     return any(ch.isalnum() for ch in text)
+
+
+#: 工具 ack 为空时的通用兜底文案（§4.7）——快通道工具未配 ack、或模型只调工具
+#: 没产出正文且该工具 spec 无 ack 时，用它补一句口语回应，避免用户端静默。
+_FALLBACK_ACK = "好嘞，已经帮你办好啦～"
+
+#: 进程级降级标记（§4.7）：带 tools 的请求被 LLM_BAD_REQUEST 拒绝且本轮无产出
+#: （疑似网关/模型不支持 tools）→ 置位后本进程后续轮不再携带 tools。
+#: 为什么用模块变量：降级结论对"这个网关 + 模型"是进程级事实，跨连接/跨会话共享；
+#: 快通道（内置指令词表）不依赖模型 tools 能力，不受该标记影响、照常可用。
+_tools_unsupported = False
+
+
+def _mark_tools_unsupported() -> None:
+    """置位进程级降级标记（首次置位原因由调用点 logger.warning 说明）。"""
+    global _tools_unsupported
+    _tools_unsupported = True
+
+
+def _reset_tools_support_state() -> None:
+    """重置进程级降级标记——仅供测试做用例间隔离（生产代码不调用）。"""
+    global _tools_unsupported
+    _tools_unsupported = False
 
 
 class ChatPipeline:
@@ -90,6 +134,9 @@ class ChatPipeline:
     ``pet_name``（可选注入，§7.6.3）：读当前 ``pet.name`` 配置的回调——每轮
     组装 system prompt 时动态取名字注入（"你的名字叫 X"）；缺省 None 不注入，
     行为与旧版一致。
+
+    ``tools``（可选注入，§4.7 工具机制）：内置工具注册表；缺省 None 时
+    行为与旧版完全一致（不做指令快通道、请求不携带 tools）。
     """
 
     def __init__(
@@ -99,11 +146,13 @@ class ChatPipeline:
         memories: MemoryStore | None = None,
         profile: ProfileStore | None = None,
         pet_name: Callable[[], str | None] | None = None,
+        tools: ToolRegistry | None = None,
     ) -> None:
         self._provider = provider
         self._memories = memories
         self._profile = profile
         self._pet_name = pet_name
+        self._tools = tools
 
     async def run_turn(
         self,
@@ -118,6 +167,10 @@ class ChatPipeline:
         该协程由 interfaces 层以后台任务方式运行，运行期间消息循环保持可用。
         ``voice``：连接级语音出站（application.voice.VoiceOut）；None 表示未启用
         语音——不推 sentence、不合成音频，行为与 Phase 1 完全一致。
+
+        工具机制（§4.7，仅装配 ``tools`` 时）：命中内置指令词表走快通道（不调
+        LLM，本地 ack 走正常事件流）；否则正常 LLM 流（携带 tools，除非进程级
+        降级标记已置位），流末解析工具分片、``reply_end`` 之后派发 ``tool_call``。
         """
         message_id = f"m_{uuid.uuid4().hex}"
         parser = EmotionTagParser()
@@ -126,6 +179,10 @@ class ChatPipeline:
         last_emotion: str | None = None  # 本轮最后出现的情绪（随 assistant 消息落库）
         reply_started = False
         llm_error: LlmError | None = None
+        # 工具机制（§4.7）：本轮待派发的调用 [(tool_id, name, args)]——快通道预置、
+        # 模型路径在流末解析；tool_acc 为模型分片按 index 的归组累积。
+        tool_calls_to_emit: list[tuple[str, str, dict[str, Any]]] = []
+        tool_acc: dict[int, dict[str, Any]] = {}
 
         # 语音链路（仅装配且未降级时启用）：干净文本 → splitter 切句 →
         # sentence 事件 + TTS 串行队列（合成完推二进制帧，§3.5）
@@ -155,31 +212,100 @@ class ChatPipeline:
             if splitter is not None:
                 await emit_sentences(splitter.feed(text))
 
+        # 快通道判定（§4.7，仅装配注册表时）："打开设置"这类高频指令命中词表 →
+        # 不调 LLM（模型的不确定性 / 网关不支持 tools 都不拖累必达语义）。
+        directive_spec: ToolSpec | None = None
+        if self._tools is not None:
+            directive_spec = self._match_directive(user_text)
+
         try:
             await sink.state("thinking")  # 必须在发起请求前（见模块 docstring）
             session.append_message("user", user_text)
             await sink.reply_start(message_id)
             reply_started = True
 
-            try:
-                async for chunk in self._provider.stream_chat(
-                    await self._build_messages(session, user_text=user_text)
-                ):
-                    if chunk.text:
-                        emotion = await self._emit(
-                            sink,
-                            message_id,
-                            parser.feed(chunk.text),
-                            clean_parts,
-                            on_clean_text=on_clean_text,
+            if directive_spec is not None:
+                # 快通道：本地 ack 走正常事件流（token / 分句 / 落库与模型路径一致）。
+                # happy 情绪显式推送并预置 emotion_seen，避免流末又补 neutral 覆盖。
+                ack_text = directive_spec.ack or _FALLBACK_ACK
+                clean_parts.append(ack_text)
+                await sink.token(message_id, ack_text)
+                await on_clean_text(ack_text)  # 同时喂分句器（TTS 能播报）
+                emotion_seen = True
+                last_emotion = "happy"
+                await sink.emotion(message_id, "happy", 1.0)
+                # tool_id 前缀 dir_：区分"指令来源"（vs 模型调用自带的 call id）
+                tool_calls_to_emit.append(
+                    (f"dir_{uuid.uuid4().hex[:8]}", directive_spec.name, {})
+                )
+            else:
+                # —— 正常 LLM 流（携带 tools，除非进程级降级标记已置位）——
+                messages = await self._build_messages(session, user_text=user_text)
+                use_tools = self._tools is not None and not _tools_unsupported
+                request_opts: dict[str, Any] = {}
+                if use_tools:
+                    request_opts["tools"] = self._tools.to_openai_tools()
+
+                async def consume_stream(**opts: Any) -> None:
+                    """消费一次 LLM 流（首次请求与降级重放共用同一实现，防两处走样）。"""
+                    nonlocal emotion_seen, last_emotion
+                    async for chunk in self._provider.stream_chat(messages, **opts):
+                        if chunk.text:
+                            emotion = await self._emit(
+                                sink,
+                                message_id,
+                                parser.feed(chunk.text),
+                                clean_parts,
+                                on_clean_text=on_clean_text,
+                            )
+                            if emotion is not None:
+                                emotion_seen = True
+                                last_emotion = emotion
+                        delta = chunk.tool_delta
+                        if delta is not None:
+                            # 按 index 归组：id/name 通常只在首片，arguments 逐片拼接
+                            acc = tool_acc.setdefault(
+                                delta.index, {"id": None, "name": None, "arguments": ""}
+                            )
+                            if delta.id:
+                                acc["id"] = delta.id
+                            if delta.name:
+                                acc["name"] = delta.name
+                            if delta.arguments:
+                                acc["arguments"] += delta.arguments
+
+                try:
+                    await consume_stream(**request_opts)
+                except LlmError as exc:
+                    if (
+                        use_tools
+                        and exc.code == LlmErrorCode.LLM_BAD_REQUEST
+                        and not clean_parts
+                        and not tool_acc
+                    ):
+                        # 降级（§4.7）：疑似网关/模型不支持 tools——摘除后重放本轮；
+                        # 置进程级标记，后续轮直接不带 tools（快通道不受影响）。
+                        logger.warning(
+                            "工具请求被拒（{}），疑似网关/模型不支持 tools；"
+                            "摘除 tools 重放本轮：{}",
+                            exc.code,
+                            exc.message,
                         )
-                        if emotion is not None:
-                            emotion_seen = True
-                            last_emotion = emotion
-            except LlmError as exc:
-                # 失败已业务化、已脱敏；先把缓冲收尾，再统一走失败收尾（下方）
-                llm_error = exc
-                logger.warning("LLM 请求失败（{}）：{}", exc.code, exc.message)
+                        _mark_tools_unsupported()
+                        try:
+                            await consume_stream()  # 重放：不带 tools
+                        except LlmError as retry_exc:
+                            # 重放再败：以第一次错误收尾（对用户更有指向性）
+                            logger.warning(
+                                "摘除 tools 重放仍失败（{}）：{}",
+                                retry_exc.code,
+                                retry_exc.message,
+                            )
+                            llm_error = exc
+                    else:
+                        # 失败已业务化、已脱敏；先把缓冲收尾，再统一走失败收尾（下方）
+                        llm_error = exc
+                        logger.warning("LLM 请求失败（{}）：{}", exc.code, exc.message)
 
             # 流结束（含失败）：残留半标签按普通文本吐出（§4.2）
             flushed_emotion = await self._emit(
@@ -188,6 +314,17 @@ class ChatPipeline:
             if flushed_emotion is not None:
                 emotion_seen = True
                 last_emotion = flushed_emotion
+
+            # 工具调用收口（§4.7）：解析模型分片（快通道已预置，此处为空操作）。
+            # 模型只调工具、没产出正文（真机实测会发生）→ 用工具 ack 补一句，
+            # 走 token / 分句路径（前端可见、TTS 可播报），避免用户端静默。
+            tool_calls_to_emit.extend(self._collect_tool_calls(tool_acc))
+            if tool_calls_to_emit and not clean_parts:
+                ack_text = self._ack_for(tool_calls_to_emit[0][1])
+                clean_parts.append(ack_text)
+                await sink.token(message_id, ack_text)
+                await on_clean_text(ack_text)
+
             if not emotion_seen:
                 # 容忍模型不输出情绪标签：默认 neutral、不报错（补发一次显式事件）
                 last_emotion = "neutral"
@@ -207,6 +344,11 @@ class ChatPipeline:
             if full_text:
                 session.append_message("assistant", full_text, emotion=last_emotion)
             await sink.reply_end(message_id, full_text)
+            # 派发工具调用（§4.7）：协议约定在对应回复的 reply_end 之后推送，
+            # 前端按 name 执行（如 open_settings → 打开设置窗）；工具调用本身
+            # 不进对话历史（assistant 只存正文/补话，见上方 append_message）。
+            for tool_id, tool_name, tool_args in tool_calls_to_emit:
+                await sink.tool_call(tool_id, tool_name, tool_args)
             if llm_error is not None:
                 # 回复先定型，再报错说明原因（前端不会卡在 thinking）
                 await sink.error(str(llm_error.code), llm_error.message)
@@ -231,6 +373,66 @@ class ChatPipeline:
             logger.debug("对话结束 session={} message_id={}", session.id, message_id)
 
     # ---------- 内部实现 ----------
+
+    def _match_directive(self, user_text: str) -> ToolSpec | None:
+        """用户输入命中内置指令词表且可走快通道时返回对应 ToolSpec，否则 None。
+
+        仅 frontend 型工具可走快通道：backend 型本期无执行调度（遇到记日志、
+        降级走正常流）；注册表缺该工具（装配不一致）同样降级——宁可多问一次
+        模型，也不能"命中却无事发生"。
+        """
+        assert self._tools is not None  # 调用方保证（仅装配注册表时调用）
+        name = match_directive(user_text)
+        if name is None:
+            return None
+        spec = self._tools.get(name)
+        if spec is None:
+            logger.warning("指令命中工具 {} 但注册表缺该定义（装配不一致），走正常流", name)
+            return None
+        if spec.executor != "frontend":
+            logger.warning("指令命中 backend 型工具 {}（本期未支持执行调度），走正常流", name)
+            return None
+        return spec
+
+    def _ack_for(self, tool_name: str) -> str:
+        """取工具的确认话术（spec.ack）；未注册 / 未配 ack 用通用兜底文案。"""
+        spec = self._tools.get(tool_name) if self._tools is not None else None
+        if spec is not None and spec.ack:
+            return spec.ack
+        return _FALLBACK_ACK
+
+    @staticmethod
+    def _collect_tool_calls(
+        tool_acc: dict[int, dict[str, Any]],
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """把按 index 归组的工具分片解析为 [(tool_id, name, args)]（按 index 序）。
+
+        - arguments：空串按 ``{}``；坏 JSON / 非对象记 warning 按 ``{}``
+          （单次参数解析失败不应吞掉整个调用）；
+        - name 缺失的分片（理论上不该出现）记 warning 跳过——没有工具名无法执行；
+        - id 缺失（少见，通常只在首片）自造，保持协议字段非空。
+        """
+        calls: list[tuple[str, str, dict[str, Any]]] = []
+        for index in sorted(tool_acc):
+            item = tool_acc[index]
+            name = item["name"]
+            if not name:
+                logger.warning("工具调用分片缺 name（index={}），跳过派发", index)
+                continue
+            raw_args = (item["arguments"] or "").strip()
+            args: dict[str, Any] = {}
+            if raw_args:
+                try:
+                    parsed = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    logger.warning("工具调用参数不是合法 JSON（name={}），按空参数派发", name)
+                else:
+                    if isinstance(parsed, dict):
+                        args = parsed
+                    else:
+                        logger.warning("工具调用参数不是 JSON 对象（name={}），按空参数派发", name)
+            calls.append((item["id"] or f"t_{uuid.uuid4().hex[:8]}", name, args))
+        return calls
 
     async def _build_messages(self, session: Session, *, user_text: str) -> list[ChatMessage]:
         """组装本轮请求 messages（§4.1/§4.2）：

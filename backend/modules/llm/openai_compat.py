@@ -8,6 +8,9 @@
 
 关键约定：
 - 只取流式 delta.content，天然跳过推理型模型的 delta.reasoning_content（思考过程）；
+- 请求带 ``tools`` 时（由调用方经 opts 传入，本域不依赖 tools 域），
+  ``delta.tool_calls`` 分片原样搬运为 ``Chunk.tool_delta``（不做归组 / 拼接，
+  那是调用方的职责；见 ``_extract_tool_deltas``）；
 - 任何日志 / 异常信息不得携带 key 明文（shared.secrets.redact 兜底）。
 
 实现说明：每次请求创建一次性 AsyncOpenAI 客户端（with 块结束即关闭），
@@ -21,7 +24,7 @@ from typing import Any, AsyncIterator, Callable, Sequence
 import openai
 from loguru import logger  # noqa: F401  （预留：需要时可记录请求元信息，注意脱敏）
 
-from backend.modules.llm.provider import ChatMessage, Chunk, ProbeResult
+from backend.modules.llm.provider import ChatMessage, Chunk, ProbeResult, ToolCallDelta
 from backend.shared.errors import LlmError, LlmErrorCode
 from backend.shared.secrets import get_llm_key, redact, register_secret
 
@@ -47,6 +50,42 @@ def _extract_content(chunk: Any) -> str:
         return ""
     content = getattr(delta, "content", None)
     return content or ""
+
+
+def _extract_tool_deltas(raw: Any) -> list[ToolCallDelta]:
+    """从流式 chunk 中取出工具调用分片（``delta.tool_calls`` 逐项搬运）。
+
+    流式协议下同一次调用以多片到达：``id`` / ``name`` 通常只在首片给出、
+    ``arguments``（JSON 字符串）逐片拼接——每个字段都可能缺省。本函数
+    **只保真透传**（含 ``index``），不按 index 归组、不拼接 arguments：
+    那是调用方（chat 管道）的职责，provider 层不做业务解释。
+
+    一个 chunk 可含多个 tool_calls 项（并行调用），按序全部返回；
+    无 ``choices`` / 无 ``delta`` / 无 ``tool_calls`` 时返回空列表。
+    """
+    choices = getattr(raw, "choices", None)
+    if not choices:
+        return []
+    delta = getattr(choices[0], "delta", None)
+    if delta is None:
+        return []
+    items = getattr(delta, "tool_calls", None)
+    if not items:
+        return []
+
+    deltas: list[ToolCallDelta] = []
+    for item in items:
+        function = getattr(item, "function", None)
+        index = getattr(item, "index", None)
+        deltas.append(
+            ToolCallDelta(
+                index=index if index is not None else 0,
+                id=getattr(item, "id", None),
+                name=getattr(function, "name", None),
+                arguments=getattr(function, "arguments", None),
+            )
+        )
+    return deltas
 
 
 def _safe_detail(exc: Exception, limit: int = 160) -> str:
@@ -117,13 +156,18 @@ class OpenAICompatProvider:
     async def stream_chat(
         self, messages: Sequence[ChatMessage], **opts: Any
     ) -> AsyncIterator[Chunk]:
-        """流式对话：逐块产出正文增量，结束后产出 ``Chunk(finished=True)``。
+        """流式对话：逐块产出正文增量与工具调用分片，结束后产出 ``Chunk(finished=True)``。
 
-        失败时抛 LlmError（已翻译、已脱敏）；可经 opts 覆盖 temperature / max_tokens / model。
+        失败时抛 LlmError（已翻译、已脱敏）；可经 opts 覆盖 temperature / max_tokens / model；
+        ``tools``（list[dict]，OpenAI 协议格式——由调用方从 tools 域转换后传入，
+        本域不 import 该域）非空时随请求发给模型，模型可能返回 tool_calls：
+        分片以 ``Chunk.tool_delta`` 透传（与正文可同帧；模型可能只回 tool_calls
+        不产出正文——解析层照样保真，兜底由调用方处理）。
         未配置服务（base_url 空）先抛 LLM_NOT_CONFIGURED——明确引导，不走网络层模糊错误。
         """
         base_url = self._require_base_url()
         key = self._resolve_key()
+        tools = opts.pop("tools", None)
         request: dict[str, Any] = {
             "model": opts.pop("model", self._model),
             "messages": [{"role": m.role, "content": m.content} for m in messages],
@@ -131,13 +175,23 @@ class OpenAICompatProvider:
             "temperature": opts.pop("temperature", self._temperature),
             "max_tokens": opts.pop("max_tokens", self._max_tokens),
         }
+        if tools:
+            request["tools"] = tools
         try:
             client = self._open_client(key, base_url=base_url)
             async with client:  # 请求结束即关闭连接池
                 stream = await client.chat.completions.create(**request)
                 async for raw in stream:
                     text = _extract_content(raw)
-                    if text:
+                    tool_deltas = _extract_tool_deltas(raw)
+                    if not text and not tool_deltas:
+                        continue  # 心跳帧 / 纯 reasoning 帧：不出帧（与既往行为一致）
+                    if tool_deltas:
+                        # 首片工具分片与正文同帧携带；同一 chunk 的其余调用各出一帧
+                        yield Chunk(text=text, tool_delta=tool_deltas[0])
+                        for extra in tool_deltas[1:]:
+                            yield Chunk(text="", tool_delta=extra)
+                    else:
                         yield Chunk(text=text)
         except openai.OpenAIError as exc:
             raise _translate(exc, timeout=self._timeout) from exc

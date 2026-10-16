@@ -20,11 +20,30 @@ class ChatMessage:
 
 
 @dataclass(frozen=True)
+class ToolCallDelta:
+    """流式工具调用分片（OpenAI 协议 ``delta.tool_calls`` 的单项，§4.7 工具机制）。
+
+    同一次工具调用以多片到达：``id`` / ``name`` 通常只在首片出现，
+    ``arguments``（JSON 字符串）逐片拼接；调用方按 ``index`` 归组后解析。
+    """
+
+    index: int
+    id: str | None = None
+    name: str | None = None
+    arguments: str | None = None
+
+
+@dataclass(frozen=True)
 class Chunk:
-    """流式返回的增量片段。finished=True 表示流结束。"""
+    """流式返回的增量片段。finished=True 表示流结束。
+
+    ``tool_delta``：工具调用分片（provider 收到时携带，与 ``text`` 可同帧共存；
+    未携带工具调用能力的 provider / 请求不带 tools 时恒为 None）。
+    """
 
     text: str
     finished: bool = False
+    tool_delta: ToolCallDelta | None = None
 
 
 @dataclass(frozen=True)

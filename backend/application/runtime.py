@@ -8,7 +8,9 @@
   LLM key 不进槽（provider 每次请求经 shared.secrets 读取链惰性取，
   keyring 更新天然即时生效）；
 - ``Runtime``：持有当前配置与各模块活引用（main 装配），提供 ``apply(config)``
-  分派与 ``voice_factory``（每条连接语音出站的装配点）。
+  分派与 ``voice_factory``（每条连接语音出站的装配点）；内置工具注册表
+  （§4.7，``build_default_registry``）同样在此装配——进程内只读、随 Runtime
+  生命周期存活（本期无热更需求）。
 
 能热更 / 不能热更的边界（§7.6.3 要求明确）：
 - llm：base_url / model / temperature / max_tokens 热更（重建 provider）；
@@ -31,6 +33,7 @@ from loguru import logger
 from backend.application.voice import VoiceOut
 from backend.modules.llm.openai_compat import OpenAICompatProvider
 from backend.modules.llm.provider import ChatMessage, Chunk, LLMProvider, ProbeResult
+from backend.modules.tools import ToolRegistry, build_default_registry
 from backend.modules.voice.tts import TTSProvider, create_tts_provider
 from backend.shared.config import AppConfig
 from backend.shared.errors import TtsError, TtsErrorCode
@@ -116,6 +119,7 @@ class Runtime:
         self._config = config
         self._llm = LlmSlot(create_llm_provider(config))
         self._tts = TtsSlot()
+        self._tools = build_default_registry()  # §4.7：内置工具（装配后只读）
         self._engine: BehaviorEngine | None = None
         self._memory: MemoryService | None = None
 
@@ -133,6 +137,11 @@ class Runtime:
     @property
     def tts(self) -> TtsSlot:
         return self._tts
+
+    @property
+    def tools(self) -> ToolRegistry:
+        """内置工具注册表（§4.7；ChatPipeline 构造时注入，生产自动启用工具机制）。"""
+        return self._tools
 
     def pet_name(self) -> str:
         """当前宠物名字（ChatPipeline 每轮组装 system prompt 时动态读，§7.6.3）。"""

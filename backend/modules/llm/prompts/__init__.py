@@ -4,11 +4,12 @@
 
     persona.md            ← 默认人格（"小兔"）
     emotion_directive.md  ← 情绪指令（要求 LLM 用 <emo:xxx> 切换情绪）
+    capabilities.md       ← 能力清单（可用工具与调用要求；§4.7 工具机制）
     memory_extract.md     ← 记忆提取（后台任务；P3 记忆与持久化）
 
 system prompt 结构（§4.1/§7.6.3）：
 
-    [人格设定] + [名字注入] + [情绪指令]
+    [人格设定] + [名字注入] + [情绪指令] + [能力清单]
 
 （[名字注入]：``pet.name`` 配置非空时叠加"你的名字叫 X"一行，压过 persona 模板里的
 旧名——设置面板改名的"真身"；[记忆注入] 由 chat_pipeline 动态拼接，不在本步骤范围。）
@@ -36,6 +37,15 @@ _FALLBACK_EMOTION_DIRECTIVE = (
     "标签会被系统剥离、不展示给用户；没有情绪变化时可以不写（默认 neutral）。"
 )
 
+# 兜底能力清单：capabilities.md 缺失/不可读时使用（保持与文件同义的最简版）
+_FALLBACK_CAPABILITIES = (
+    "你可以调用系统提供的工具来完成真实的界面操作（不只是嘴上描述）。"
+    "可用工具：open_settings——打开小兔的设置面板（改 LLM 服务商 / 模型 / 密钥、"
+    "宠物名字、主题、声音与语音、行为、记忆等配置）。"
+    "用户表达「想改设置、打开设置面板」之类意图时，直接调用 open_settings"
+    "（不要描述快捷键、不要只给操作步骤）；调用前后用一句自然口语回应即可。"
+)
+
 # 兜底记忆提取指令：memory_extract.md 缺失/不可读时使用（保持与文件同义的最简版）
 _FALLBACK_MEMORY_EXTRACT = (
     "阅读对话记录，提炼关于用户、长期有效的信息。只输出 JSON 对象："
@@ -53,6 +63,11 @@ def load_persona() -> str:
 def load_emotion_directive() -> str:
     """读取情绪指令（emotion_directive.md）；读不到时返回内置兜底文本。"""
     return _read_or(_PROMPTS_DIR / "emotion_directive.md", _FALLBACK_EMOTION_DIRECTIVE)
+
+
+def load_capabilities() -> str:
+    """读取能力清单（capabilities.md）；读不到时返回内置兜底文本（不抛异常）。"""
+    return _read_or(_PROMPTS_DIR / "capabilities.md", _FALLBACK_CAPABILITIES)
 
 
 def load_memory_extract_prompt() -> str:
@@ -73,13 +88,15 @@ _PET_NAME_LINE = (
 def build_system_prompt(
     persona_text: str | None = None, *, pet_name: str | None = None
 ) -> str:
-    """组装 system prompt：人格设定 + [名字注入] + 情绪指令。
+    """组装 system prompt：人格设定 + [名字注入] + 情绪指令 + 能力清单。
 
     - ``persona_text`` 为 None 时使用默认 persona.md；角色系统接入后由 application
       以角色包的 persona.md 内容传入（§4.6），覆盖默认人格；
     - ``pet_name``（``pet.name`` 配置）：非空时在人格设定之后叠加"你的名字叫 X"
       （§7.6.3）——设置面板改名后下一句聊天即自称新名；空/None 不注入，输出与
-      旧版完全一致（不破坏 persona 覆盖机制）。
+      旧版完全一致（不破坏 persona 覆盖机制）；
+    - 能力清单（capabilities.md）恒定收尾（§4.7 工具机制）：告知模型可用工具与
+      调用要求——模型据此在"想改设置"时真的调用 open_settings，而不是只给步骤。
     """
     persona = (
         persona_text if persona_text is not None else load_persona()
@@ -89,6 +106,7 @@ def build_system_prompt(
     if name:
         parts.append(_PET_NAME_LINE.format(name=name))
     parts.append(load_emotion_directive())
+    parts.append(load_capabilities())
     return "\n\n---\n\n".join(parts)
 
 

@@ -86,6 +86,7 @@ def main() -> int:
         memories=memory_store,
         profile=profile_store,
         pet_name=runtime.pet_name,  # 每轮动态注入 pet.name（§7.6.3 改名即生效）
+        tools=runtime.tools,  # 工具机制（§4.7）：快通道 / 模型 tools / 降级链
     )
 
     # 语音链路（Phase 2）：按配置装配 TTS provider 进热替换槽；未知 provider 记

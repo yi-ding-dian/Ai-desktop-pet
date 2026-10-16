@@ -1,7 +1,7 @@
 """modules/llm/openai_compat.py 单测。
 
-覆盖：流式解析（只取 content、跳过 reasoning_content）、请求参数透传、
-错误码翻译（§4.1）、密钥脱敏、连通性测试、embed 占位。
+覆盖：流式解析（只取 content、跳过 reasoning_content、tool_calls 保真透传）、
+请求参数透传（含 tools）、错误码翻译（§4.1）、密钥脱敏、连通性测试、embed 占位。
 
 说明：openai SDK 3.x 的底层 httpx 依赖不可直接 import，HTTP 状态类异常
 （需要 response 对象）用 Mock(spec=...) 构造以验证 isinstance 分派。
@@ -20,18 +20,36 @@ import pytest
 from backend.modules.llm.openai_compat import (
     OpenAICompatProvider,
     _extract_content,
+    _extract_tool_deltas,
     _translate,
 )
-from backend.modules.llm.provider import ChatMessage
+from backend.modules.llm.provider import ChatMessage, ToolCallDelta
 from backend.shared.errors import LlmError, LlmErrorCode
 
 KEY = "test-key-0123456789abcdef"
 
 
-def make_chunk(*, content: str | None = None, reasoning: str | None = None) -> Any:
-    """构造形如 SDK ChatCompletionChunk 的假 chunk（delta 同时带两类字段）。"""
-    delta = SimpleNamespace(content=content, reasoning_content=reasoning)
+def make_chunk(
+    *,
+    content: str | None = None,
+    reasoning: str | None = None,
+    tool_calls: list[Any] | None = None,
+) -> Any:
+    """构造形如 SDK ChatCompletionChunk 的假 chunk（delta 同时带各类字段）。"""
+    delta = SimpleNamespace(content=content, reasoning_content=reasoning, tool_calls=tool_calls)
     return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+
+def make_tool_call(
+    *,
+    index: int | None = 0,
+    id: str | None = None,
+    name: str | None = None,
+    arguments: str | None = None,
+) -> Any:
+    """构造形如 ``delta.tool_calls`` 单项的假对象（name/arguments 嵌套在 function 下）。"""
+    function = SimpleNamespace(name=name, arguments=arguments)
+    return SimpleNamespace(index=index, id=id, function=function)
 
 
 class FakeClient:
@@ -84,11 +102,11 @@ def make_provider(client: FakeClient, **overrides: Any) -> OpenAICompatProvider:
     return provider
 
 
-def collect(provider: OpenAICompatProvider) -> list[Any]:
+def collect(provider: OpenAICompatProvider, **opts: Any) -> list[Any]:
     """同步收集一次流式输出（异常会原样抛出）。"""
 
     async def _run() -> list[Any]:
-        return [c async for c in provider.stream_chat([ChatMessage("user", "hi")])]
+        return [c async for c in provider.stream_chat([ChatMessage("user", "hi")], **opts)]
 
     return asyncio.run(_run())
 
@@ -168,6 +186,141 @@ def test_opts_override_sampling_params() -> None:
     asyncio.run(_run())
     assert client.requests[0]["temperature"] == 0.1
     assert client.requests[0]["max_tokens"] == 42
+
+
+# ---------------------------------------------------------------- 工具调用（§4.7）
+
+#: 假工具声明（OpenAI 协议格式，tools 域产物的替身——provider 只收 dict 列表）
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "open_settings",
+            "description": "打开设置面板",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+]
+
+
+def test_tools_param_passed_to_sdk_when_present() -> None:
+    client = FakeClient([make_chunk(content="ok")])
+    collect(make_provider(client), tools=TOOLS)
+    assert client.requests[0]["tools"] == TOOLS
+
+
+def test_tools_param_absent_from_request_by_default() -> None:
+    """不带 tools 的普通对话：请求体不含该字段（与旧版逐字一致）。"""
+    client = FakeClient([make_chunk(content="ok")])
+    collect(make_provider(client))
+    assert "tools" not in client.requests[0]
+
+
+def test_empty_tools_not_sent() -> None:
+    """空列表视同未传（不发空 tools 字段，避免部分网关对空数组报错）。"""
+    client = FakeClient([make_chunk(content="ok")])
+    collect(make_provider(client), tools=[])
+    assert "tools" not in client.requests[0]
+
+
+def test_extract_tool_deltas_parses_all_fields() -> None:
+    """分片字段（index/id/name/arguments）保真搬运为 ToolCallDelta。"""
+    raw = make_chunk(
+        tool_calls=[make_tool_call(index=0, id="call_1", name="open_settings", arguments="")]
+    )
+    assert _extract_tool_deltas(raw) == [
+        ToolCallDelta(index=0, id="call_1", name="open_settings", arguments="")
+    ]
+
+
+def test_extract_tool_deltas_handles_partial_and_missing() -> None:
+    """后续分片只带部分字段（id/name 缺省）；无 tool_calls 的帧返回空列表。"""
+    raw = make_chunk(tool_calls=[make_tool_call(index=0, arguments='": 1}')])
+    assert _extract_tool_deltas(raw) == [ToolCallDelta(index=0, arguments='": 1}')]
+
+    # index 缺省（协议上少见）：兜底为 0，不丢分片
+    raw = make_chunk(tool_calls=[make_tool_call(index=None, arguments="x")])
+    assert _extract_tool_deltas(raw) == [ToolCallDelta(index=0, arguments="x")]
+
+    assert _extract_tool_deltas(make_chunk(content="你好")) == []
+    assert _extract_tool_deltas(SimpleNamespace(choices=[])) == []
+    assert _extract_tool_deltas(SimpleNamespace(choices=[SimpleNamespace(delta=None)])) == []
+
+
+def test_extract_tool_deltas_multiple_items_kept_in_order() -> None:
+    """一个原始分片含多个 tool_calls 项（并行调用）：按序全部返回。"""
+    raw = make_chunk(
+        tool_calls=[make_tool_call(index=0, id="c0"), make_tool_call(index=1, id="c1")]
+    )
+    assert [d.index for d in _extract_tool_deltas(raw)] == [0, 1]
+
+
+def test_stream_content_and_tool_calls_share_one_chunk() -> None:
+    """同一原始分片同时含 content 与 tool_calls：单个 Chunk 双字段携带。"""
+    client = FakeClient(
+        [
+            make_chunk(
+                content="好嘞",
+                tool_calls=[
+                    make_tool_call(index=0, id="call_1", name="open_settings", arguments="")
+                ],
+            )
+        ]
+    )
+    chunks = collect(make_provider(client))
+
+    assert len(chunks) == 2  # 一条双字段帧 + 结束标记
+    assert chunks[0].text == "好嘞"
+    assert chunks[0].tool_delta == ToolCallDelta(
+        index=0, id="call_1", name="open_settings", arguments=""
+    )
+    assert chunks[1].finished is True
+
+
+def test_stream_tool_calls_only_yields_empty_text_chunk() -> None:
+    """模型只回 tool_calls（content 为空）：照样产帧（text=""），不丢分片。
+
+    多片到达（首片 id/name、次片 arguments 分片）时逐一透传——拼接归组是
+    调用方的事，provider 层保真即可（实测 deepseek-flash 真实行为）。
+    """
+    client = FakeClient(
+        [
+            make_chunk(tool_calls=[make_tool_call(index=0, id="call_1", name="open_settings")]),
+            make_chunk(tool_calls=[make_tool_call(index=0, arguments='{"a"')]),
+            make_chunk(tool_calls=[make_tool_call(index=0, arguments='": 1}')]),
+        ]
+    )
+    chunks = collect(make_provider(client))
+
+    carried = [c for c in chunks if c.tool_delta is not None]
+    assert [c.text for c in carried] == ["", "", ""]
+    assert carried[0].tool_delta == ToolCallDelta(index=0, id="call_1", name="open_settings")
+    assert carried[1].tool_delta == ToolCallDelta(index=0, arguments='{"a"')
+    assert carried[2].tool_delta == ToolCallDelta(index=0, arguments='": 1}')
+
+
+def test_stream_frame_without_content_or_tool_calls_not_yielded() -> None:
+    """content 与 tool_calls 均无的帧（reasoning / 心跳）：不出帧。"""
+    client = FakeClient([make_chunk(reasoning="思考中"), make_chunk()])
+    chunks = collect(make_provider(client))
+    assert [c for c in chunks if not c.finished] == []
+
+
+def test_stream_multiple_tool_calls_in_one_frame_all_preserved() -> None:
+    """同帧多个调用项：首个双字段帧携带，其余各出一帧（不丢调用）。"""
+    client = FakeClient(
+        [
+            make_chunk(
+                content="稍等",
+                tool_calls=[make_tool_call(index=0, id="c0"), make_tool_call(index=1, id="c1")],
+            )
+        ]
+    )
+    chunks = collect(make_provider(client))
+
+    assert chunks[0].text == "稍等"
+    assert chunks[0].tool_delta == ToolCallDelta(index=0, id="c0")
+    assert chunks[1].text == "" and chunks[1].tool_delta == ToolCallDelta(index=1, id="c1")
 
 
 # ---------------------------------------------------------------- 密钥

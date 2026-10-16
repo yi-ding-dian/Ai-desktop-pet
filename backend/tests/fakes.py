@@ -5,6 +5,9 @@
   已改用 OpenAICompatProvider，本替身仅供测试）。
 - ScriptedProvider：可编程替身。按脚本产出片段，可选在流开始前 / 结束后
   抛 LlmError，并记录每次收到的 messages（供上下文组装断言）。
+- FakeLLMProvider：带工具能力的可编程替身（文本分片 + tool_delta 分片、
+  记录 opts）——供 chat 管道"工具机制"（§4.7）测试；ScriptedProvider 的
+  纯文本用法保持不变。
 - FakeTTSProvider：可编程 TTS 替身（记录合成文本、可注入延迟/失败）。
 """
 
@@ -13,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, AsyncIterator, Sequence
 
-from backend.modules.llm.provider import ChatMessage, Chunk
+from backend.modules.llm.provider import ChatMessage, Chunk, ToolCallDelta
 from backend.shared.errors import LlmError, TtsError, TtsErrorCode
 
 # —— Echo：固定回复替身 ——
@@ -92,6 +95,66 @@ class ScriptedProvider:
             if self._delay:
                 await asyncio.sleep(self._delay)
             yield Chunk(text=piece)
+        if self._mid_error is not None:
+            raise self._mid_error
+        yield Chunk(text="", finished=True)
+
+
+# —— FakeLLM：带工具能力的可编程替身（管道工具回调测试用） ——
+
+
+class FakeLLMProvider:
+    """可编程替身：正文分片 + 工具调用分片（§4.7 工具机制测试用）。
+
+    - pieces：正文分片（按序产出 ``Chunk(text=piece)``）；
+    - tool_deltas：工具调用分片（正文之后按序产出 ``Chunk(text="", tool_delta=...)``；
+      模拟"模型只回 tool_calls、不产出正文"时 pieces 传空即可）；
+    - delay：分片间隔（模拟流式节奏）；
+    - start_error / mid_error：与 ScriptedProvider 同义（流前 / 流后抛错）；
+    - fail_calls：指定"第 n 次调用（1-based）开始前抛出对应错误"（与
+      FakeTTSProvider.fail_calls 同语义）——模拟"首轮失败、重放成功"的工具降级场景；
+    - seen_messages / seen_opts：记录每次调用的 messages 与 opts——断言
+      "tools 参数是否透传到 provider"用（其余用法与 ScriptedProvider 一致，
+      本替身不替代它，纯文本场景继续用 ScriptedProvider）。
+    """
+
+    def __init__(
+        self,
+        pieces: Sequence[str] = (),
+        *,
+        tool_deltas: Sequence[ToolCallDelta] = (),
+        delay: float = 0.0,
+        start_error: LlmError | None = None,
+        mid_error: LlmError | None = None,
+        fail_calls: dict[int, LlmError] | None = None,
+    ) -> None:
+        self._pieces = list(pieces)
+        self._tool_deltas = list(tool_deltas)
+        self._delay = delay
+        self._start_error = start_error
+        self._mid_error = mid_error
+        self._fail_calls = fail_calls or {}
+        self.seen_messages: list[list[ChatMessage]] = []
+        self.seen_opts: list[dict[str, Any]] = []
+
+    async def stream_chat(
+        self, messages: Sequence[ChatMessage], **opts: Any
+    ) -> AsyncIterator[Chunk]:
+        self.seen_messages.append(list(messages))
+        self.seen_opts.append(dict(opts))
+        call_error = self._fail_calls.get(len(self.seen_opts))
+        if call_error is not None:
+            raise call_error
+        if self._start_error is not None:
+            raise self._start_error
+        for piece in self._pieces:
+            if self._delay:
+                await asyncio.sleep(self._delay)
+            yield Chunk(text=piece)
+        for delta in self._tool_deltas:
+            if self._delay:
+                await asyncio.sleep(self._delay)
+            yield Chunk(text="", tool_delta=delta)
         if self._mid_error is not None:
             raise self._mid_error
         yield Chunk(text="", finished=True)

@@ -40,6 +40,7 @@ packages = [
     "backend.modules.llm",
     "backend.modules.llm.prompts",
     "backend.modules.memory",
+    "backend.modules.tools",
     "backend.modules.voice",
     "backend.modules.voice.tts",
     "backend.shared",
