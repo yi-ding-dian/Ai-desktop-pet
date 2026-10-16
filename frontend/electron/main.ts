@@ -4,11 +4,13 @@
  * 职责边界：本文件不直接写平台特化代码——窗口创建与能力一律经 window/registry 解析平台实现（设计文档 §5.1）；
  * Python 子进程管理一律经 backend-process 域（设计文档 §5.2）；托盘一律经 tray 域。
  */
-import { app, globalShortcut, shell, type Tray } from 'electron'
+import { app, globalShortcut, ipcMain, screen, shell, type Tray } from 'electron'
 import { join } from 'node:path'
 import { resolveWindowImpl } from './window/registry'
 import { registerIpcHandlers, pushDebugState, type IpcContext } from './ipc'
-import { IPC_EVENTS } from './ipc/channels'
+import { IPC, IPC_EVENTS } from './ipc/channels'
+import { createHitGate, type HitGate } from './window/hit-gate'
+import { resolveCursorSource } from './window/cursor-source'
 import { backendManager } from './backend-process'
 import { createTray, destroyTrayMenu } from './tray'
 import { runHideAnimation, runShowAnimation, destroyFx } from './fx'
@@ -38,6 +40,11 @@ let ipcCtx: IpcContext | null = null
 let tray: Tray | null = null
 /** 调试态：hitbox 边框显示开关（主进程持有，渲染侧只渲染） */
 let hitboxVisible = false
+/** 空气让路（§5.1 增补）：输入接管状态机（仅"透明窗口可用"的平台启用；降级态不启动） */
+let hitGate: HitGate | null = null
+/** PET_REPORT_HIT_TEST 的 ipcMain 监听器引用（退出清理 removeListener 用） */
+let hitReportListener: ((event: Electron.IpcMainEvent, payload: { solid: boolean }) => void) | null =
+  null
 
 /** 创建宠物窗口并完成 IPC 注册 */
 function createPetWindow(): PlatformWindow {
@@ -68,6 +75,9 @@ function createPetWindow(): PlatformWindow {
   window.on('closed', () => {
     pet = null
     ipcCtx = null
+    // 空气让路状态机随窗口销毁停止（清定时器/解绑事件）
+    hitGate?.stop()
+    hitGate = null
   })
 
   ipcCtx = {
@@ -99,6 +109,9 @@ function registerDebugShortcuts(): void {
     }
   }
 
+  // F9 调试键（走旧 setShape 形状穿透路径，原样保留）：空气让路启用后，常规输入切换由
+  // window/hit-gate 状态机全权接管（setIgnoreMouseEvents 路径，§5.1 增补）——本键仅作
+  // 调试绕过 / 两条穿透机制对比，不再是常规穿透开关。
   bind(SHORTCUTS.toggleClickThrough, () => {
     if (!ipcCtx) return
     ipcCtx.capability.setClickThrough(!ipcCtx.capability.isClickThrough())
@@ -146,6 +159,27 @@ if (!app.requestSingleInstanceLock()) {
 
     pet = createPetWindow()
     const petWin = pet.window
+
+    // 空气让路（§5.1 增补）：输入接管状态机——渲染侧 hitTest 回报（IPC.PET_REPORT_HIT_TEST）
+    // 驱动 TAKEN（接管）/ YIELDED（让路）切换。仅"透明窗口可用"的平台启用：
+    // Wayland 降级态（linux.ts degraded）/ macOS 降级兜底实现（darwin.ts）不启动。
+    // 坐标源经 cursor-source 平台解析：Linux 用 xdotool 实时查询（XQueryPointer——零丢击；
+    // xdotool 缺失/异常自动降级 screen + 脉冲方案——见 window/cursor-source.ts），其余平台用 screen API。
+    // 与旧机制约定（§5.1）：启用后本状态机全权接管输入切换（渲染侧停用旧悬停切换）。
+    if (!pet.degraded) {
+      hitGate = createHitGate({
+        win: petWin,
+        cursorSource: resolveCursorSource({
+          screenGetCursor: () => screen.getCursorScreenPoint(),
+          log: (msg) => console.log(msg)
+        })
+      })
+      hitReportListener = (_event, payload) => hitGate?.notifyReport(Boolean(payload?.solid))
+      ipcMain.on(IPC.PET_REPORT_HIT_TEST, hitReportListener)
+      hitGate.start()
+    } else {
+      console.log('[main] 降级平台：不启用空气让路（hit-gate）')
+    }
     // 关窗=躲进托盘（用户确认的行为）：Alt+F4 等关闭动作只隐藏窗口，且走魔法球捕获动画
     // （fx 域负责时序；动画异常/超时有兜底，结果语义"躲进托盘"一定生效）；
     // 真正退出走托盘菜单/系统退出（经 app.quit → before-quit 置 quitting=true 放行）
@@ -210,5 +244,12 @@ if (!app.requestSingleInstanceLock()) {
     destroySettings()
     // 自绘托盘菜单窗（若存在）直接销毁
     destroyTrayMenu()
+    // 空气让路状态机：停定时器/解绑窗口事件 + 移除 IPC 监听
+    hitGate?.stop()
+    hitGate = null
+    if (hitReportListener) {
+      ipcMain.removeListener(IPC.PET_REPORT_HIT_TEST, hitReportListener)
+      hitReportListener = null
+    }
   })
 }

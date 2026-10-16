@@ -47,6 +47,8 @@ export const IPC = {
   TEACHING_READY: 'teaching:ready',
   /** 教学模式：查询状态（invoke → TeachingStatePayload） */
   TEACHING_GET_STATE: 'teaching:get-state',
+  /** 空气让路（§5.1 增补）：渲染侧回报光标处命中判定（payload: {solid: boolean}；false=空气 → 主进程输入让路） */
+  PET_REPORT_HIT_TEST: 'pet:report-hit-test',
   /** 设置窗口：请求打开独立设置窗口（托盘菜单与聊天关键词共用；单例，重复打开则聚焦已有） */
   SETTINGS_OPEN: 'settings:open',
   /** 设置窗口：请求重启应用（设置页"重启"按钮；主进程先走后端退出清理再 relaunch） */
@@ -80,7 +82,9 @@ export const IPC_EVENTS = {
   /** 设置窗显示状态变化（payload: SettingsVisibilityPayload；只发宠物窗口——向导编排：面板收起/萌语气泡/回位） */
   SETTINGS_VISIBILITY: 'settings:visibility',
   /** 自绘托盘菜单：初始化载荷（payload: {petVisible: boolean}；菜单窗每次弹出前下发，驱动「显示/隐藏宠物」文案） */
-  TRAY_MENU_INIT: 'tray-menu:init'
+  TRAY_MENU_INIT: 'tray-menu:init',
+  /** 空气让路：光标窗口内坐标推送（payload: {x,y} | null（null=光标不在窗口内）；仅让路态轮询推送——渲染侧据此判定是否恢复接管） */
+  PET_POINTER_POS: 'pet:pointer-pos'
 } as const
 
 /** 通道名：魔法球捕获动画（fx 域：主进程 ↔ fx 动画页） */
@@ -229,6 +233,10 @@ export interface PetBridgeApi {
     getGeometry(): Promise<WindowGeometry>
     /** 订阅窗口几何变化（主进程已 debounce ~1s）；返回取消订阅函数 */
     onGeometryChanged(cb: (geo: WindowGeometry) => void): () => void
+    /** 空气让路：上报光标处命中判定（true=实体/交互元素，false=空气透明区）——主进程据此输入让路/恢复 */
+    reportHitTest(solid: boolean): void
+    /** 空气让路：订阅主进程推送的光标窗口内坐标（仅让路态轮询推送；null=光标不在窗口内）；返回取消订阅函数 */
+    onPointerPos(cb: (pos: { x: number; y: number } | null) => void): () => void
   }
   /** 系统状态（env_update 上报依据） */
   system: {

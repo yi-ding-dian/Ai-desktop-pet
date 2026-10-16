@@ -85,6 +85,23 @@ const api: PetBridgeApi = {
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.WINDOW_GEOMETRY_CHANGED, listener)
       }
+    },
+
+    /** 空气让路（§5.1 增补）：上报光标处命中判定（true=实体/交互元素，false=空气区） */
+    reportHitTest(solid: boolean): void {
+      ipcRenderer.send(IPC.PET_REPORT_HIT_TEST, { solid })
+    },
+
+    /** 空气让路（§5.1 增补）：订阅主进程推送的光标窗口内坐标（让路态轮询推送；null=光标出窗） */
+    onPointerPos(cb: (pos: { x: number; y: number } | null) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        pos: { x: number; y: number } | null
+      ): void => cb(pos)
+      ipcRenderer.on(IPC_EVENTS.PET_POINTER_POS, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.PET_POINTER_POS, listener)
+      }
     }
   },
 
