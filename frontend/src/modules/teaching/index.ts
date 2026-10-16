@@ -138,12 +138,6 @@ export function notifyTeachingDragStart(): void {
   getPetBridge().teaching?.notifyDragStart?.()
 }
 
-/** 请求打开设置窗口（"打开设置/设置面板"关键词 → 主进程 SETTINGS_OPEN；settings 段由并行实现，可选链容错） */
-export function openSettings(): void {
-  devLog('请求打开设置窗口')
-  getPetBridge().settings?.open?.()
-}
-
 /** 上报一条镜像对话事件（主进程路由给黑板；调用方负责仅在教学模式中调用） */
 function reportMirror(event: TeachingMirrorEvent): void {
   getPetBridge().teaching?.reportMirror?.(event)
@@ -155,14 +149,15 @@ function reportMirror(event: TeachingMirrorEvent): void {
 const EXIT_KEYWORDS = /下课|结束教学/
 /** "开课"关键词（显式触发，第一版不做 LLM 自动识别） */
 const ENTER_KEYWORDS = /开始教学|教学模式/
-/** "打开设置"关键词（宠物面识别 → settings.open()；§7.6.1 聊天关键词入口） */
-const SETTINGS_KEYWORDS = /打开设置|设置面板/
 
 /**
  * 统一发送入口（聊天输入框键盘路径 + 黑板输入条路径共用）。
  *
- * 顺序（制定要求）：关键词处理（enter/exit/open-set）→ WS 发送 → 教学模式中镜像 + 推入头顶气泡。
+ * 顺序（制定要求）：关键词处理（enter/exit）→ WS 发送 → 教学模式中镜像 + 推入头顶气泡。
  * 返回 false 表示连接未就绪、未送出（调用方不应更新本地气泡）。
+ *
+ * 注："打开设置"类关键词动作已迁至后端（§4.7 工具机制：后端走快通道/模型 tools 协议推
+ * `tool_call` 事件，前端 tools 域执行开窗）——本入口对这类消息只照常发往后端。
  */
 export function sendUserMessage(client: WsClient, text: string): boolean {
   // ① 关键词：必须在发送/镜像之前——"开始教学"之后的消息才进入镜像链路
@@ -170,8 +165,6 @@ export function sendUserMessage(client: WsClient, text: string): boolean {
     exitTeaching()
   } else if (ENTER_KEYWORDS.test(text)) {
     enterTeaching('keyword')
-  } else if (SETTINGS_KEYWORDS.test(text)) {
-    openSettings()
   }
 
   // ② 照常发往后端（消息本身不受教学模式影响）

@@ -14,6 +14,9 @@
  *
  * P4 设置向导（§7.6.6）：settings.onVisibility 订阅（向导期间聊天面板收起 + 右眼右上萌语
  * 气泡）在 modules/settings-guide 域内实现，App 只做 UI 接线与形状上报；飞位动画由主进程 fx 编排。
+ *
+ * 工具机制（§4.7）：后端 tool_call 事件 → 前端按 name 执行（如 open_settings 打开设置窗），
+ * 执行器在 modules/tools 域内实现，App 只做接线。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { getPetBridge } from './shared/pet-bridge'
@@ -40,6 +43,7 @@ import {
   TeachingBubbles,
   type TeachingBubbleItem
 } from './modules/teaching'
+import { setupToolExecutor } from './modules/tools'
 import {
   setupSettingsGuidePetSide,
   subscribeSettingsGuide,
@@ -159,6 +163,9 @@ export default function App(): ReactElement {
   // 注：新增 bridge API 需重启 Electron 主进程才可用；旧 preload 无 teaching 段时静默跳过
   useEffect(() => setupTeachingPetSide(wsClient), [wsClient])
 
+  // ---- 工具执行器接线（§4.7 工具机制）：后端 tool_call 事件 → 前端按 name 执行（如 open_settings 开设置窗） ----
+  useEffect(() => setupToolExecutor(wsClient), [wsClient])
+
   /**
    * 讲台走位（进入教学模式 / 折叠恢复时）：宠物走回讲台位（复用 moveTo 缓动）。
    * - 距离 ≤30px 不动（已在讲台位）；
@@ -240,7 +247,9 @@ export default function App(): ReactElement {
     if (!import.meta.env.DEV) return
     installVoiceDebugHook()
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.repeat || e.key.toLowerCase() !== 'v') return
+      // 排除带修饰键的组合（Ctrl+V 等粘贴快捷键的 e.key 也是 'v'，曾误触发测试音）
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.key.toLowerCase() !== 'v') return
       const el = e.target as HTMLElement | null
       const tag = el?.tagName?.toLowerCase()
       if (tag === 'input' || tag === 'textarea' || el?.isContentEditable) return

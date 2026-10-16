@@ -180,6 +180,18 @@ export interface ReplyEndData {
   interrupted?: boolean | null
 }
 
+/**
+ * 工具调用（服务端 → 客户端执行，§4.7 工具机制）：
+ * 模型本轮请求调用的内置工具（如 open_settings → 前端打开设置窗），在对应回复的
+ * reply_end 之后推送；id 为本次调用的唯一标识（将来"结果回传续写"按 id 配对，
+ * 当前前端仅按 name 执行、无需回执）。
+ */
+export interface ToolCallData {
+  id: string
+  name: string
+  args: Record<string, unknown>
+}
+
 /** 主动消息（问候/提醒），无对应用户输入 */
 export interface ProactiveData {
   message_id: string
@@ -265,6 +277,8 @@ export interface ServerEventMap {
   /** 二进制音频帧（§3.5）：载荷为 {header, payload}（WsClient 二进制派发），信封模型仅为占位 */
   audio: AudioFramePacket
   reply_end: ReplyEndData
+  /** 工具调用（§4.7 工具机制）：reply_end 之后推送，前端按 name 执行（如 open_settings 开设置窗） */
+  tool_call: ToolCallData
   proactive: ProactiveData
   history: HistoryData
   config: ConfigData
