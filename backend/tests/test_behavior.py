@@ -394,6 +394,36 @@ def test_wait_done_receives_report() -> None:
     asyncio.run(scenario())
 
 
+def test_set_connection_first_wins_while_alive() -> None:
+    """先到者得的绑定规则（回归：后到连接抢走行为通道导致自主行为不执行）。
+
+    场景还原：首启时 llm.base_url 为空 → 设置向导窗自动弹出并**第二个**连上 WS。
+    旧实现无条件覆盖，行为通道被抢到没有行为执行器的设置窗上，此后下发的
+    walk/nap/look_around 全部无人执行，后端只能等超时报「未收到回报」。
+    """
+    engine = BehaviorEngine(BehaviorConfig())
+    pet_sink = FakeSink()
+    settings_sink = FakeSink()
+
+    engine.set_connection(pet_sink)
+    assert engine._sink is pet_sink
+
+    # 后到连接（设置/向导窗）在宠物窗仍存活时被忽略——通道不丢
+    engine.set_connection(settings_sink)
+    assert engine._sink is pet_sink
+
+    # 宠物窗断线（client_state 变 DISCONNECTED → is_closed() 为真）→ 新连接可接管（重连场景）
+    pet_sink.closed = True
+    engine.set_connection(settings_sink)
+    assert engine._sink is settings_sink
+
+    # None = 显式清除（显式清除后再连可重绑）
+    engine.set_connection(None)
+    assert engine._sink is None
+    engine.set_connection(settings_sink)
+    assert engine._sink is settings_sink
+
+
 def test_engine_user_returned_pushes_wake_and_emotion() -> None:
     async def scenario() -> None:
         engine = BehaviorEngine(BehaviorConfig(idle_min_seconds=30, idle_max_seconds=60))

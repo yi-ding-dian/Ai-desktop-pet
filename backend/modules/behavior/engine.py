@@ -105,10 +105,29 @@ class BehaviorEngine:
     # ---------------------------------------------------------------- 装配
 
     def set_connection(self, sink: BehaviorSink | None) -> None:
-        """设置当前连接（dispatcher 在 hello 鉴权通过后调用；None = 清除）。"""
+        """设置当前连接（dispatcher 在 hello 鉴权通过后调用；None = 清除）。
+
+        绑定规则：**先到者得**——仅当当前没有**存活**连接时才接受新连接（2026-10-16 修正）。
+
+        为什么（实测 bug）：原实现是无条件覆盖（后到者得）。首启时 `llm.base_url` 为空，
+        设置向导窗自动弹出并**第二个**连上 WS → 把行为通道从宠物窗手里抢走。设置窗没有行为
+        执行器（executor 只挂在宠物页），于是后端下发的 walk/nap/look_around 全部石沉大海，
+        只能等 `DONE_TIMEOUT_BUFFER_SECONDS` 超时兜底——表现为"兔子不会自主走动"，日志里是
+        「行为 xx（walk）等待完成后未收到回报（超时/断线）」。Linux 侧长期没暴露，是因为
+        开发机早已配好 base_url、向导窗不会自动弹，宠物窗是唯一连接。
+
+        边界（保留的已知缺口）：本规则只保证"宠物窗先连就先得"。若某天出现"非宠物窗先连"
+        的时序，仍会错绑——彻底解法是 hello 带角色标识、只绑宠物角色（需要动 WS 协议）。
+        断线重连不受影响：旧 sink 的 client_state 变为 DISCONNECTED 后即视为无存活连接，可重绑。
+        """
+        if sink is None:
+            self._sink = None
+            return
+        if self._connection_alive():
+            logger.info("行为引擎：已有存活连接，忽略后到连接（先到者得，避免设置/向导窗抢走行为通道）")
+            return
         self._sink = sink
-        if sink is not None:
-            logger.info("行为引擎已绑定连接")
+        logger.info("行为引擎已绑定连接")
 
     def _connection_alive(self) -> bool:
         sink = self._sink
