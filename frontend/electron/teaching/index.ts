@@ -27,7 +27,15 @@ import {
   type TeachingMirrorEvent,
   type TeachingStatePayload
 } from '../ipc/channels'
-import { expandedBounds, foldedBounds, offscreenRight, podiumPoint } from './geometry'
+import {
+  BOARD_MIN_WIDTH,
+  PODIUM_PET_SIZE,
+  expandedBounds,
+  foldedBounds,
+  offscreenRight,
+  podiumPoint
+} from './geometry'
+import { runRelocateAnimation } from '../fx'
 import type { Rect } from '../window'
 
 const isDev = !app.isPackaged
@@ -58,6 +66,8 @@ let boardReady = false
 let pendingInbox: TeachingBoardInbox[] = []
 /** 状态机当前态 */
 let mode: TeachingMode = 'normal'
+/** 黑板宽度记忆（用户拖过黑板左缘；null = 未拖过 → 用默认比例；enter/unfold/重建统一经 currentExpandedBounds，会话级有效） */
+let boardWidthOverride: number | null = null
 /** 操作序列号：每次 enter/exit/fold/unfold 自增；动画后用它判断本操作是否仍有效 */
 let opSeq = 0
 /** 本次教学会话内的黑板重建计数（enter 时清零） */
@@ -112,6 +122,28 @@ function boardWorkArea(): Rect {
   return petWorkArea()
 }
 
+/** 展开态当前目标矩形（含用户拖过的宽度记忆；enter/unfold/重建三处统一入口） */
+function currentExpandedBounds(wa: Rect): Rect {
+  return expandedBounds(wa, boardWidthOverride ?? undefined)
+}
+
+/**
+ * 兔子滑步到讲台位（黑板左下角外侧，geometry.podiumPoint）——**主进程 relocate（forceGlide）**：
+ * 不走渲染侧 moveTo（其工作区夹取会让"窗底允许越界"的讲台位停在半路——2026-10-16 真机故障
+ * 修复："兔子没有贴到黑板左下角"）；forceGlide 跳过魔法流程（去讲课，不搞"被魔法球捕获"）。
+ * enter / unfold 共用；宠物不可用/隐藏时 relocate 内部自动静默处理。
+ */
+function glidePetToPodium(boardRect: Rect): void {
+  const pet = petWin
+  if (!pet || pet.isDestroyed()) return
+  const p = podiumPoint(boardRect)
+  void runRelocateAnimation(
+    pet,
+    { x: p.x, y: p.y, width: PODIUM_PET_SIZE, height: PODIUM_PET_SIZE },
+    { forceGlide: true }
+  )
+}
+
 // ------------------------------------------------------------------ 状态广播 / 收件箱
 
 /**
@@ -125,7 +157,10 @@ function buildPayload(reason: string): TeachingStatePayload {
     folded: mode === 'folded',
     reason
   }
-  if (mode === 'expanded') payload.podium = podiumPoint(petWorkArea())
+  if (mode === 'expanded' && boardWin && !boardWin.isDestroyed()) {
+    // 讲台位 = 黑板窗左下角外侧（2026-10-16 定稿）；黑板不可用时不发（渲染侧"无 podium 不走位"）
+    payload.podium = podiumPoint(boardWin.getBounds())
+  }
   return payload
 }
 
@@ -347,7 +382,7 @@ function handleBoardFailure(reason: string): void {
   destroyBoardWindow()
   pendingInbox = kept
   const wa = petWorkArea()
-  const target = mode === 'folded' ? foldedBounds(wa) : expandedBounds(wa)
+  const target = mode === 'folded' ? foldedBounds(wa) : currentExpandedBounds(wa)
   const win = createBoardWindow(target)
   boardWin = win
   win.showInactive()
@@ -364,6 +399,14 @@ function ensureBoardWindow(wa: Rect, target: Rect): BrowserWindow {
 }
 
 // ------------------------------------------------------------------ 状态机跃迁（enter / fold / unfold / exit）
+
+/**
+ * 查询当前教学模式态（只读；对外归并为 normal/teaching，内部 folded 也属 teaching）。
+ * 供其它主进程域使用（气泡域：菜单"开始教学"⇄"结束"文案与动作分支；不改本域任何逻辑）。
+ */
+export function getTeachingMode(): 'normal' | 'teaching' {
+  return mode === 'normal' ? 'normal' : 'teaching'
+}
 
 /**
  * 进入教学模式：创建黑板（屏外）→ showInactive → 滑入展开态（260ms）→ 广播 state + podium。
@@ -391,7 +434,7 @@ export async function enterTeaching(reason: TeachingEnterReason): Promise<void> 
   console.log(`[teaching] 进入教学模式（reason=${reason}）`)
   try {
     const wa = petWorkArea()
-    const target = expandedBounds(wa)
+    const target = currentExpandedBounds(wa)
     // 防御：极端时序下残留的旧黑板先清掉（正常路径此处应为 null）
     if (boardWin && !boardWin.isDestroyed()) destroyBoardWindow()
     const board = ensureBoardWindow(wa, target)
@@ -399,6 +442,7 @@ export async function enterTeaching(reason: TeachingEnterReason): Promise<void> 
     board.showInactive()
     await animateBoard(target, SLIDE_MS)
     if (seq !== opSeq) return // 滑入期间被 exit 等接管：不广播陈旧状态
+    glidePetToPodium(target) // 黑板到位后兔子滑步就位（主进程 relocate；见 glidePetToPodium）
     broadcastState(reason)
   } catch (err) {
     console.error('[teaching] 进入教学模式失败，回退 normal：', err)
@@ -435,7 +479,9 @@ function unfoldBoard(reason: string): Promise<void> {
   console.log(`[teaching] 黑板恢复展开（reason=${reason}）`)
   sendInbox({ type: 'visibility', action: 'expand' })
   broadcastState(reason)
-  void animateBoard(expandedBounds(boardWorkArea()), TRANSITION_MS)
+  const target = currentExpandedBounds(boardWorkArea())
+  void animateBoard(target, TRANSITION_MS)
+  glidePetToPodium(target) // 恢复展开：兔子滑步回讲台（主进程 relocate；见 glidePetToPodium）
   return Promise.resolve()
 }
 
@@ -517,6 +563,30 @@ export function initTeaching(pet: BrowserWindow): void {
     if (!isPetSender(event.sender)) return
     if (mode !== 'expanded') return
     foldBoardByDrag()
+  })
+
+  // 黑板左缘拖动改宽（黑板面，2026-10-16 用户定稿）：夹取范围 → 黑板 setBounds（**右缘固定**）
+  // → 宠物（展开态在位时）**同帧跟随**（直接 setBounds 跟手，不播动画；渲染侧 geo 自读窗口位置）
+  ipcMain.on(IPC.TEACHING_BOARD_RESIZE, (event, width: unknown) => {
+    if (!isBoardSender(event.sender)) return
+    const w = boardWin
+    if (!w || w.isDestroyed() || mode !== 'expanded') return
+    const target = typeof width === 'number' && Number.isFinite(width) ? width : 0
+    const cur = w.getBounds()
+    const right = cur.x + cur.width // 右缘固定（拖动中恒等）
+    const wa = petWorkArea()
+    const maxW = Math.max(BOARD_MIN_WIDTH, right - wa.x - 10) // 左缘至少留 10px 在工作区内
+    const newW = Math.round(Math.min(Math.max(target, BOARD_MIN_WIDTH), maxW))
+    if (newW === cur.width) return
+    boardWidthOverride = newW // 宽度记忆（下次进教学沿用）
+    const next = { x: right - newW, y: cur.y, width: newW, height: cur.height }
+    w.setBounds(next)
+    const pet = petWin
+    if (pet && !pet.isDestroyed() && pet.isVisible()) {
+      const p = podiumPoint(next)
+      const pb = pet.getBounds()
+      pet.setBounds({ x: p.x, y: p.y, width: pb.width, height: pb.height })
+    }
   })
 
   ipcMain.handle(IPC.TEACHING_GET_STATE, () => buildPayload('query'))

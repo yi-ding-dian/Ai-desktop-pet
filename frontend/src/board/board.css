@@ -557,3 +557,42 @@ body,
 [data-theme='light'] .md-body .hljs-strong {
   font-weight: 600;
 }
+
+/* ---------------------------------------------------------------- 左缘拖动热区（改宽度，2026-10-16） */
+
+/*
+ * 黑板左缘 10px 全高热区：cursor 变 w-resize 提示可拖；hover 时淡入一条细高亮条
+ * （灵动不生硬——不常显、鼠标靠近才浮现）。仅展开态渲染（折叠态角标视图不含本元素）。
+ * 拖动跟手由主进程完成（右缘固定 + 宠物同帧跟随），本元素只管"起手"。
+ */
+.board-resize-handle {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: w-resize;
+  z-index: 50;
+  /* 圆角内收：板体圆角 20——热区顶部/底部略收避免盖住圆角外区域 */
+  border-radius: 20px 0 0 20px;
+  user-select: none;
+  touch-action: none;
+}
+
+.board-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 1px;
+  top: 18px;
+  bottom: 18px;
+  width: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ui-fg) 32%, transparent);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+}
+
+.board-resize-handle:hover::after {
+  opacity: 1;
+}

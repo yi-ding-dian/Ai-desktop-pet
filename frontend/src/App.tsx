@@ -219,10 +219,9 @@ export default function App(): ReactElement {
         cancelTeachingWalk('退出教学模式')
         return
       }
-      // 进入与折叠恢复（reason='unfold'）走同一判定：展开态 + 有讲台位 → 回讲台（>30px 才走）
-      if (!state.folded && state.podium) {
-        void walkToTeachingPodium(state.podium)
-      }
+      // 讲台入位改由**主进程 relocate（forceGlide 滑步）**实现（见 teaching 域 glidePetToPodium，
+      // 2026-10-16）：原渲染侧 walkTo 会因 moveTo 的工作区夹取让兔子停在半路（讲台位窗底允许越界）。
+      // podium 字段保留（兼容旧版本渲染侧）。
     })
     const offBubbles = subscribeTeachingBubbles(setTeachingBubbles)
     return () => {
@@ -240,6 +239,16 @@ export default function App(): ReactElement {
       offSub()
       offSetup()
     }
+  }, [])
+
+  // ---- 气泡系统：清空聊天占位（宠物窗口右键菜单 → 清空确认气泡【清空】→ 主进程发出本事件） ----
+  // 本任务只留 console 日志占位；清空的后端/前端逻辑归后续任务。
+  // 注：旧 preload 无 chat 段时静默跳过（可选链容错）
+  useEffect(() => {
+    const off = getPetBridge().chat?.onClearRequested?.(() => {
+      console.log('[pet] 收到「清空聊天」请求（占位：清空逻辑归后续任务）')
+    })
+    return () => off?.()
   }, [])
 
   // ---- dev 调试：V 键播放合成测试音（验证"帧→播放→口型→清理"全链路；输入框内不拦截） ----

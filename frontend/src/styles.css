@@ -252,9 +252,15 @@ body,
    可见时必须纳入交互矩形上报（X11 setShape 会裁掉未上报区域）——见 App.tsx rects 计算 */
 .teaching-bubbles {
   position: absolute;
-  top: 4px;
-  left: 50%;
-  transform: translateX(-50%);
+  /* 底边锚定（2026-10-16 用户定稿）：列表**下边缘**固定在兔耳上方留空隙（底边窗内 y≈88
+     = 耳顶实测 y≈98 减 ~10px 空隙）——"消息列表不要挡住兔耳朵"；从下往上堆叠，
+     最新一条贴近兔头、更新的在下方（条数变化时贴耳位置不变）。312 = 400（宠物窗高）− 88。
+     改兔子形象/窗口尺寸时同步（TeachingBubbles.tsx 的 BUBBLES_BOTTOM/FIT_COUNT）。 */
+  bottom: 312px;
+  /* 右缘与**兔子图像右缘同线**（窗内 x=335 = 400 − PODIUM_IMG_RIGHT_INSET 65）——
+     列表和兔子一起贴着黑板左缘成一条竖线（2026-10-16 用户定稿"聊天列表右侧贴着白板"）。
+     改 geometry 的 PODIUM_IMG_RIGHT_INSET 时同步本值（right = 65）。 */
+  right: 65px;
   width: 240px;
   display: flex;
   flex-direction: column;
@@ -269,7 +275,10 @@ body,
   line-height: 30px;
   padding: 0 10px;
   border-radius: 8px;
-  background: var(--bubble-bg);
+  /* 半透明底色（2026-10-16 用户定稿"透明度再低点，能隐约看到兔耳朵"）：在 --bubble-bg
+     基础上再叠 58%（净不透明度 ≈ 0.47~0.53）——背景透出下面的兔子/桌面，文字保持清晰
+     （只降背景 alpha，不用容器 opacity——后者会把文字一起淡化）。观感可调（改本比例）。 */
+  background: color-mix(in srgb, var(--bubble-bg) 58%, transparent);
   color: var(--bubble-fg);
   font-size: 12px;
   white-space: nowrap;
@@ -281,7 +290,7 @@ body,
 }
 
 .teaching-bubble:hover {
-  background: var(--bubble-hover);
+  background: color-mix(in srgb, var(--bubble-hover) 78%, transparent);
 }
 
 /* "+N" 小徽标：超过 4 条时提示省略的旧问题数 */
@@ -289,7 +298,8 @@ body,
   align-self: center;
   padding: 1px 8px;
   border-radius: 9px;
-  background: var(--bubble-more-bg);
+  /* 与 .teaching-bubble 同款半透明处理（2026-10-16） */
+  background: color-mix(in srgb, var(--bubble-more-bg) 58%, transparent);
   color: var(--bubble-more-fg);
   font-size: 11px;
   line-height: 16px;
