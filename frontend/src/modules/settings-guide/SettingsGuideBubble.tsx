@@ -1,10 +1,14 @@
 /**
- * 向导萌语气泡（§7.6.6）：设置窗打开期间显示在**宠物右眼右上方**的萌语小气泡。
+ * 向导萌语气泡（§7.6.6）：设置窗打开期间显示在**宠物身体右侧**的萌语小气泡。
  *
- * 位置（窗口坐标；宠物窗口 400×400，宠物形象容器 208×208 居中、top=34）：
- * 右眼由 glb-model 脸部标定锚点（face/config.ts：eyeR = 脸坐标 x+0.1156，1 世界单位 ≈ 176px
- * @208 容器）换算 ≈ 窗口 (220, 134)；气泡落其右上方（left 226 / top 54，底缘 ~102），
- * 左下角尾巴指向宠物、不遮脸。**改宠物形象/容器尺寸时同步微调 settings-guide.css 的定位值。**
+ * 位置（窗口坐标；宠物窗口 400×400）：向导姿态下宠物"扒"在设置窗底沿（头在窗内、
+ * 身垂窗外）——气泡锚定**身体右侧**（窗口 (292, 268) 一带），屏幕坐标落在设置窗
+ * 底沿之外——**物理上不遮挡设置窗内容**。
+ * （踩坑备忘：v1 锚"右眼右上方"，向导姿态下恰压在设置窗内容区上盖字，用户实反馈
+ *  后改到身体侧；改宠物形象/窗口尺寸时同步微调 settings-guide.css 的定位值。）
+ *
+ * 显示节奏：每次打开设置出现，HOLD_MS 后淡出、FADE_MS 后从 DOM 移除
+ * （"它嘱咐完就去忙了"；移除后形状上报自然不含气泡区）。
  *
  * 形状上报（踩坑备忘，同 TeachingBubbles）：X11 setShape 会同时裁剪可见区域——
  * 气泡可见时其容器必须并入 App 的 interactive rects 上报，否则被裁掉。
@@ -20,33 +24,46 @@ interface SettingsGuideBubbleProps {
   containerRef?: RefObject<HTMLDivElement>
 }
 
-/** 萌语池（随机取一条；语气 = "在配置我"的应景语境） */
-const GUIDE_LINES: readonly string[] = [
-  '选择你的设置，保存好哦~',
-  '调好我就更懂你啦',
-  '慢慢改，我等你~',
-  '设置好了，我会记在心里~'
-]
+/** 萌语（用户定稿文案，固定一句——不再随机） */
+const GUIDE_LINE = '改变你的设置，记得保存哦~'
 
-function pickLine(): string {
-  return GUIDE_LINES[Math.floor(Math.random() * GUIDE_LINES.length)] ?? GUIDE_LINES[0]
-}
+/** 显示时长（ms）：显示这么久后开始淡出 */
+const HOLD_MS = 7000
+/** 淡出时长（ms）：与 css 的 transition 时长一致 */
+const FADE_MS = 600
 
 export default function SettingsGuideBubble({
   visible,
   containerRef
 }: SettingsGuideBubbleProps): ReactElement | null {
-  // 初始取池首条：首帧即有内容（effect 晚一拍，避免"先空后填"的闪烁）
-  const [line, setLine] = useState<string>(GUIDE_LINES[0])
-  // 每次打开（false → true）重新随机一条
+  const [fading, setFading] = useState(false)
+  const [gone, setGone] = useState(false)
+
+  // 每次打开（false → true）重新计时：先显示 HOLD_MS，再淡出 FADE_MS 后移除
   useEffect(() => {
-    if (visible) setLine(pickLine())
+    if (!visible) {
+      setFading(false)
+      setGone(false)
+      return
+    }
+    setFading(false)
+    setGone(false)
+    const hold = window.setTimeout(() => setFading(true), HOLD_MS)
+    const remove = window.setTimeout(() => setGone(true), HOLD_MS + FADE_MS)
+    return () => {
+      window.clearTimeout(hold)
+      window.clearTimeout(remove)
+    }
   }, [visible])
 
-  if (!visible) return null
+  if (!visible || gone) return null
   return (
-    <div className="settings-guide-bubble" ref={containerRef} data-testid="settings-guide-bubble">
-      {line}
+    <div
+      className={`settings-guide-bubble${fading ? ' fading' : ''}`}
+      ref={containerRef}
+      data-testid="settings-guide-bubble"
+    >
+      {GUIDE_LINE}
     </div>
   )
 }

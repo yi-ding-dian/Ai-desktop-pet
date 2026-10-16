@@ -1,10 +1,16 @@
 /* ============================================================================
- * 向导萌语气泡（§7.6.6）——宠物右眼右上方的设置向导萌语。
+ * 向导萌语气泡（§7.6.6）——设置向导期间的萌语，锚定**宠物身体右侧**。
  *
- * 定位约定（窗口坐标，见 SettingsGuideBubble.tsx 头注释的换算依据）：
- *  - 右眼 ≈ (220, 134)：气泡 left 226 / top 54（底缘 ~102，在眼睛上方 30px 左右）；
- *  - 尾巴 = 左下角旋转 45° 的小方块（::after），尖角朝左下指向宠物；
- *  - 不遮脸：气泡整体位于右眼右上方（脸部右侧外）。
+ * 定位约定（窗口坐标，见 SettingsGuideBubble.tsx 头注释）：
+ *  - 向导姿态下宠物"扒"在设置窗底沿（头在窗内、身垂窗外），兔子在窗口内实测约占
+ *    x 145–290 / y 75–245（耳 75、脚 ~245，真机截图量取）；
+ *  - 气泡 left 270 / top 128（**用户指定位置**：兔子头右侧、设置窗底部状态栏一带——
+ *    与保存按钮同高、不压保存按钮与左侧状态文字；横条式一行气泡 max-width 164）；
+ *  - 【修正记录】v1 top=268 按错误的"身体 y 200–345"估算 → 掉到兔子脚下（用户实反馈）；
+ *    按实测 75–245 修正为 165（身体侧）→ 用户再指定"要显示在头右侧横条位"（红框实拍）
+ *    → 定稿 270/128 横条位；
+ *  - 尾巴 = 左下角旋转 45° 的小方块（::after），尖角朝左下指向兔子头；
+ *  - 淡出：HOLD_MS 后加 .fading（opacity → 0，见 SettingsGuideBubble.tsx 节奏常量）。
  * 改宠物形象 / 容器尺寸 / 相机时，同步微调这里的 left/top。
  *
  * 观感跟随主题：底色/文字用 --bubble-bg/--bubble-fg（§7.6.4 变量体系，
@@ -13,10 +19,10 @@
 
 .settings-guide-bubble {
   position: absolute;
-  left: 226px;
-  top: 54px;
-  max-width: 154px;
-  padding: 7px 11px;
+  left: 270px;
+  top: 104px;
+  max-width: 164px;
+  padding: 7px 10px;
   border-radius: 11px 11px 11px 5px; /* 左下角收窄，衔接尾巴 */
   background: var(--bubble-bg);
   color: var(--bubble-fg);
@@ -28,6 +34,13 @@
   z-index: 12;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
   animation: guide-bubble-in 0.22s ease-out;
+  /* 淡出用（时长与 SettingsGuideBubble 的 FADE_MS 一致） */
+  transition: opacity 0.6s ease;
+}
+
+/* 到点淡出（定时器加类；随后组件从 DOM 移除） */
+.settings-guide-bubble.fading {
+  opacity: 0;
 }
 
 /* 尾巴：左下角小菱形（旋转 45° 的方块），尖角指向宠物（左下方向） */
