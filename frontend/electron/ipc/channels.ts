@@ -45,6 +45,8 @@ export const IPC = {
   TEACHING_REQUEST_UNFOLD: 'teaching:request-unfold',
   /** 教学模式：黑板渲染就绪（主进程收到后下发首批数据） */
   TEACHING_READY: 'teaching:ready',
+  /** 教学模式：黑板左缘拖动改宽（payload: number 目标宽度px；主进程夹取范围 → 黑板 setBounds（右缘固定）+ 宠物同帧跟随；仅展开态有效） */
+  TEACHING_BOARD_RESIZE: 'teaching:board-resize',
   /** 教学模式：查询状态（invoke → TeachingStatePayload） */
   TEACHING_GET_STATE: 'teaching:get-state',
   /** 空气让路（§5.1 增补）：渲染侧回报光标处命中判定（payload: {solid: boolean}；false=空气 → 主进程输入让路） */
@@ -56,7 +58,9 @@ export const IPC = {
   /** 设置窗口：保存成功上报（设置面 → 主；主进程据此触发宠物向导飞回原位） */
   SETTINGS_SAVED: 'settings:saved',
   /** 自绘托盘菜单：菜单项动作（菜单窗 → 主；payload: TrayMenuAction，执行后主进程收起菜单） */
-  TRAY_MENU_ACTION: 'tray-menu:action'
+  TRAY_MENU_ACTION: 'tray-menu:action',
+  /** 气泡系统：请求弹出气泡（payload: BubbleRequest；宠物窗右键 = 'menu' 菜单；主进程定位+防出屏后弹出气泡窗） */
+  BUBBLE_REQUEST_OPEN: 'bubble:request-open'
 } as const
 
 /** 通道名：主 → 渲染（webContents.send 广播） */
@@ -83,6 +87,8 @@ export const IPC_EVENTS = {
   SETTINGS_VISIBILITY: 'settings:visibility',
   /** 自绘托盘菜单：初始化载荷（payload: {petVisible: boolean}；菜单窗每次弹出前下发，驱动「显示/隐藏宠物」文案） */
   TRAY_MENU_INIT: 'tray-menu:init',
+  /** 气泡系统：请求清空聊天（只发宠物窗口；气泡确认【清空】后主进程发出——chat 域收到后执行清空，本期只留占位） */
+  CHAT_CLEAR_REQUESTED: 'chat:clear-requested',
   /** 空气让路：光标窗口内坐标推送（payload: {x,y} | null（null=光标不在窗口内）；仅让路态轮询推送——渲染侧据此判定是否恢复接管） */
   PET_POINTER_POS: 'pet:pointer-pos'
 } as const
@@ -117,6 +123,60 @@ export interface FxPetReactionPayload {
   /** captured = 被魔法球抓住（隐藏动画）；released = 被放回原位（显示动画） */
   kind: 'captured' | 'released'
 }
+
+// ------------------------------------------------------------------ 气泡系统（气泡窗域）
+
+/**
+ * 通道名：气泡系统（主进程 bubble 域 ↔ 气泡窗 bubble.html；请求入口在宠物面）。
+ * 分工：主进程为指挥（定位/防出屏/两态/动作分发），气泡窗只负责"画"与本地动画
+ * （入场"手来手回"在窗内播，播毕经 CLOSED 回报，主进程再 hide——照 IPC_FX 先例）。
+ */
+export const IPC_BUBBLE = {
+  /** 气泡窗 → 主：渲染就绪（React 挂载完成，可接收内容；窗口重建后复位重报） */
+  READY: 'bubble:ready',
+  /** 气泡窗 → 主：内容尺寸上报（payload: {width,height}；主进程据此 setBounds 动态调窗 + 防出屏重定位） */
+  REPORT_SIZE: 'bubble:report-size',
+  /** 气泡窗 → 主：用户动作（payload: string，项 id / 确认取消；主进程按当前内容白名单校验后分发执行） */
+  ACTION: 'bubble:action',
+  /** 气泡窗 → 主：退场动画播毕（窗口可 hide；主进程隐藏并复位——用户点击/失焦收起都走"先播后报"） */
+  CLOSED: 'bubble:closed',
+  /** 主 → 气泡窗：打开/换内容（payload: BubbleOpenPayload；每次下发重播入场动画） */
+  OPEN: 'bubble:open',
+  /** 主 → 气泡窗：请求收起（渲染侧播退场动画后回报 CLOSED；主进程有超时兜底强制 hide） */
+  REQUEST_CLOSE: 'bubble:request-close',
+  /** 主 → 气泡窗：尾巴朝向更新（payload: BubbleTail；尺寸上报引发翻向时下发，仅换样式不重播动画） */
+  SET_TAIL: 'bubble:set-tail'
+} as const
+
+/** 尾巴朝向：down = 尾巴在气泡左下角（气泡悬于锚点上方，指向下方的宠物）；up = 翻向（气泡在锚点下方） */
+export type BubbleTail = 'down' | 'up'
+
+/** 运动预设：hand = 手来手回（小光点从爪子方向飞入展开 / 退场收回）；none = 直接显隐（预留） */
+export type BubbleMotion = { enter: 'hand' | 'none'; exit: 'hand' | 'none' }
+
+/** 气泡形态预设（text 给说话气泡预留，本期不落地） */
+export type BubbleVariant = 'menu' | 'confirm' | 'text'
+
+/** 菜单项载荷（icon = shared/icons 的图标名——'teaching' | 'settings' | 'broom' | 'sleep'；未知名渲染为无图标） */
+export interface BubbleMenuItemPayload {
+  id: string
+  label: string
+  icon?: string
+}
+
+/**
+ * 气泡打开载荷（主 → 气泡窗）。
+ * session：弹出会话序号（主进程递增）——主进程在 show 后延迟补发同载荷一次（防 React 订阅前丢首帧），
+ * 渲染侧按 session 去重（重复只认不重播动画）。tail 由主进程定位计算给出（防出屏翻向）。
+ */
+export type BubbleOpenPayload = { session: number; tail: BubbleTail; motion: BubbleMotion } & (
+  | { variant: 'menu'; items: BubbleMenuItemPayload[] }
+  | { variant: 'confirm'; message: string; confirmLabel: string; cancelLabel: string }
+  | { variant: 'text'; message: string }
+)
+
+/** 气泡请求（渲染面 → 主）：本期只有宠物窗右键菜单一种入口 */
+export type BubbleRequest = { kind: 'menu' }
 
 // ------------------------------------------------------------------ 教学模式（P5，设计文档 §7.5）
 
@@ -281,6 +341,8 @@ export interface PetBridgeApi {
     notifyDragStart(): void
     /** 黑板面：输入条发送（主进程路由给宠物窗口执行 WS 发送） */
     requestSend(text: string): void
+    /** 黑板面：左缘拖动改宽（拖动中高频上报目标宽度；主进程夹取范围、右缘固定、宠物同帧跟随） */
+    resizeBoard(width: number): void
     /** 宠物面：订阅"黑板输入条发送请求"（黑板打字 → 主进程路由 → 宠物面执行 WS 发送）；返回取消订阅函数 */
     onSendRequest(cb: (payload: { text: string }) => void): () => void
     /** 黑板面：角标点击请求恢复展开 */
@@ -310,6 +372,34 @@ export interface PetBridgeApi {
     action(a: TrayMenuAction): void
     /** 菜单窗：订阅每次弹出前的初始化载荷（{petVisible}——驱动「显示/隐藏宠物」文案）；返回取消订阅函数 */
     onInit(cb: (payload: { petVisible: boolean }) => void): () => void
+  }
+  /**
+   * 气泡系统（独立透明气泡窗）：
+   *  - 宠物面：requestOpen 请求弹出（右键菜单等入口；定位/防出屏/两态全在主进程）；
+   *  - 气泡面（bubble.html）：ready/reportSize/action/notifyClosed + onOpen/onRequestClose/onSetTail。
+   */
+  bubble: {
+    /** 宠物面：请求弹出气泡（主进程定位+防出屏（窗随内容动）+防重窗；重复请求收敛为刷新） */
+    requestOpen(request: BubbleRequest): void
+    /** 气泡面：渲染就绪（React 挂载完成；主进程收到后补发内容，防订阅前丢首帧） */
+    ready(): void
+    /** 气泡面：上报内容尺寸（ResizeObserver 驱动；主进程据此 setBounds 动态调窗） */
+    reportSize(size: { width: number; height: number }): void
+    /** 气泡面：用户动作（项 id / 确认取消；主进程按当前内容校验后分发） */
+    action(id: string): void
+    /** 气泡面：退场动画播毕（主进程隐藏窗口并复位） */
+    notifyClosed(): void
+    /** 气泡面：订阅打开/换内容载荷（每次下发重播入场）；返回取消订阅函数 */
+    onOpen(cb: (payload: BubbleOpenPayload) => void): () => void
+    /** 气泡面：订阅收起请求（渲染侧播退场动画后 notifyClosed）；返回取消订阅函数 */
+    onRequestClose(cb: () => void): () => void
+    /** 气泡面：订阅尾巴朝向更新（防出屏翻向；仅换样式）；返回取消订阅函数 */
+    onSetTail(cb: (tail: BubbleTail) => void): () => void
+  }
+  /** 对话域（chat） */
+  chat: {
+    /** 宠物面：订阅"请求清空聊天"（气泡确认【清空】后主进程发出；清空逻辑归后续任务，本期占位）；返回取消订阅函数 */
+    onClearRequested(cb: () => void): () => void
   }
   /** 后端子进程（设计文档 §5.2）：状态订阅 + 快照查询；渲染进程不直接管理进程 */
   backend: {

@@ -1,0 +1,284 @@
+/* ============================================================================
+ * 气泡窗样式（bubble 域）——独立入口 bubble.html。
+ *
+ * 窗口 = 气泡 + 少量留白（frameless + 透明；尺寸/定位/收起全归主进程）。本域只负责"画"：
+ *  - 留白常量（上 12 / 右 16 / 下 12 / 左 32）与 PetBubble.tsx 的 PAD 常量、
+ *    electron/bubble/geometry.ts 的 TAIL_INSET_X/Y 三方对齐——调留白时三处同步；
+ *  - 尾巴 = 旋转 45° 的小方块（::after，settings-guide.css 手法）：tail-down 在左下角
+ *    （指向下方的宠物）、tail-up 翻向时在左上角；
+ *  - 主题：@import shared/theme 变量体系——底色/文字用 --bubble-bg/--bubble-fg（与向导/
+ *    教学头顶气泡同族观感、独立类名互不牵连）；光点用 --ui-accent 家族（跟随主题强调色）。
+ *
+ * 动效分工：气泡弹性展开/收拢 = CSS 关键帧（motion-hand 带 130ms 延迟衔接光点到达、
+ * 210ms 回弹曲线；motion-none 直接淡入）；光点弧线飞行需坐标计算，由 PetBubble.tsx 的
+ * rAF 驱动（CSS 表达不了）。
+ * ========================================================================= */
+
+@import '../shared/theme/theme.css';
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+.bubble-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  font-family: system-ui, 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ---------------------------------------------------------------- 气泡体 */
+
+.pet-bubble {
+  position: absolute;
+  left: 32px; /* PAD.left：尾尖水平内缩 = 32 + 12 + 4（见文件头三方对齐） */
+  max-width: 264px;
+  box-sizing: border-box;
+  padding: 7px;
+  border-radius: 13px 13px 13px 5px; /* 左下角收窄衔接尾巴（同族观感） */
+  background: var(--bubble-bg);
+  color: var(--bubble-fg);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.22);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* 尾巴（旋转 45° 小方块）：朝向随 tail 翻转 */
+.pet-bubble::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  width: 9px;
+  height: 9px;
+  background: var(--bubble-bg);
+  transform: rotate(45deg);
+  border-radius: 2px;
+}
+
+.tail-down .pet-bubble {
+  bottom: 12px;
+  transform-origin: 16px 100%; /* 缩放锚点 = 尾巴处（"从尾巴绽放/收拢"） */
+}
+
+.tail-up .pet-bubble {
+  top: 12px;
+  border-radius: 5px 13px 13px 13px; /* 翻向：左上角收窄衔接尾巴 */
+  transform-origin: 16px 0;
+}
+
+.tail-down .pet-bubble::after {
+  bottom: -4px;
+}
+
+.tail-up .pet-bubble::after {
+  top: -4px;
+}
+
+/* 入场（手来手回）：光点飞行 140ms 后气泡弹性绽放（延迟 130ms 与到达重叠衔接；
+   回弹曲线让"展开"有生命感）。等待期由 both 关键帧定格在不可见缩放态 */
+.motion-hand .pet-bubble {
+  animation: pet-bubble-pop 210ms cubic-bezier(0.34, 1.56, 0.64, 1) 130ms both;
+}
+
+/* 入场（none 预设）：直接淡入 */
+.motion-none .pet-bubble {
+  animation: pet-bubble-fade-in 140ms ease-out both;
+}
+
+@keyframes pet-bubble-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+  62% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pet-bubble-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 退场（手来手回）：气泡收拢回尾巴处（时长与 PetBubble 的 EXIT_SHRINK_MS 一致）；
+   规则置于入场之后——同特异性下覆盖入场动画。退场中屏蔽点击（防连点重复动作） */
+.pet-bubble.pet-bubble-closing {
+  animation: pet-bubble-shrink 140ms ease-in both;
+  pointer-events: none;
+}
+
+@keyframes pet-bubble-shrink {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.32);
+  }
+}
+
+/* ---------------------------------------------------------------- 光点（手来手回主角） */
+
+.pet-bubble-dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px; /* 以自身中心对齐 translate 坐标 */
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 38% 35%,
+    #ffffff 0%,
+    var(--ui-accent) 58%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  box-shadow: 0 0 9px 2px var(--ui-accent-soft);
+  opacity: 0;
+  transition: opacity 110ms ease-out;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.pet-bubble-dot-on {
+  opacity: 1;
+}
+
+.pet-bubble-dot-off {
+  opacity: 0;
+}
+
+/* ---------------------------------------------------------------- 菜单形态 */
+
+.pet-bubble-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 152px;
+}
+
+.pet-bubble-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 34px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  /* 内容 stagger：气泡绽放期间依次落座（delay 与入场动画衔接；--i 由组件内联设置） */
+  animation: pet-bubble-item-in 190ms ease-out both;
+  animation-delay: calc(150ms + var(--i, 0) * 26ms);
+}
+
+.pet-bubble-item:hover {
+  background: var(--ui-hover);
+}
+
+.pet-bubble-item:active {
+  background: var(--ui-solid-hover);
+}
+
+.pet-bubble-item-icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.pet-bubble-item-label {
+  white-space: nowrap;
+}
+
+@keyframes pet-bubble-item-in {
+  from {
+    opacity: 0;
+    transform: translateX(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------- 确认形态 */
+
+.pet-bubble-confirm {
+  min-width: 196px;
+  padding: 3px 4px 0;
+}
+
+.pet-bubble-confirm .pet-bubble-message {
+  padding: 1px 2px 11px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.pet-bubble-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.pet-bubble-btn {
+  height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--ui-hover);
+  color: var(--bubble-fg);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.pet-bubble-btn:hover {
+  background: var(--ui-solid-hover);
+}
+
+/* 危险动作（清空）：主题危险色 */
+.pet-bubble-btn-danger {
+  background: var(--ui-danger);
+  color: #fff;
+}
+
+.pet-bubble-btn-danger:hover {
+  background: var(--ui-danger);
+  filter: brightness(1.08);
+}
+
+/* ---------------------------------------------------------------- 文本形态（说话气泡预留） */
+
+.pet-bubble-text {
+  padding: 8px 11px;
+}
+
+.pet-bubble-text .pet-bubble-message {
+  max-width: 240px;
+  word-break: break-word;
+}

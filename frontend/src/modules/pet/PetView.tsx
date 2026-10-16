@@ -193,5 +193,23 @@ export default function PetView({ client }: PetViewProps): ReactElement {
     }
   }, [])
 
-  return <div ref={hostRef} className="pet-view" data-testid="pet-view" />
+  // ---- ③b 右键 → 气泡菜单（气泡系统第一步）：请求主进程弹出气泡窗（定位/防出屏/收起都在主进程） ----
+  const requestBubbleMenu = (): void => {
+    // 旧 preload 无 bubble 段时静默跳过（可选链容错，先例：settings?.open?.()）
+    getPetBridge().bubble?.requestOpen?.({ kind: 'menu' })
+    devLog('右键 → 请求弹气泡菜单')
+  }
+
+  return (
+    <div
+      ref={hostRef}
+      className="pet-view"
+      data-testid="pet-view"
+      onContextMenu={(e) => {
+        // 阻断系统右键菜单；右键"空气"时窗口处于穿透态天然收不到，无需额外判定
+        e.preventDefault()
+        requestBubbleMenu()
+      }}
+    />
+  )
 }

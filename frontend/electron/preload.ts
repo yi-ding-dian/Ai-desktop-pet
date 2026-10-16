@@ -5,11 +5,15 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC,
+  IPC_BUBBLE,
   IPC_EVENTS,
   IPC_FX,
   type BackendReadyPayload,
   type BackendSnapshot,
   type BackendStatusPayload,
+  type BubbleOpenPayload,
+  type BubbleRequest,
+  type BubbleTail,
   type FxCommand,
   type FxPetReactionPayload,
   type PetBridgeApi,
@@ -172,6 +176,10 @@ const api: PetBridgeApi = {
       ipcRenderer.send(IPC.TEACHING_REQUEST_SEND, text)
     },
 
+    resizeBoard(width: number): void {
+      ipcRenderer.send(IPC.TEACHING_BOARD_RESIZE, width)
+    },
+
     onSendRequest(cb: (payload: { text: string }) => void): () => void {
       const listener = (_event: Electron.IpcRendererEvent, payload: { text: string }): void =>
         cb(payload)
@@ -234,6 +242,68 @@ const api: PetBridgeApi = {
       ipcRenderer.on(IPC_EVENTS.TRAY_MENU_INIT, listener)
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.TRAY_MENU_INIT, listener)
+      }
+    }
+  },
+
+  /**
+   * 气泡系统：宠物面 requestOpen（请求弹出）+ 气泡面整套协议（ready/尺寸上报/动作/收起回报 + 订阅）。
+   * 同一份 preload 注入到所有渲染窗——各方法在"非本面"窗口调用为无害空操作（主进程按 sender 过滤）。
+   */
+  bubble: {
+    requestOpen(request: BubbleRequest): void {
+      ipcRenderer.send(IPC.BUBBLE_REQUEST_OPEN, request)
+    },
+
+    ready(): void {
+      ipcRenderer.send(IPC_BUBBLE.READY)
+    },
+
+    reportSize(size: { width: number; height: number }): void {
+      ipcRenderer.send(IPC_BUBBLE.REPORT_SIZE, size)
+    },
+
+    action(id: string): void {
+      ipcRenderer.send(IPC_BUBBLE.ACTION, id)
+    },
+
+    notifyClosed(): void {
+      ipcRenderer.send(IPC_BUBBLE.CLOSED)
+    },
+
+    onOpen(cb: (payload: BubbleOpenPayload) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, payload: BubbleOpenPayload): void =>
+        cb(payload)
+      ipcRenderer.on(IPC_BUBBLE.OPEN, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_BUBBLE.OPEN, listener)
+      }
+    },
+
+    onRequestClose(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on(IPC_BUBBLE.REQUEST_CLOSE, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_BUBBLE.REQUEST_CLOSE, listener)
+      }
+    },
+
+    onSetTail(cb: (tail: BubbleTail) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, tail: BubbleTail): void => cb(tail)
+      ipcRenderer.on(IPC_BUBBLE.SET_TAIL, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_BUBBLE.SET_TAIL, listener)
+      }
+    }
+  },
+
+  /** 对话域：宠物面订阅"请求清空聊天"（气泡【清空】确认后主进程发出） */
+  chat: {
+    onClearRequested(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on(IPC_EVENTS.CHAT_CLEAR_REQUESTED, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.CHAT_CLEAR_REQUESTED, listener)
       }
     }
   },

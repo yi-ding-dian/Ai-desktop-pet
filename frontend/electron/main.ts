@@ -17,6 +17,7 @@ import { runHideAnimation, runShowAnimation, destroyFx } from './fx'
 import { runAnchorSelfTest } from './fx/anchor'
 import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
 import { destroySettings, initSettings } from './settings'
+import { destroyBubble, initBubble } from './bubble'
 import type { PlatformWindow } from './window'
 
 /** 宠物窗口尺寸（逻辑基准 400x400；渲染侧按 100vw/100vh 自适应） */
@@ -200,6 +201,10 @@ if (!app.requestSingleInstanceLock()) {
     // 打开设置时宠物 relocate 到设置窗下沿、保存/关闭回位——需要宠物窗引用，同 teaching 域）；
     // 设置窗口本身懒创建（首次打开时建立，单例）
     initSettings(petWin)
+    // 气泡窗域（气泡系统第一步）：注册 IPC（宠物窗右键 → BUBBLE_REQUEST_OPEN；气泡窗
+    // ready/report-size/action/closed → 定位/调窗/动作分发）——气泡窗懒创建（首次弹出时建立，
+    // hide 复用；右键重复弹不重窗）
+    initBubble(petWin)
     // 后端子进程与窗口并行启动（design §3.4）；就绪后经 IPC 下发 port/token
     backendManager.start()
 
@@ -242,6 +247,8 @@ if (!app.requestSingleInstanceLock()) {
     destroyTeaching()
     // 设置窗口（若存在）直接销毁并清引用
     destroySettings()
+    // 气泡窗（若存在）直接销毁（退场动画不等待——正常退出不播动画）
+    destroyBubble()
     // 自绘托盘菜单窗（若存在）直接销毁
     destroyTrayMenu()
     // 空气让路状态机：停定时器/解绑窗口事件 + 移除 IPC 监听

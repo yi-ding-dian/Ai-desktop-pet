@@ -22,8 +22,8 @@ export default defineConfig({
     }
   },
   // 渲染进程：index.html（宠物窗口）/ fx.html（魔法球动画窗）/ board.html（教学模式黑板）/
-  // settings.html（设置窗口）/ tray-menu.html（自绘托盘菜单）五个入口
-  //（对齐设计文档 §2.2、§7.5.2、§7.6.1 与 §7.6.4 v2）
+  // settings.html（设置窗口）/ tray-menu.html（自绘托盘菜单）/ bubble.html（气泡窗）六个入口
+  //（对齐设计文档 §2.2、§7.5.2、§7.6.1、§7.6.4 v2 与气泡系统）
   renderer: {
     root: '.',
     plugins: [react()],
@@ -38,7 +38,9 @@ export default defineConfig({
           // 第四渲染入口：设置窗口（settings 域设置页，设计文档 §7.6.1）
           settings: resolve(__dirname, 'settings.html'),
           // 第五渲染入口：自绘托盘菜单（tray-menu 域菜单窗的页面，设计文档 §7.6.4 v2）
-          'tray-menu': resolve(__dirname, 'tray-menu.html')
+          'tray-menu': resolve(__dirname, 'tray-menu.html'),
+          // 第六渲染入口：气泡窗（bubble 域；用户定稿"气泡系统"第一步——右键菜单/清空确认/说话气泡）
+          bubble: resolve(__dirname, 'bubble.html')
         }
       }
     }
