@@ -11,7 +11,8 @@
  *  - 菜单态（interactive=true；右键菜单/清空确认）：窗口可聚焦——弹出时 show+focus（像原生右键菜单）；
  *    点击别处 → blur → 自动收起（标准弹窗行为）；
  *  - 纯展示态（interactive=false；说话气泡）：不聚焦（showInactive）+ 鼠标穿透
- *    （setIgnoreMouseEvents(true)），不注册 blur 收起。
+ *    （setIgnoreMouseEvents(true)），不注册 blur 收起。说话气泡虽属"纯展示"，但其上的
+ *    悬浮工具条要能点到，故显示时接鼠标、再由窗口形状把**非气泡区域**放开（见 applyBubbleShape）。
  *
  * 定位（防出屏）：锚点 = 宠物窗位置 + 兔子头部固定偏移（HEAD_ANCHOR_OFFSET）；摆放纯函数见
  * geometry.ts（优先后上 tail=down，放不下翻向 tail=up，横向夹进工作区）。尺寸上报引发翻向
@@ -30,8 +31,10 @@
  *  - 展开（action 'expand'）→ **带聊天记录进入教学**（enterTeaching('bubble')；黑板滑出+兔子讲台位，
  *    记录预填由宠物面在 state.reason==='bubble' 时自行 seed——经既有镜像通道）；
  *  - 被打断（immediate）立即收；新回复到来原地替换（同窗复用不重播入场）。
- * 悬浮交互需要气泡窗"接鼠标"：Linux 用窗口形状（REPORT_SHAPE 上报 → win.setShape 裁到"气泡+条区"，
- * 其余透明区域保持完全穿透——宠物窗"空气让路"同款机制）；非 Linux 忽略（整窗可交互）。
+ * 悬浮交互需要气泡窗"接鼠标"：用窗口形状（REPORT_SHAPE 上报 → win.setShape 裁到"气泡+条区"，
+ * 其余透明区域保持完全穿透——宠物窗"空气让路"同款机制）。**Windows 同样走这条**：setShape 的
+ * 官方平台标注就是 win32+linux（原先只在 Linux 调用，导致 Windows 上整窗可交互——气泡常驻期间
+ * 那块 370×218 的透明留白会把桌面点击全吃掉）。
  * 宠物移动（走动/拖拽）时气泡跟随重摆（petWin 'move' + 16ms 节流，不播动画）；不跟随仅限菜单态。
  * 与菜单互斥：弹菜单前说话气泡先硬收（同窗不能同时服务两种内容）；**菜单关闭后自动恢复**
  * （内容不丢——"不消失"闭环）；菜单里点了教学/展开/设置/隐藏则在 menuSuppressRestore 标记下不恢复。
@@ -48,6 +51,7 @@
  */
 import { app, BrowserWindow, ipcMain, screen, type WebContents } from 'electron'
 import { join } from 'node:path'
+import { linuxOnlyWindowOptions } from '../platform'
 import {
   IPC,
   IPC_BUBBLE,
@@ -217,11 +221,15 @@ function isSpeechShowing(): boolean {
 }
 
 /**
- * 应用渲染侧上报的交互形状（Linux setShape：输入区 = 上报矩形，形状外完全穿透）。
- * 未收到上报（旧渲染/浏览器调试）或非 Linux 时保持全窗默认——菜单等场景无损。
+ * 应用渲染侧上报的交互形状（setShape：输入区 = 上报矩形，形状外完全穿透）。
+ *
+ * **Windows 同样走这条**（2026-10-16 移植修正）：`setShape` 在 Electron 的官方平台标注是
+ * `@platform win32,linux`（见 electron.d.ts 的 BrowserWindow.setShape），原先只在 Linux 调用，
+ * 导致 Windows 上说话气泡（370×218 的窗口，其中大部分是透明留白）**整窗接鼠标**——
+ * 气泡常驻期间这块透明区会把桌面点击全吃掉。两平台统一用形状方案即可。
+ * 未收到上报（旧渲染/浏览器调试）时保持全窗默认——菜单等场景无损。
  */
 function applyBubbleShape(): void {
-  if (process.platform !== 'linux') return
   const win = bubbleWin
   if (!win || win.isDestroyed() || shapeRects.length === 0) return
   try {
@@ -277,7 +285,8 @@ function createBubbleWindow(): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: true,
     // DDE(Dock) 忽略 skipTaskbar——沿用宠物窗实测结论：type:'toolbar' 可让 Dock 不出现窗口格
-    ...(process.platform === 'linux' ? { type: 'toolbar' as const } : {}),
+    // （选项按平台从 electron/platform 取，非 Linux 为空对象）
+    ...linuxOnlyWindowOptions(),
     show: false,
     webPreferences: {
       /**

@@ -21,10 +21,17 @@
 - excludes 掉 pytest/pip/setuptools/tkinter 等运行时无关项，显著减体积。
 """
 import os
+import sys
 from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 # SPECPATH 由 PyInstaller 注入 = 本 spec 所在目录（deploy/）
 PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
+
+# strip：仅 POSIX 有 strip(1)。Windows 上没有该命令，PyInstaller 会对**每个**二进制报一条
+# "Failed to run strip" 警告后继续（构建仍成功，纯噪音+白跑 subprocess），故按平台开关。
+# 代价：Windows 产物保留调试符号、体积略大——这正是 Linux 侧 269MB→59MB 的那一步，
+# Windows 想减体积只能靠 upx（本项目已按"压缩拖慢启动"否决）。
+STRIP = sys.platform != 'win32'
 PROMPTS_DIR = os.path.join(PROJECT_ROOT, 'backend', 'modules', 'llm', 'prompts')
 
 # ---- 数据文件 ----
@@ -85,7 +92,7 @@ exe = EXE(
     name='backend',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,         # strip 收集到的二进制调试符号（实测 uvloop 16MB→1.7MB）
+    strip=STRIP,        # strip 收集到的二进制调试符号（POSIX；实测 uvloop 16MB→1.7MB）
     upx=False,          # 不用 upx：环境未装 + 压缩会拖慢启动
     console=True,       # 必须 console：Electron 靠 stdout 的 PET_READY 行握手
     disable_windowed_traceback=False,
@@ -98,7 +105,7 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
-    strip=True,
+    strip=STRIP,
     upx=False,
     upx_exclude=[],
     name='backend',

@@ -15,7 +15,10 @@
     "test:bubble-geometry": "esbuild electron/bubble/geometry.test.ts --bundle --platform=node --format=esm --outfile=out/tests/bubble-geometry.test.mjs && node out/tests/bubble-geometry.test.mjs",
     "test:teaching-geometry": "esbuild electron/teaching/geometry.test.ts --bundle --platform=node --format=esm --outfile=out/tests/teaching-geometry.test.mjs && node out/tests/teaching-geometry.test.mjs",
     "dist:linux": "npm run build && electron-builder --linux AppImage",
-    "dist:linux-deb": "npm run build && electron-builder --linux AppImage deb"
+    "dist:linux-deb": "npm run build && electron-builder --linux AppImage deb",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:win-nsis": "npm run build && electron-builder --win nsis",
+    "dist:win-portable": "npm run build && electron-builder --win portable"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.2.0",

@@ -18,6 +18,7 @@ import { runAnchorSelfTest } from './fx/anchor'
 import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
 import { destroySettings, initSettings } from './settings'
 import { destroyBubble, initBubble } from './bubble'
+import { applyWindowsAppIdentity } from './platform'
 import type { PlatformWindow } from './window'
 
 /** 宠物窗口尺寸（逻辑基准 400x400；渲染侧按 100vw/100vh 自适应） */
@@ -151,6 +152,10 @@ if (!app.requestSingleInstanceLock()) {
     const w = pet?.window
     if (w && !w.isDestroyed() && !w.isVisible()) void runShowAnimation(w)
   })
+
+  // Windows 任务栏身份（AppUserModelID）：必须早于任何窗口创建（Linux 上本调用内部直接跳过，
+  // 这里不写平台分支——平台差异一律收敛在 electron/platform/）。
+  applyWindowsAppIdentity(app)
 
   app.whenReady().then(() => {
     // dev/排障：托盘锚点定位自检（PET_ANCHOR_SELFTEST=1 → 抓屏定位；

@@ -44,6 +44,7 @@
  * 平台无关：本模块不 import electron 运行时（仅类型 + 通道常量），依赖经 deps 注入（离线可测）。
  */
 import { IPC_EVENTS } from '../ipc/channels'
+import { isWindows } from '../platform'
 import type { Point, Rect } from './index'
 import type { HitGateCursorSource } from './cursor-source'
 
@@ -159,9 +160,20 @@ export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GAT
   /** 上一次状态切换时刻（null=从未切换） */
   let lastSwitchAt: number | null = null
 
-  /** 应用输入让路开关（forward 显式 false：X11 无效、Windows 下新机制不依赖转发） */
+  /**
+   * 应用输入让路开关。
+   *
+   * forward 取值按平台定（2026-10-16 移植修正）：
+   *  - X11：转发本就无效（DDE 实测 `{forward:true}` 不转发 mousemove），取值无差别 → 保持 false；
+   *  - Windows：**必须 true**。让路态下要把 mousemove 转发给渲染进程，否则渲染侧收不到任何
+   *    指针事件——换用未实现 hitTest 的渲染器（three-d / part-animation）时，空气让路会
+   *    自动退回 App.tsx 的旧悬停逻辑（见 air-pass.ts 的 active 条件），而旧逻辑正是靠转发来的
+   *    mousemove 判定"滑回宠物身上"，转发被关掉就成了**永远收不回输入的穿透态**（宠物再也点不到）。
+   *    与本平台 window/win32.ts 的 setClickThrough 保持同一取值。
+   */
   const applyIgnore = (ignore: boolean): void => {
-    win.setIgnoreMouseEvents(ignore, ignore ? { forward: false } : undefined)
+    const forward = isWindows
+    win.setIgnoreMouseEvents(ignore, ignore ? { forward } : undefined)
   }
 
   const resetYieldedSide = (): void => {

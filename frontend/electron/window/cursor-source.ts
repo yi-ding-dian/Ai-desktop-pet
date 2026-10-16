@@ -12,6 +12,7 @@
  * 坐标空间：xdotool/XQueryPointer 返回的 root 坐标与 Electron 窗口/光标坐标空间一致（实测环境
  * scaleFactor=1 下逐点匹配；Linux 无 screenToDipPoint 运行时 API——实测调用报 not a function，勿用）。
  */
+import { PLATFORM } from '../platform'
 import type { Point } from './index'
 import { createXdotoolCursorSource } from './xdotool-cursor-source'
 
@@ -30,13 +31,20 @@ export interface HitGateCursorSource {
 }
 
 /**
- * screen API 源（通用降级实现）：读 `screen.getCursorScreenPoint()` 缓存值。
- * isLive()=false → hit-gate 对其启用脉冲刷新（丢击窗口在所难免，见 hit-gate 文件头）。
+ * screen API 源：读 `screen.getCursorScreenPoint()`。
+ *
+ * 实时性**随平台而异**（这是 isLive 的取值依据，不是统一常量）：
+ *  - X11：事件驱动缓存（指针在外部窗口时不更新）→ isLive=false，hit-gate 启用脉冲刷新；
+ *  - Windows/macOS：`GetCursorPos` 式实时查询，取到即当前值 → isLive=true，
+ *    **不得**启用脉冲（脉冲会周期性关掉输入让路，白白制造丢击窗口）。
  */
-export function createScreenCursorSource(getCursor: () => Point): HitGateCursorSource {
+export function createScreenCursorSource(
+  getCursor: () => Point,
+  isLive = false
+): HitGateCursorSource {
   return {
     read: () => getCursor(),
-    isLive: () => false,
+    isLive: () => isLive,
     start: () => {},
     stop: () => {}
   }
@@ -76,7 +84,7 @@ export function createDegradableCursorSource(
 export interface ResolveCursorSourceOptions {
   /** screen API 取值函数（降级源用；主进程传 () => screen.getCursorScreenPoint()） */
   screenGetCursor(): Point
-  /** 平台（缺省 process.platform；显式传参便于测试） */
+  /** 平台（缺省取 electron/platform 的 PLATFORM；显式传参便于测试） */
   platform?: NodeJS.Platform
   /** 日志（缺省 console.log） */
   log?(msg: string): void
@@ -84,8 +92,11 @@ export interface ResolveCursorSourceOptions {
 
 /** 平台解析：Linux → xdotool 实时查询（失败自动降级）；其余平台 → screen 源（Windows/macOS 的 getCursorScreenPoint 为实时查询，无此坑） */
 export function resolveCursorSource(opts: ResolveCursorSourceOptions): HitGateCursorSource {
-  const fallback = createScreenCursorSource(opts.screenGetCursor)
-  const platform = opts.platform ?? process.platform
+  const platform = opts.platform ?? PLATFORM
+  // screen 源的实时性**按平台定**（见 createScreenCursorSource 注释）：
+  //  - 非 Linux：本函数返回的就是它本身（Windows/macOS 无 X11 缓存坑）→ isLive=true，无脉冲；
+  //  - Linux：它只是 xdotool 的首选源失败后的降级源 → isLive=false，仍需脉冲刷新 X11 缓存。
+  const fallback = createScreenCursorSource(opts.screenGetCursor, platform !== 'linux')
   if (platform !== 'linux') return fallback
   const log = opts.log ?? ((msg: string) => console.log(msg))
   return createDegradableCursorSource(createXdotoolCursorSource({ log }), fallback, log)

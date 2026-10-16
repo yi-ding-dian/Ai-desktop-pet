@@ -138,8 +138,9 @@ export const IPC_BUBBLE = {
   REPORT_SIZE: 'bubble:report-size',
   /**
    * 气泡窗 → 主：内容交互矩形上报（payload: Rect[]，窗内坐标）——说话气泡要悬浮（出现 展开/✕ 工具条）
-   * 就得接鼠标；Linux 用窗口形状（win.setShape，宠物窗"空气让路"同款）把输入区裁到"气泡 + 工具条区"，
-   * 其余透明区域保持完全穿透（不挡桌面）。非 Linux 平台主进程忽略（整窗可交互）。
+   * 就得接鼠标；用窗口形状（win.setShape，宠物窗"空气让路"同款）把输入区裁到"气泡 + 工具条区"，
+   * 其余透明区域保持完全穿透（不挡桌面）。**Linux 与 Windows 都走这条**（setShape 的平台标注即
+   * win32+linux）；未收到上报时主进程保持整窗默认（旧渲染/浏览器调试下功能仍通，只是透明区挡点击）。
    */
   REPORT_SHAPE: 'bubble:report-shape',
   /** 气泡窗 → 主：用户动作（payload: string，项 id / 确认取消；主进程按当前内容白名单校验后分发执行） */

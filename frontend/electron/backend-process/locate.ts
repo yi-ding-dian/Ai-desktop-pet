@@ -7,6 +7,7 @@
 import { app } from 'electron'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { BACKEND_LAUNCH_NAMES } from '../platform'
 
 /** 后端启动参数（spawn 用） */
 export interface BackendLaunchSpec {
@@ -27,10 +28,8 @@ function devProjectRoot(): string {
 export function locateBackend(): BackendLaunchSpec {
   if (!app.isPackaged) {
     const projectRoot = devProjectRoot()
-    const venvPython =
-      process.platform === 'win32'
-        ? join(projectRoot, 'backend', '.venv', 'Scripts', 'python.exe')
-        : join(projectRoot, 'backend', '.venv', 'bin', 'python')
+    // 解释器路径段按平台取（Windows: Scripts/python.exe，类 Unix: bin/python）——见 electron/platform
+    const venvPython = join(projectRoot, 'backend', '.venv', ...BACKEND_LAUNCH_NAMES.venvPython)
     if (!existsSync(venvPython)) {
       throw new Error(`开发态 Python 解释器不存在：${venvPython}（先创建 backend/.venv）`)
     }
@@ -43,7 +42,7 @@ export function locateBackend(): BackendLaunchSpec {
   }
 
   // 生产态：PyInstaller onedir 产物放在 resources/backend/（设计文档 §8.1，本期待打包后验证）
-  const exeName = process.platform === 'win32' ? 'backend.exe' : 'backend'
+  const exeName = BACKEND_LAUNCH_NAMES.exeName
   const dir = join(process.resourcesPath, 'backend')
   return {
     command: join(dir, exeName),

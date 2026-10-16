@@ -19,6 +19,7 @@
  */
 import { app, BrowserWindow, ipcMain, screen, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
+import { linuxOnlyWindowOptions } from '../platform'
 import {
   IPC,
   IPC_EVENTS,
@@ -278,7 +279,7 @@ function createBoardWindow(initial: Rect): BrowserWindow {
     skipTaskbar: true,
     // DDE(Dock) 忽略 skipTaskbar——沿用宠物窗实测结论：type:'toolbar' 可让 Dock 不出现窗口格
     // （type 是 X11 概念，仅 Linux 设置；Wayland 下静默无效，与宠物窗降级路径一致）
-    ...(process.platform === 'linux' ? { type: 'toolbar' as const } : {}),
+    ...linuxOnlyWindowOptions(),
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),

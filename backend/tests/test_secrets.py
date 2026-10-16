@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,13 @@ from backend.shared import secrets
 ENV_KEY = "env-key-0123456789"
 RING_KEY = "ring-key-0123456789"
 FILE_KEY = "file-key-0123456789"
+
+# 权限位断言仅在 POSIX 成立：Windows 的 os.chmod 只能切"只读"属性，st_mode 恒为 0o666，
+# 没有 0600 这种概念（secrets.py 的 0o600 在 Windows 同样退化成尽力而为，见该文件注释）。
+# 故把"权限位"部分单独成用例并在此跳过，功能部分（落文件/写后可读回）在 Windows 照常跑。
+posix_only = pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows 无 POSIX 权限位（chmod 只切只读属性）"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -106,18 +114,37 @@ def test_set_key_prefers_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not secrets.secret_file_path().exists()  # keyring 成功则不落文件
 
 
-def test_set_key_falls_back_to_600_file(file_only: None) -> None:
+def test_set_key_falls_back_to_file(file_only: None) -> None:
+    """keyring 不可用 → 落文件兜底（功能部分，全平台）。"""
     where = secrets.set_llm_key(FILE_KEY)
     path = secrets.secret_file_path()
 
     assert where == f"file:{path}"
     assert path.exists()
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert json.loads(path.read_text(encoding="utf-8"))["llm_api_key"] == FILE_KEY
     assert secrets.get_llm_key() == FILE_KEY  # 写后可读回
 
 
+@posix_only
+def test_set_key_falls_back_to_600_file(file_only: None) -> None:
+    """落文件兜底时的 0600 权限（POSIX 专有）。"""
+    path = secrets.secret_file_path()
+    secrets.set_llm_key(FILE_KEY)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_rewrite_updates_existing_file(file_only: None) -> None:
+    """已存在的文件可被覆写为新 key（功能部分，全平台）。"""
+    path = secrets.secret_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}", encoding="utf-8")
+    secrets.set_llm_key(FILE_KEY)
+    assert secrets.get_llm_key() == FILE_KEY
+
+
+@posix_only
 def test_file_permission_corrected_on_rewrite(file_only: None) -> None:
+    """历史宽松权限的文件在覆写时被纠正为 0600（POSIX 专有）。"""
     path = secrets.secret_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{}", encoding="utf-8")

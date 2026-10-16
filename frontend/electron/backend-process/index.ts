@@ -75,7 +75,14 @@ export class BackendProcessManager {
           PET_TOKEN: this.token,
           PET_DATA_DIR: app.getPath('userData'),
           // 运行模式标记（后端当前未消费，按设计文档 §3.4 预留）
-          PET_MODE: app.isPackaged ? 'prod' : 'dev'
+          PET_MODE: app.isPackaged ? 'prod' : 'dev',
+          // UTF-8 兜底（Windows）：Python 对**管道** stdout/stderr 默认用 ANSI 代码页（中文系统
+          // = cp936）编码，而本进程的 readline 按 UTF-8 解码 → 中文日志成乱码。
+          // 真正的根治点在 Python 侧（backend/shared/logging.py 的 stderr.reconfigure + main.py
+          // 的握手行字节直写）——因为 PyInstaller 冻结产物**不认** PYTHONUTF8/PYTHONIOENCODING，
+          // 打包后只能靠 Python 自己重配。这两个环境变量只对源码运行生效，留着当第二道保险。
+          PYTHONUTF8: '1',
+          PYTHONIOENCODING: 'utf-8'
         },
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true

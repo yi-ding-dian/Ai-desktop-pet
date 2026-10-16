@@ -41,6 +41,7 @@ import {
 } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { isLinux, linuxOnlyWindowOptions } from '../platform'
 import { IPC, IPC_EVENTS, type TrayMenuAction } from '../ipc/channels'
 import { runHideAnimation, runShowAnimation } from '../fx'
 import { locateTrayAnchor } from '../fx/anchor'
@@ -161,7 +162,8 @@ function createTrayMenuWindow(): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: true,
     // DDE(Dock) 忽略 skipTaskbar——沿用宠物窗实测结论：type:'toolbar' 可让 Dock 不出现窗口格
-    ...(process.platform === 'linux' ? { type: 'toolbar' as const } : {}),
+    // （选项按平台从 electron/platform 取，非 Linux 为空对象）
+    ...linuxOnlyWindowOptions(),
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
@@ -420,7 +422,7 @@ export function createTray(win: BrowserWindow): Tray | null {
 
   // ---- 原生菜单：仅 Linux 保留（DDE 右键直接走 DBusMenu，Electron 收不到 right-click，
   //      自绘菜单无法用右键触发 → 原生菜单作右键兜底；Win/macOS 走 right-click → 自绘）----
-  if (process.platform === 'linux') {
+  if (isLinux) {
     const refreshMenu = (): void => {
       tray.setContextMenu(Menu.buildFromTemplate(buildTemplate()))
     }
@@ -466,7 +468,7 @@ export function createTray(win: BrowserWindow): Tray | null {
   tray.on('click', () => {
     const w = petWin
     if (!w || w.isDestroyed()) return
-    if (process.platform === 'linux') {
+    if (isLinux) {
       const now = Date.now()
       if (now - lastClickAt < DOUBLE_CLICK_MS) {
         lastClickAt = 0
@@ -482,7 +484,7 @@ export function createTray(win: BrowserWindow): Tray | null {
   })
 
   // Win/macOS：right-click 可用 → 右键弹自绘菜单（无原生菜单）
-  if (process.platform !== 'linux') {
+  if (!isLinux) {
     tray.on('right-click', () => {
       console.log('[tray] 右键托盘 → 弹出自绘菜单')
       void openTrayMenu()

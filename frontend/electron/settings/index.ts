@@ -24,6 +24,7 @@
  */
 import { app, BrowserWindow, ipcMain, screen, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
+import { isLinux } from '../platform'
 import { IPC, IPC_EVENTS, type SettingsVisibilityPhase } from '../ipc/channels'
 import { backendManager } from '../backend-process'
 import { runRelocateAnimation } from '../fx'
@@ -272,7 +273,7 @@ function stopHealthWatch(): void {
  * 非 Linux / 不可检测时探针恒为 null，本巡检无害空转（仅一次异步调用开销）。
  */
 function startHealthWatch(win: BrowserWindow): void {
-  if (process.platform !== 'linux') return
+  if (!isLinux) return
   stopHealthWatch()
   console.log(`[settings] 健康巡检已启动（间隔 ${HEALTH_CHECK_MS}ms）`)
   healthTimer = setInterval(() => {

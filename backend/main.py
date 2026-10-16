@@ -204,12 +204,25 @@ def _bound_port(server: uvicorn.Server) -> int:
 
 
 def emit_ready(port: int, *, token: str | None = None) -> None:
-    """向 stdout 打印握手行（独立一行、立即 flush，供逐行解析）。"""
+    """向 stdout 打印握手行（独立一行、立即 flush，供逐行解析）。
+
+    编码：**直接写 UTF-8 字节**，绕过 sys.stdout 文本层的平台编码。对端（Electron 主进程
+    readline）固定按 UTF-8 解码；Windows 下文本层是 cp936，一旦载荷出现非 ASCII
+    （当前 port/pid/token 恰为 ASCII，但 json.dumps 用的是 ensure_ascii=False，已为将来新增
+    字段留了口子）就会编出 GBK 字节、对端 JSON.parse 直接失败。字节直写对平台与解释器
+    编码设置（含 PyInstaller 冻结产物不认 PYTHONUTF8 这一坑）都不敏感。
+    """
     payload: dict[str, object] = {"port": port, "pid": os.getpid()}
     if token:
         payload["token"] = token
-    sys.stdout.write(READY_PREFIX + json.dumps(payload, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    line = (READY_PREFIX + json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is not None:
+        buffer.write(line)
+        buffer.flush()
+    else:  # 兜底：流被替换成没有 buffer 的对象 → 退回文本层（仍按 UTF-8 语义写）
+        sys.stdout.write(line.decode("utf-8"))
+        sys.stdout.flush()
     logger.info("后端就绪 127.0.0.1:{} pid={}", port, os.getpid())
 
 

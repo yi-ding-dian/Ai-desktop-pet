@@ -1,20 +1,25 @@
 # deploy — 打包与发布
 
-把项目打成「目标机免装 Node / Python」的 Linux 分发包（AppImage / deb）。
+把项目打成「目标机免装 Node / Python」的分发包（Linux 的 AppImage/deb、Windows 的 NSIS 安装包 + portable 单文件）。
 打包脚本会先回到项目根目录（脚本自己 `cd`，不用手动切目录），再依次：PyInstaller 打后端 → electron-vite 打前端 → electron-builder 出安装包。
 
 > **只想把应用跑起来看看**（源码运行、开发调试）：用 `frontend` 里的 `npm run dev`——那是另一件事，不在这个目录里。
 
-| 脚本 | 用途 |
-|---|---|
-| `build.sh` | Linux 一键打包（AppImage；`--with-deb` 另出 deb） |
-| `backend.spec` | PyInstaller 配置（后端 onedir 产物） |
-| `prepare-pack-venv.sh` | 准备「打包专用 Python 环境」（见下文「坑 1」；build.sh 自动调用） |
+| 脚本 | 平台 | 用途 |
+|---|---|---|
+| `build.bat` | Windows | 一键打包（NSIS 安装包 + portable 单文件）；双击即跑 |
+| `build.sh` | Linux | 一键打包（AppImage；`--with-deb` 另出 deb） |
+| `backend.spec` | 通用 | PyInstaller 配置（后端 onedir 产物）；**两条链路共用同一份** |
+| `prepare-pack-venv.sh` | Linux | 准备「打包专用 Python 环境」（见下文「坑 1」；build.sh 自动调用） |
 
-| 产物（落在 `deploy/release/`，已 gitignore） | 大小（2026-10-15 实测） |
-|---|---|
-| `ai-desktop-pet-<版本>-<arch>.AppImage` | 128 MB（122 MiB）——免安装单文件，双击即跑 |
-| `ai-desktop-pet-<版本>-<arch>.deb` | 103 MB（99 MiB）——`sudo dpkg -i` 安装，装到 `/opt/AI 桌面宠物/` |
+> **各平台包必须在各平台上打**：PyInstaller 不支持交叉编译，后端 `backend`/`backend.exe` 只能在目标平台上构建，所以 Linux 上打不出 Windows 包（反之亦然）。electron-builder 那一半倒是可以交叉，但没有后端产物的包是跑不起来的残缺包——别走这条路。
+
+| 产物（落在 `deploy/release/`，已 gitignore） | 平台 | 大小（实测） |
+|---|---|---|
+| `ai-desktop-pet-<版本>-<arch>.AppImage` | Linux | 128 MB（122 MiB）——免安装单文件，双击即跑 |
+| `ai-desktop-pet-<版本>-<arch>.deb` | Linux | 103 MB（99 MiB）——`sudo dpkg -i` 安装，装到 `/opt/AI 桌面宠物/` |
+| `ai-desktop-pet-<版本>-x64-portable.exe` | Windows | 免安装单文件，双击即跑（对标 AppImage） |
+| `ai-desktop-pet-<版本>-x64-setup.exe` | Windows | NSIS 安装包，装到 `%LOCALAPPDATA%\Programs\`（免管理员/UAC） |
 
 > **文件名一律 ASCII，界面名称保持中文**：`productName`（应用菜单、窗口标题、安装目录）是「AI 桌面宠物」，而产物文件名写死前缀 `ai-desktop-pet-`（在 `frontend/electron-builder.yml` 的 `artifactName` 里）。原因：中文文件名在下载 URL 里会被百分号编码、命令行和传输环节容易乱码。
 > 产物目录由 electron-builder.yml 的 `directories.output` 统一指定（已加进根 `.gitignore`）。目录里除最终产物外还有 `linux-unpacked/` 等中间文件，可以无视。
@@ -52,7 +57,39 @@ npm run dist:linux-deb   # 同上 + deb
 
 **数据目录**：应用数据（config.toml / pet.db / logs）在 `~/.config/ai-desktop-pet/`，正式包与 dev 共用同一目录——换包不丢数据。AppImage 支持 `--user-data-dir=<路径>` 指定独立数据目录（自测常用，避免碰真实数据）。
 
-**Windows 侧**：暂无（NSIS/portable 后续按需补，见下文「遗留」）。
+## Windows：双击 `build.bat`
+
+```bat
+build.bat           :: NSIS 安装包 + portable 单文件（压缩级别默认 3）
+build.bat 5         :: 指定 7z 压缩级别 1/3/5/9（越大越慢、产物越小）
+```
+
+首次运行会自动 `npm install`（含 Electron 运行时下载，首次较慢）。结束时打印 `deploy\release\` 下的产物名。
+
+命令行等价（不重打后端，仅重打前端；需 `frontend/resources/backend/` 已存在）：
+
+```bash
+cd frontend
+npm run dist:win            # electron-vite build + electron-builder --win（nsis + portable）
+npm run dist:win-nsis       # 只出安装包
+npm run dist:win-portable   # 只出免安装单文件
+```
+
+> **打包前先停掉 dev 应用**：`npm run dev` 与 `electron-vite build` 共用 `frontend/out/`，会互相污染。build.bat 检测到 `electron.exe` 在跑会直接报错退出；手动跑 `npm run dist:win*` 没有这层保护，自己先关掉 dev 终端。
+
+**Windows 打包机前置条件**：Node（`npm` 在 PATH）+ `frontend/node_modules` + `backend/.venv`（含 pyinstaller）：
+
+```bat
+python -m venv backend\.venv
+backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]" openai keyring pyinstaller
+```
+
+> **Windows 没有「无共享库的 Python」这个坑**（坑 1 是 Linux 源码编译 Python 特有的），
+> 所以 Windows 侧不需要 `prepare-pack-venv.sh` 那套独立打包环境——`backend\.venv` 直接就能给
+> PyInstaller 用。另外 `backend.spec` 的 `strip` 在 Windows 上自动关闭（没有 strip(1) 命令）。
+
+**Windows 侧数据目录**：`%APPDATA%\AI 桌面宠物\`（config.toml / pet.db / logs），安装包与 portable
+版共用同一目录——换包不丢数据。
 
 ## 打包机前置条件
 

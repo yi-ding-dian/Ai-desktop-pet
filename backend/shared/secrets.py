@@ -153,7 +153,13 @@ def _write_keyring(key: str) -> bool:
 
 
 def _write_file(key: str) -> Path:
-    """写 600 权限的兜底文件（创建即 600，已存在则校正权限）。"""
+    """写 600 权限的兜底文件（创建即 600，已存在则校正权限）。
+
+    平台差异（Windows）：`os.open` 的 mode 与 `os.chmod` 在 Windows 上**只影响"只读"属性**，
+    没有 POSIX 权限位（st_mode 恒 0o666）——即"文件权限 600"这条保护在 Windows 上并不成立，
+    文件对同机其他用户是可读的。Windows 上真正的保护来自 keyring（凭据管理器，按用户加密），
+    本文件只是 keyring 不可用时的兜底；要更强保护需自行加 ACL（当前未做，属已知边界）。
+    """
     path = ensure_data_dir() / SECRET_FILE_NAME
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _SECRET_FILE_MODE)
     try:

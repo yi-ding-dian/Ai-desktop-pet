@@ -17,6 +17,7 @@
  */
 import { execFile } from 'node:child_process'
 import type { BrowserWindow } from 'electron'
+import { isLinux } from '../platform'
 
 /** 探测结果：true = X 窗口存在；false = 已消失（死窗）；null = 无法检测（不误判） */
 export type XWindowAlive = boolean | null
@@ -37,7 +38,7 @@ function getXWindowId(win: BrowserWindow): number | null {
  * 门控：仅 Linux 且非 Wayland 会话（Wayland 下 XID 语义不同——宁可不检测也不误杀）。
  */
 export function probeXWindowAlive(win: BrowserWindow): Promise<XWindowAlive> {
-  if (process.platform !== 'linux' || process.env['WAYLAND_DISPLAY']) {
+  if (!isLinux || process.env['WAYLAND_DISPLAY']) {
     return Promise.resolve(null)
   }
   const xid = getXWindowId(win)

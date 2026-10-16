@@ -26,10 +26,11 @@ import {
   type TrayMenuAction,
   type WindowDebugState
 } from './ipc/channels'
+import { PLATFORM } from './platform'
 import type { MoveResult, Point, Rect, WindowGeometry } from './window'
 
 const api: PetBridgeApi = {
-  platform: process.platform,
+  platform: PLATFORM,
 
   window: {
     setClickThrough(on: boolean): void {

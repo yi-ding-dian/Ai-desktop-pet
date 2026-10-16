@@ -1,8 +1,12 @@
 /**
  * 窗口能力统一接口（平台无关）。
  *
- * 设计文档 §5.1：对外只暴露本文件与 registry；业务代码（main.ts / ipc）不得 import 具体平台实现，
- * 平台差异仅允许出现在 electron/window/ 目录内。
+ * 设计文档 §5.1：对外只暴露本文件与 registry；业务代码（main.ts / ipc）不得 import 具体平台实现。
+ *
+ * 平台差异的归属（2026-10-16 明确，设计文档 §5.1 原话只提了本目录，现补全）：
+ *  - **窗口域内部**的平台差异 → 本目录（`linux.ts` / `win32.ts` / `darwin.ts` + `registry.ts`）；
+ *  - **跨域共用**的平台事实与常量 → `electron/platform/`（全项目唯一读 `process.platform` 之处）。
+ * 新增平台时这两处就是完整的检查清单。注意本目录名是「窗口域」，与「Windows 平台」无关。
  */
 import type { BrowserWindow } from 'electron'
 

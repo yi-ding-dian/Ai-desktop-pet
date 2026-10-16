@@ -1,4 +1,4 @@
-# electron-builder 配置：Linux AppImage + deb 打包（Windows/NSIS 后续按需补）
+# electron-builder 配置：Linux AppImage + deb 打包；Windows NSIS 安装包 + portable 单文件
 appId: com.yicaibao.aipet
 productName: AI 桌面宠物
 # 注：deb 打包器（fpm）还要求 homepage —— 该字段只能在 package.json 里给（见 frontend/package.json）
@@ -21,6 +21,9 @@ files:
   # 若将来 main/preload 直接 import 外部依赖，需在此放开并补 files 规则。
   - out/**/*
   - '!node_modules/**/*'
+  # 单测产物不入包：npm run test:* 会把测试 bundle 编译到 out/tests/（与 out/main 等同一目录树），
+  # 若不排除会被 out/**/* 一并收进 asar（跑过一次测试后打出来的包就带上了）——测试代码不进产物。
+  - '!out/tests/**/*'
 asar: true
 npmRebuild: false
 extraResources:
@@ -42,6 +45,38 @@ extraResources:
   # ⚠ 托盘图标外观更新后此模板会失配（自动定位回退到托盘图标素材/兜底坐标），需重新裁制（见 fx-report.md）
   - from: resources/tray-anchor-template.png
     to: tray-anchor-template.png
+win:
+  # 图标唯一源 build/icon.png（512×512）。electron-builder 会自动转出多尺寸 .ico，
+  # 无需手工维护 ico 副本（素材更新即随包生效，与 Linux 侧同一约定）
+  icon: build/icon.png
+  target:
+    - nsis
+    - portable
+  # 与 Linux 侧同一命名约定：文件名 ASCII（ai-desktop-pet-），界面名称保持中文（productName）
+  # 注意：Windows 产物按架构分目录落 release/ 根下，见 deploy/build.ps1 的产物收集
+  artifactName: ai-desktop-pet-${version}-${arch}.${ext}
+  # 无代码签名证书：electron-builder 会对 exe 做「资源编辑」（写图标/版本信息）而非签名，
+  # 若本机杀软把 PyInstaller 产物误报为木马，属已知问题（设计文档 §10 #6，后期代码签名解决）
+  signAndEditExecutable: true
+nsis:
+  # 免 UAC 的每用户安装（装到 %LOCALAPPDATA%\Programs\），不写系统目录、不需要管理员
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AI 桌面宠物
+  # 安装向导语言：中英双语（系统语言自动选择）
+  installerLanguages:
+    - zh_CN
+    - en_US
+  # 卸载时保留用户数据（%APPDATA%\AI 桌面宠物\：config.toml / pet.db / logs）
+  deleteAppDataOnUninstall: false
+  artifactName: ai-desktop-pet-${version}-${arch}-setup.${ext}
+portable:
+  # 免安装单文件 exe：双击即跑（对应 Linux 侧的 AppImage 定位）
+  # 数据目录仍走 Electron 默认 %APPDATA%，与安装包共用（换包不丢数据）
+  artifactName: ai-desktop-pet-${version}-${arch}-portable.${ext}
 linux:
   icon: build/icon.png
   target:
