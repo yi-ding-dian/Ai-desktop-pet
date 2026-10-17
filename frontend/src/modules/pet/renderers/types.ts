@@ -4,7 +4,7 @@
  * 设计目标：**换渲染器，不改调用方**。
  * - 当前实现：
  *   `glb-model/`（**缺省**：加载 Meshy 生成的兔子 GLB 静态网格，整体姿态驱动）、
- *   `three-d/`（Three.js 程序化 3D，软胶玩具风）、
+ *   `procedural-3d/`（Three.js 程序化 3D，软胶玩具风）、
  *   `part-animation/`（程序化 SVG 部件动画，零依赖）——均在 renderers/index.ts 的工厂里注册；
  * - 将来实现：`live2d/`（pixi-live2d-display + Cubism 模型，含自带 speak() 口型），
  *   只需实现同一接口并在工厂里注册，PetView 等调用方零改动；

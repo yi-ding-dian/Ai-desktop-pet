@@ -213,12 +213,12 @@ export class ThreeDRenderer implements PetRenderer {
         this.webgl.domElement.addEventListener('webglcontextlost', (e) => {
           e.preventDefault()
           // dispose 流程内的主动丢弃不算异常（见 dispose 注释）
-          if (!this.disposed) devLog('renderer(three-d) WebGL 上下文丢失（等待恢复）')
+          if (!this.disposed) devLog('renderer(procedural-3d) WebGL 上下文丢失（等待恢复）')
         })
-        devLog('renderer(three-d) WebGL 上下文已创建')
+        devLog('renderer(procedural-3d) WebGL 上下文已创建')
       } catch (err) {
         this.webglFailed = true
-        console.warn('[pet] three-d WebGL 初始化失败（保持空容器）：', err)
+        console.warn('[pet] procedural-3d WebGL 初始化失败（保持空容器）：', err)
       }
     }
     if (this.webgl) {
@@ -272,7 +272,7 @@ export class ThreeDRenderer implements PetRenderer {
         this.webgl.dispose()
         this.webgl.forceContextLoss()
       } catch (err) {
-        console.warn('[pet] three-d 释放 WebGL 上下文异常：', err)
+        console.warn('[pet] procedural-3d 释放 WebGL 上下文异常：', err)
       }
       this.webgl = null
     }

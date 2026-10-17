@@ -167,7 +167,7 @@ export interface GlbPoseInput {
 
 /** 移动起伏的触发阈值（px/s）：低于此值视为静止 */
 const MOVE_SPEED_THRESHOLD = 60
-/** 步幅（px/步）：步频 = 速度 / 步幅（与 three-d 拟人步态同参数，节奏一致） */
+/** 步幅（px/步）：步频 = 速度 / 步幅（与 procedural-3d 拟人步态同参数，节奏一致） */
 const STRIDE_PX = 90
 
 /**

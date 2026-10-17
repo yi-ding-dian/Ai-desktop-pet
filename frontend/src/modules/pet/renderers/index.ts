@@ -4,6 +4,7 @@
  * - 'glb-model'：**当前默认**——加载 Meshy 生成的兔子 GLB（静态网格，无骨骼无动画），
  *   以"整体姿态"表达情绪/状态（详见 glb-model/ 内注释）；
  * - 'three-d'：Three.js 程序化 3D 几何拼装（软胶玩具风企鹅 / 程序化兔子，保留可切换）；
+ *   目录名 procedural-3d（原 three-d 的自造拼写）；kind id 保持 'three-d' 以兼容已存 localStorage。
  * - 'part-animation'：程序化 SVG 部件动画（首个实现，零依赖；保留可切换）；
  * - 'live2d'（将来）：pixi-live2d-display + Cubism 模型。实现后只需在此注册，
  *   调用方（PetView 等）零改动——这是"换渲染器不改调用方"的落点。
@@ -13,7 +14,7 @@
  */
 import type { PetRenderer } from './types'
 import { PartAnimationRenderer } from './part-animation'
-import { ThreeDRenderer } from './three-d'
+import { ThreeDRenderer } from './procedural-3d'
 import { GlbModelRenderer } from './glb-model'
 
 export type PetRendererKind = 'glb-model' | 'three-d' | 'part-animation' | 'live2d'
@@ -55,4 +56,4 @@ export function createPetRenderer(kind?: PetRendererKind): PetRenderer {
 
 export type { PetRenderer, PetReactionKind, PetRendererName } from './types'
 export { PENGUIN_CONFIG } from './part-animation'
-export { PENGUIN_3D_CONFIG } from './three-d'
+export { PENGUIN_3D_CONFIG } from './procedural-3d'

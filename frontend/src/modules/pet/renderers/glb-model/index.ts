@@ -8,7 +8,7 @@
  * - 1 个 PBR 材质（baseColor + normal + metallicRoughness，均已压为 2K WebP）；
  * - 世界包围盒：x≈[-0.40, 0.33]、y≈[0, 1.08]（脚底在 y=0）、z≈[-0.31, 0.27]。
  *
- * 生命周期（与 ThreeDRenderer 同约定，见 ../three-d/index.ts）：
+ * 生命周期（与 ThreeDRenderer 同约定，见 ../procedural-3d/index.ts）：
  * - 模型异步加载（GLTFLoader）；加载完成后按包围盒居中/贴地并挂到"姿态根组 root"；
  * - mount 可重复（先把 root 从场景摘除再挂回）；unmount 停循环、摘画布、root 出场景但**保留资源**；
  * - dispose 彻底释放（几何/材质/贴图 + WebGL 上下文），之后不可再用；加载竞态用 token 化解。
@@ -55,11 +55,11 @@ const MODEL_URL = `${import.meta.env.BASE_URL}models/meshy-rabbit.glb`
  */
 const MODEL_YAW_CORRECTION = 0
 
-/** 相机视场角（度）：数值小 → 透视弱、更"平面可爱"（与 three-d 一致的观感取向） */
+/** 相机视场角（度）：数值小 → 透视弱、更"平面可爱"（与 procedural-3d 一致的观感取向） */
 const CAMERA_FOV = 30
 /**
  * 模型纵向占视锥高度的比例（留出弹跳/惊讶上浮的头部余量）。
- * 实测（208px 容器）：0.83 → 兔子高约 172px（与现役 three-d 兔子 170px 观感一致）。
+ * 实测（208px 容器）：0.83 → 兔子高约 172px（与现役 procedural-3d 兔子 170px 观感一致）。
  */
 const CAMERA_FILL_RATIO = 0.83
 /**
@@ -122,7 +122,7 @@ export class GlbModelRenderer implements PetRenderer {
   private rafId: number | null = null
   private lastTs: number | null = null
   private disposed = false
-  /** 窗口移动测速（与 three-d 同款：screenX/screenY 差分 + 指数平滑） */
+  /** 窗口移动测速（与 procedural-3d 同款：screenX/screenY 差分 + 指数平滑） */
   private lastScreenPos = { x: 0, y: 0, ts: -1 }
   private moveSpeedSmooth = 0
 
@@ -144,7 +144,7 @@ export class GlbModelRenderer implements PetRenderer {
     this.camera.position.set(0, 0.55, 2.6)
     this.camera.lookAt(0, 0.54, 0)
 
-    // 柔和光照（参考 three-d 的 fluffy 装配：大面积漫射为主 + 温柔主光/补光，低对比无硬阴影）。
+    // 柔和光照（参考 procedural-3d 的 fluffy 装配：大面积漫射为主 + 温柔主光/补光，低对比无硬阴影）。
     // 强度按"正面照度 ≈ π"配平（three 漫反射含 1/π 因子）：白毛贴图能拉到干净的白而不冲淡颜色。
     // 实测对照（lt-A/B/C/D 档位实验）：照度 3.8 时腮红被冲淡，本档（1.7+0.95+0.45≈π）颜色最饱满。
     const ambient = new THREE.AmbientLight(0xfffbf5, 1.7)
@@ -393,7 +393,7 @@ export class GlbModelRenderer implements PetRenderer {
     }
     const dt = Math.min(MAX_DT, (ts - this.lastTs) / 1000)
     this.lastTs = ts
-    // 窗口实际移动速度 → 姿态（复用 three-d 的 screenX/screenY 差分做法；
+    // 窗口实际移动速度 → 姿态（复用 procedural-3d 的 screenX/screenY 差分做法；
     // 行为引擎移动窗口时渲染进程可直接读出"真实步速"，保持 PetRenderer 接口零改动）
     this.measureMoveSpeed(ts)
     this.updatePose(dt)
@@ -487,7 +487,7 @@ export class GlbModelRenderer implements PetRenderer {
   }
 
   /**
-   * 测窗口移动速度（px/s，指数平滑）：与 three-d 同款做法——
+   * 测窗口移动速度（px/s，指数平滑）：与 procedural-3d 同款做法——
    * 行为引擎按 distance/duration_ms 缓动移动窗口（electron/window/move.ts），
    * 渲染进程直接读 screenX/screenY 差分即可获得"真实步速"。
    */

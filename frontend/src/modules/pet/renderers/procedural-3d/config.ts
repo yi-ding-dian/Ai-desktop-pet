@@ -2,7 +2,7 @@
  * 3D 渲染器共享层：通用部件句柄类型 + 模型选择 + 造型基元类型。
  *
  * 多模型架构（2026-10-14 兔子上线）：
- * - three-d 渲染器支持多个程序化模型（`models/penguin.ts`、`models/rabbit.ts`），
+ * - procedural-3d 渲染器支持多个程序化模型（`models/penguin.ts`、`models/rabbit.ts`），
  *   每个模型自带造型参数（写在各自的模型文件里，仍是"唯一造型事实来源"）、
  *   建模函数（build）与专属逐帧写入（applyExtras 闭包）；
  * - 本文件的 `PetParts3D` 是**两模型共用的句柄超集**：通用部件（根/头/眼/嘴/腮红/
