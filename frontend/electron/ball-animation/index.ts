@@ -13,8 +13,9 @@
  *   relocateSpawnMs）→ 爆闪捕获 → 携宠沿拱线飞行 → 释放（不经过托盘锚点）；近距
  *   （< 上限）→ 平滑移位（relocateGlideMs 小弧滑行，无球无爆闪）/ 太近
  *   （< relocateNearStepPx）直接落位；托盘隐藏/显示（hide/show）的托盘进出语义不变；
- * - **锚点自动定位**：托盘兔头图标的屏幕坐标由 `ball-animation/anchor.ts` 每轮动画前"抓屏 + 模板匹配"
- *   现场定位（图标位置无 API 可查且会漂移），失败回退兜底配置 TRAY_ANCHOR（见 ball-animation/config.ts）；
+ * - **锚点定位**：优先托盘域注入的 `tray.getBounds()`（Windows 零延迟；图标在 overflow 时用
+ *   任务栏右下角兜底）；没有提供者（Linux/macOS）才走 `ball-animation/anchor.ts` 的抓屏 + 模板匹配，
+ *   失败回退兜底配置 TRAY_ANCHOR（见 ball-animation/config.ts）；
  * - 球窗内容（src/ball-animation/main.ts）：Canvas 2D 程序化绘制魔法球（球固定在窗口中心）；
  *   拖尾/光晕按窗口尺寸收敛（超出窗口的部分会被裁，视觉设计已按此约束做）；
  * - **主进程是唯一指挥**：时序、球窗/宠物窗的移动缩放、指令下发全在这里；
@@ -52,6 +53,30 @@ let busy = false
 let stashedBounds: Rect | null = null
 /** ipcMain 就绪监听是否已注册（只注册一次） */
 let readyListenerInstalled = false
+/**
+ * 托盘锚点提供者（托盘域注册）：Windows 用 `tray.getBounds()`（零延迟）或任务栏角落兜底；
+ * 返回 null = 走 `locateTrayAnchor()` 抓屏模板匹配（Linux 的既有路径）。
+ *
+ * 为什么需要：抓屏 + 模板匹配在 Windows 175% 缩放下实测 **2124ms** 且模板未命中
+ * （Windows 托盘图标缩放/overflow 渲染与 Linux 模板不同）——右键托盘菜单、隐藏/显示动画
+ * 每次都要等这 2 秒，用户感知就是"卡"。托盘域有 tray 实例，能零成本拿到图标 bounds，
+ * 不该让动画域反复抓屏。
+ */
+type TrayAnchorProvider = () => Point | null
+let trayAnchorProvider: TrayAnchorProvider | null = null
+
+/** 注册托盘锚点提供者（托盘创建时调用；传 null 撤销） */
+export function setTrayAnchorProvider(provider: TrayAnchorProvider | null): void {
+  trayAnchorProvider = provider
+}
+
+/** 解析动画锚点：优先托盘域提供者；未注册/返回 null 时退回抓屏模板匹配 */
+async function resolveTrayAnchorPoint(): Promise<Point> {
+  const provided = trayAnchorProvider?.()
+  if (provided) return provided
+  const res = await locateTrayAnchor()
+  return { x: res.x, y: res.y }
+}
 
 /** 流程上下文：看门狗超时置 aborted，各阶段在 await 后检查并提前退出 */
 interface FlowContext {
@@ -699,11 +724,12 @@ async function runFlow(
       }
     } else {
       const ball = ensureBallWindow()
-      // 动画页就绪等待 与 锚点自动定位（抓屏+模板匹配）并行 —— 降低"按下到球起飞"的感知延迟；
-      // 定位失败/超时都返回兜底值，绝不影响动画播放
-      const [ready, anchorRes] = await Promise.all([
+      // 动画页就绪等待 与 锚点解析并行 —— 降低"按下到球起飞"的感知延迟；
+      // 锚点优先托盘域提供者（Windows = tray.getBounds / 任务栏角落，零延迟）；
+      // 没有提供者（Linux）才走抓屏模板匹配；任何失败都返回兜底值，绝不影响动画播放
+      const [ready, anchorPoint] = await Promise.all([
         waitFxReady(BALL_ANIMATION_CONFIG.readyTimeoutMs),
-        locateTrayAnchor()
+        resolveTrayAnchorPoint()
       ])
       if (!ready) {
         console.warn(`[ball-animation] 动画页未就绪（>${BALL_ANIMATION_CONFIG.readyTimeoutMs}ms），本次降级为直接${label}`)
@@ -714,7 +740,7 @@ async function runFlow(
       ball.moveTop() // 与宠物同为 screen-saver 层：显示前 raise 自保（球要盖在宠物上表现吸进/放出）
       ball.showInactive()
       const wa = screen.getPrimaryDisplay().workArea
-      const anchor: Point = { x: anchorRes.x, y: anchorRes.y }
+      const anchor: Point = anchorPoint
       if (direction === 'hide') await hideFlow(win, ball, wa, anchor, ctx)
       else await showFlow(win, ball, wa, anchor, ctx)
     }

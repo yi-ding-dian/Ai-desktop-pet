@@ -41,10 +41,9 @@ import {
 } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { isLinux, linuxOnlyWindowOptions } from '../platform'
+import { isLinux, isWindows, linuxOnlyWindowOptions } from '../platform'
 import { IPC, IPC_EVENTS, type TrayMenuAction } from '../ipc/channels'
-import { runHideAnimation, runShowAnimation } from '../ball-animation'
-import { locateTrayAnchor } from '../ball-animation/anchor'
+import { runHideAnimation, runShowAnimation, setTrayAnchorProvider } from '../ball-animation'
 import { enterTeaching } from '../teaching'
 import { openSettings } from '../settings'
 
@@ -92,6 +91,12 @@ let lastClickAt = 0
 let ipcRegistered = false
 /** 宠物窗口（createTray 注入；菜单动作/显隐切换的对象） */
 let petWin: BrowserWindow | null = null
+/**
+ * 读取托盘图标矩形（createTray 注入；Win/macOS 有原生实现，Linux 会抛/返回空）。
+ * 用于菜单定位与动画锚点——**替代抓屏模板匹配**：Windows 175% 缩放下抓屏实测 2124ms
+ * 且模板匹配不上，右键托盘/隐藏宠物每次都要等 2 秒，是"卡"的根因。
+ */
+let readTrayBounds: (() => Electron.Rectangle | null) | null = null
 
 // ------------------------------------------------------------------ 图标
 
@@ -252,22 +257,22 @@ function waitMenuReady(timeoutMs: number): Promise<boolean> {
 }
 
 /**
- * 菜单弹出位置：优先托盘图标锚点（ball-animation/anchor 抓屏模板匹配——图标旁弹出，与原生菜单方位一致）；
- * 模板未命中/失败（source=fallback）回退"当前鼠标位置"（鼠标就在托盘图标上）。
+ * 菜单弹出位置：优先托盘图标 bounds（Win/macOS 原生 API，零延迟），拿不到就用当前鼠标位置
+ * （右键/双击托盘时鼠标就在图标上）——**不再抓屏模板匹配**（Windows 实测 2124ms，菜单会明显卡住）。
  * 一律 clamp 进所在显示器工作区。
  */
-async function resolveMenuPosition(): Promise<{ x: number; y: number }> {
-  const anchor = await locateTrayAnchor()
+function resolveMenuPosition(): { x: number; y: number } {
+  const b = readTrayBounds?.() ?? null
   let cx: number
   let cy: number
-  if (anchor.source === 'auto') {
-    cx = anchor.x
-    cy = anchor.y
+  if (b) {
+    cx = b.x + b.width / 2
+    cy = b.y + b.height / 2
   } else {
     const p = screen.getCursorScreenPoint()
     cx = p.x
     cy = p.y
-    console.log(`[tray] 锚点模板未命中 → 菜单回退鼠标位置 (${cx},${cy})`)
+    console.log(`[tray] 托盘 bounds 不可用 → 菜单锚点用鼠标位置 (${cx},${cy})`)
   }
   const wa = screen.getDisplayNearestPoint({ x: cx, y: cy }).workArea
   const x = cx - Math.round(TRAY_MENU_WIDTH / 2)
@@ -305,7 +310,7 @@ async function openTrayMenu(): Promise<void> {
       return
     }
     if (menu.isDestroyed()) return
-    const pos = await resolveMenuPosition()
+    const pos = resolveMenuPosition()
     if (menu.isDestroyed()) return
 
     const petVisible = Boolean(petWin && !petWin.isDestroyed() && petWin.isVisible())
@@ -372,6 +377,34 @@ export function createTray(win: BrowserWindow): Tray | null {
   }
 
   tray.setToolTip('AI 桌面宠物')
+
+  // 托盘图标矩形（Win/macOS 原生；Linux 调用会抛/返回空）——菜单定位与动画锚点共用。
+  // 零延迟，替代抓屏模板匹配（Windows 实测 2124ms + 模板未命中）。
+  readTrayBounds = (): Electron.Rectangle | null => {
+    try {
+      const b = tray.getBounds()
+      return b && b.width > 0 && b.height > 0 ? b : null
+    } catch {
+      return null
+    }
+  }
+
+  // 动画锚点提供者：有 bounds 用图标中心；Win 的 overflow 里 getBounds 可能返回 0×0，
+  // 此时用任务栏右下角兜底（图标就在那一片），绝不能让动画再走 2 秒抓屏；
+  // Linux/macOS 返回 null → 保留各自既有的抓屏模板匹配路径。
+  setTrayAnchorProvider(() => {
+    const b = readTrayBounds?.() ?? null
+    if (b) {
+      const p = { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }
+      console.log(`[tray] 动画锚点：图标 bounds → (${p.x},${p.y})`)
+      return p
+    }
+    if (!isWindows) return null
+    const wa = screen.getPrimaryDisplay().workArea
+    const p = { x: wa.x + wa.width - 90, y: wa.y + wa.height - 24 }
+    console.log(`[tray] 动画锚点：bounds 不可用 → 任务栏右下角兜底 (${p.x},${p.y})`)
+    return p
+  })
 
   /**
    * 切换宠物窗口显隐（走 ball-animation 域魔法球动画；结果语义不变：可见→隐藏、不可见→显示）。
