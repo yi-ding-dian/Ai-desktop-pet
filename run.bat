@@ -65,10 +65,13 @@ if /i "%MODE%"=="deps" (
 )
 
 echo == 启动（后端由 Electron 自动拉起；关窗口或 Ctrl+C 结束）==
+rem 控制台切 UTF-8：Electron/Node 的日志按 UTF-8 输出，chcp 936 下会显示成乱码
+chcp 65001 >nul
 pushd frontend
 call npm run dev
-if errorlevel 1 (popd & goto :err_dev)
+if errorlevel 1 (popd & chcp 936 >nul & goto :err_dev)
 popd
+chcp 936 >nul
 echo 已退出。
 pause
 exit /b 0
