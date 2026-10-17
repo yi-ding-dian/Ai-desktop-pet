@@ -7,7 +7,9 @@
  *
  * - Enter 发送 user_message（IME 组合中不误发）；
  * - streaming 本地标志（reply_start/reply_end）驱动"停止"按钮的兜底显示；
- * - "停止"按钮（P2 §7.2 打断）：思考中/说话中显示 → 发 interrupt + 本地立即停播（voice 域）。
+ * - "停止"按钮（P2 §7.2 打断）：思考中/说话中显示 → 发 interrupt + 本地立即停播（voice 域）；
+ * - 输入行是紧凑胶囊（250×32，居中贴兔子脚）：默认半透明、hover/focus 不透明；
+ *   发送/停止共用右侧圆钮槽位（忙碌切换不抖宽度），发送改为图标（2026-10-17 用户定稿）。
  */
 import { useCallback, useEffect, useState, type ReactElement, type RefObject } from 'react'
 import type { WsClient } from '../../shared/ws-client'
@@ -106,28 +108,69 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
               handleSend()
             }
           }}
-          placeholder={connected ? '说点什么…（Enter 发送）' : '等待后端连接…'}
+          placeholder={connected ? '说点什么…' : '等待后端连接…'}
+          title={connected ? '按 Enter 发送' : undefined}
+          aria-label="聊天输入"
           disabled={!connected}
         />
-        <button
-          className="chat-send"
-          data-testid="chat-send"
-          onClick={handleSend}
-          disabled={!connected || input.trim().length === 0}
-        >
-          发送
-        </button>
-        {busy && (
+        {/* 发送/停止共用一个槽位：窄胶囊里不并排塞两个按钮（宽度恒定，不抖动）。
+            忙碌时点停止 = 打断；Enter 发送仍可用（输入框不禁用）。 */}
+        {busy ? (
           <button
             className="chat-stop"
             data-testid="chat-stop"
+            type="button"
             onClick={handleStop}
             title="打断当前回复（停止说话/思考）"
+            aria-label="停止"
           >
-            停止
+            <StopIcon />
+          </button>
+        ) : (
+          <button
+            className="chat-send"
+            data-testid="chat-send"
+            type="button"
+            onClick={handleSend}
+            disabled={!connected || input.trim().length === 0}
+            title="发送（Enter）"
+            aria-label="发送"
+          >
+            <SendIcon />
           </button>
         )}
       </div>
     </div>
+  )
+}
+
+// ------------------------------------------------------------------ 图标（线稿，currentColor）
+
+/** 发送：纸飞机 */
+function SendIcon(): ReactElement {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4 20-7Z" />
+    </svg>
+  )
+}
+
+/** 停止：圆角方块 */
+function StopIcon(): ReactElement {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="2.5" />
+    </svg>
   )
 }

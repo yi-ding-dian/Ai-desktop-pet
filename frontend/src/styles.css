@@ -86,30 +86,65 @@ body,
 
 /* 对话面板：仅输入行（消息列表已去掉，2026-10-16 定稿——聊天回复以"说话气泡"展示在兔子头部旁，
    见 chat 域 speech.ts + electron/bubble 域）。位置上移到兔子脚下附近：
-   窗口 400 高，bottom 110 → 输入行顶边 y≈262（兔子脚底 y≈242 + 20px 缝）——
-   贴脚就近说话，不在窗口底部喊话。改形象尺寸/窗口尺寸时同步 */
+   窗口 400 高，bottom 118 → 输入行顶边 y≈250（兔子脚底 y≈242 + 8px 缝）——
+   贴脚就近说话，不在窗口底部喊话。宽度 250 居中（不再横贯窗口）。改形象尺寸/窗口尺寸时同步 */
 .chat-panel {
   position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 110px;
+  left: 50%;
+  bottom: 118px;
+  transform: translateX(-50%);
+  width: min(250px, calc(100vw - 120px));
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
+/* 输入行 = 一颗紧凑胶囊：默认半透明（只让底色淡，文字保持实色可读），
+   悬浮或聚焦时恢复不透明（2026-10-17 用户定稿）。pointer-events 保持默认——
+   半透明仍然要能点、能悬浮；形状/命中区随 ResizeObserver 自动上报。 */
 .chat-input-row {
+  /* 待机透明度集中在这里调（用户 2026-10-17 反馈 62% 还不够透，降到 45%） */
+  --chat-idle-alpha: 45%;
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 2px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 3px 0 4px;
+  border: 1px solid color-mix(in srgb, var(--chat-input-fg) 14%, transparent);
+  border-radius: 16px;
+  background: var(--chat-input-bg); /* 旧渲染器回退：不认 color-mix 时保持实底 */
+  background: color-mix(in srgb, var(--chat-input-bg) var(--chat-idle-alpha), transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition:
+    background-color 160ms ease-out,
+    border-color 160ms ease-out,
+    box-shadow 160ms ease-out;
+}
+
+/* 悬浮只提亮到 78%，不全显（用户 2026-10-17 定稿："悬浮在聊天框上时，不用全显"）；
+   真正聚焦输入、要打字时才恢复全实底 */
+.chat-panel:hover .chat-input-row {
+  background: color-mix(in srgb, var(--chat-input-bg) 78%, transparent);
+  border-color: color-mix(in srgb, var(--chat-input-fg) 20%, transparent);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
+}
+
+.chat-panel:focus-within .chat-input-row {
+  background: var(--chat-input-bg);
+  border-color: color-mix(in srgb, var(--ui-accent) 42%, transparent);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
 }
 
 .chat-input {
   flex: 1;
-  height: 28px;
-  padding: 0 10px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
   border: none;
-  border-radius: 8px;
-  background: var(--chat-input-bg);
+  border-radius: 14px;
+  background: transparent;
   color: var(--chat-input-fg);
   font-size: 12px;
   outline: none;
@@ -117,40 +152,75 @@ body,
   -webkit-user-select: text;
 }
 
-.chat-input:disabled {
+.chat-input::placeholder {
+  color: var(--chat-input-fg);
   opacity: 0.6;
+  transition: opacity 160ms ease-out;
+}
+
+.chat-panel:hover .chat-input::placeholder {
+  opacity: 0.72;
+}
+
+.chat-panel:focus-within .chat-input::placeholder {
+  opacity: 0.82;
+}
+
+.chat-input:disabled {
+  opacity: 0.55;
+}
+
+/* 发送 / 停止共用右侧一个 26×26 圆钮（槽位固定、互斥显示，忙碌切换时宽度不抖） */
+.chat-send,
+.chat-stop {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition:
+    opacity 160ms ease-out,
+    background-color 120ms ease-out,
+    filter 120ms ease-out;
 }
 
 .chat-send {
-  height: 28px;
-  padding: 0 12px;
-  border: none;
-  border-radius: 8px;
   background: var(--chat-user-bg);
   color: var(--chat-user-fg);
-  font-size: 12px;
-  cursor: pointer;
+  opacity: 0.62;
+}
+
+.chat-panel:hover .chat-send:not(:disabled) {
+  opacity: 0.85;
+}
+
+.chat-panel:focus-within .chat-send:not(:disabled) {
+  opacity: 1;
 }
 
 .chat-send:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 
-/* 停止（打断）按钮：思考/说话中出现的红色小按钮（P2 打断，§7.2） */
+.chat-send:not(:disabled):hover {
+  filter: brightness(1.08);
+}
+
+/* 停止（打断）按钮：思考/说话中出现的红色小圆钮（P2 打断，§7.2） */
 .chat-stop {
-  height: 28px;
-  padding: 0 12px;
-  border: none;
-  border-radius: 8px;
   background: var(--chat-stop-bg);
   color: var(--chat-error-fg);
-  font-size: 12px;
-  cursor: pointer;
 }
 
 .chat-stop:hover {
   background: var(--chat-stop-hover);
+  filter: brightness(1.05);
 }
 
 /* 底部调试栏：窗口底部调试/连接信息（两行紧凑展示；开发向信息，默认隐藏不渲染，Ctrl+Shift+D 唤出） */
