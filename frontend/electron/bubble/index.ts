@@ -67,7 +67,7 @@ import {
 import { runHideAnimation } from '../ball-animation'
 import { openSettings } from '../settings'
 import { enterTeaching, exitTeaching, getTeachingMode } from '../teaching'
-import { computeBubblePlacement } from './geometry'
+import { computeBubblePlacement, followSize } from './geometry'
 import type { Point, Rect, Size } from '../window'
 
 const isDev = !app.isPackaged
@@ -145,8 +145,22 @@ let sessionSeq = 0
 let windowSeq = 0
 /** 当前内容载荷（动作白名单校验 / 补发 / tail 更新用） */
 let currentPayload: BubbleOpenPayload | null = null
-/** 当前锚点（屏幕坐标；本次弹出生命周期内固定——显示期间宠物被拖走不跟随，场景3 再处理） */
+/** 当前锚点（屏幕坐标；宠物移动时由跟随逻辑重算） */
 let anchor: Point | null = null
+/**
+ * 最近一次已知内容尺寸（DIP，含窗内留白）——follow 重摆**只允许用它**，不得读 win.getBounds()：
+ * Windows（175% 缩放实测）上 getBounds 会把 fractional DPI 舍入结果回吐（set 175x89 → get 176x90），
+ * 把它再喂回 setBounds 会每次 +1px 累积增长。宠物走动/拖拽时跟随以 60fps 触发，窗口很快撑大——
+ * 气泡（bottom 锚定）随窗口变高下沉、窗口形状却停在旧位置，最终整条消息被形状裁掉（用户反馈
+ * "一动宠物消息就消失"的根因）。内容尺寸只由渲染侧 REPORT_SIZE 更新（播放稳定、无反馈环）。
+ */
+let contentSize: Size | null = null
+/**
+ * 最近一次实际下发的窗口 bounds（请求值，不是 getBounds 舍入后的值）——相同则跳过 setBounds：
+ * ① 避免跟随/尺寸上报的高频重复调用；② 防止"渲染侧 resize 事件 → REPORT_SIZE → setBounds →
+ * 再触发 resize"的潜在闭环。
+ */
+let lastAppliedBounds: Rect | null = null
 /** 当前尾巴朝向（尺寸上报引发翻向时与 lastTail 比较后才下发 SET_TAIL） */
 let lastTail: BubbleTail = 'down'
 /** 当前是否交互态（菜单/确认态 true；说话气泡纯展示态 false——穿透+不聚焦+不注册 blur 收起） */
@@ -362,6 +376,9 @@ function createBubbleWindow(): BrowserWindow {
 function ensureBubbleWindow(): BrowserWindow {
   if (bubbleWin && !bubbleWin.isDestroyed()) return bubbleWin
   bubbleReady = false
+  // 新窗口没有"上次下发值"与内容尺寸：跟随/尺寸上报必须重新完整下发一次
+  contentSize = null
+  lastAppliedBounds = null
   bubbleWin = createBubbleWindow()
   return bubbleWin
 }
@@ -396,6 +413,8 @@ export function destroyBubble(): void {
   closing = false
   currentPayload = null
   anchor = null
+  contentSize = null
+  lastAppliedBounds = null
   interactive = true
   speechActive = false
   speechCancelled = false
@@ -423,6 +442,8 @@ function destroyBubbleWindow(reason: string): void {
   bubbleWin = null
   bubbleReady = false
   shapeRects = [] // 旧形状不得套用到新窗口（新窗口维持全窗默认，等渲染侧重新上报）
+  contentSize = null
+  lastAppliedBounds = null
   if (win && !win.isDestroyed()) {
     win.destroy()
     console.log(`[bubble] 气泡窗已销毁（${reason}）——下次弹出重建`)
@@ -469,10 +490,23 @@ function applyPlacement(win: BrowserWindow, size: Size): BubbleTail {
   if (!a) return 'down'
   const width = Math.round(clamp(size.width, MIN_SIZE.width, MAX_SIZE.width))
   const height = Math.round(clamp(size.height, MIN_SIZE.height, MAX_SIZE.height))
+  contentSize = { width, height } // 跟随重摆的唯一尺寸来源（见 contentSize 注释）
   const wa = screen.getDisplayNearestPoint({ x: Math.round(a.x), y: Math.round(a.y) }).workArea
   const p = computeBubblePlacement(a, { width, height }, wa)
-  win.setBounds({ x: p.x, y: p.y, width, height })
-  forceRepaint(win)
+  const next: Rect = { x: p.x, y: p.y, width, height }
+  // 请求值相同则跳过：避免高频重复 setBounds（跟随/尺寸上报），也切断 resize → REPORT_SIZE 闭环
+  const prev = lastAppliedBounds
+  const same =
+    prev !== null &&
+    prev.x === next.x &&
+    prev.y === next.y &&
+    prev.width === next.width &&
+    prev.height === next.height
+  if (!same) {
+    win.setBounds(next)
+    lastAppliedBounds = next
+    forceRepaint(win)
+  }
   return p.tail
 }
 
@@ -738,8 +772,10 @@ function onPetMoved(): void {
     const a = computeAnchor()
     if (!a) return
     anchor = a
-    const b = win.getBounds()
-    reposition(win, { width: b.width, height: b.height })
+    // 尺寸取渲染侧上报的内容尺寸——**不要用 win.getBounds()**（Windows fractional DPI 下
+    // get→set 回喂会每次 +1px 累积；见 contentSize 注释与 geometry.followSize）。尚未收到上报
+    // （极早期）用文本预估值。
+    reposition(win, followSize(contentSize, ESTIMATED_SIZE.text))
   }, FOLLOW_THROTTLE_MS)
 }
 

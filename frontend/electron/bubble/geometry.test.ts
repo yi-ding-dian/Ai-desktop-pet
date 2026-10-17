@@ -9,11 +9,13 @@
  *
  * 覆盖：常规放置（后上 tail=down、尾尖对准锚点上方 TAIL_GAP 处、横向对锚点）；
  *       上方贴边 → 翻向（tail=up、尾尖对准锚点下方）；两侧都放不下 → 选空间大侧 + clamp 进工作区；
- *       水平越界 clamp（内收）；工作区比窗还小 → 不崩且夹进工作区。
+ *       水平越界 clamp（内收）；工作区比窗还小 → 不崩且夹进工作区；
+ *       跟随尺寸契约（只认内容尺寸，getBounds 回喂会累积增长——Windows fractional DPI 真机 bug）。
  */
 import {
   computeBubblePlacement,
   EDGE_MARGIN,
+  followSize,
   TAIL_GAP,
   TAIL_INSET_X,
   TAIL_INSET_Y_DOWN,
@@ -131,6 +133,40 @@ function tailPoint(p: { x: number; y: number; tail: 'down' | 'up' }): { x: numbe
   const tp = tailPoint(p)
   check('尾尖 x 对准锚点（副屏坐标系）', tp.x === anchor.x, `tail.x=${tp.x}`)
   check('窗口在副屏工作区内', p.x >= wa.x + EDGE_MARGIN)
+}
+
+// 8. 跟随尺寸契约：只吃渲染侧上报的内容尺寸；窗口 bounds 回喂在 fractional DPI 下会累积增长
+{
+  console.log('用例 8：跟随尺寸契约（禁止 getBounds 回喂）')
+  const reported: Size = { width: 174, height: 87 }
+  const fallback: Size = { width: 370, height: 218 }
+  check(
+    '未上报时用预估值',
+    followSize(null, fallback).width === fallback.width &&
+      followSize(null, fallback).height === fallback.height
+  )
+  check(
+    '上报后只认内容尺寸',
+    followSize(reported, fallback).width === reported.width &&
+      followSize(reported, fallback).height === reported.height
+  )
+
+  /**
+   * 模拟 Windows 175% 真机行为：setBounds(请求尺寸) 实际落在"请求 + 2"（fractional 舍入），
+   * getBounds 会回吐这个舍入值。feedBack=true 模拟旧实现（把窗口 bounds 再喂回 setBounds）。
+   */
+  const simulate = (feedBack: boolean): Size => {
+    let actual: Size = { width: reported.width + 2, height: reported.height + 2 }
+    for (let i = 0; i < 120; i += 1) {
+      const requested = followSize(feedBack ? actual : reported, fallback)
+      actual = { width: requested.width + 2, height: requested.height + 2 }
+    }
+    return actual
+  }
+  const fixed = simulate(false)
+  const regressed = simulate(true)
+  check('正确实现：120 帧跟随重摆后窗口尺寸不增长', fixed.width === 176 && fixed.height === 89, `${fixed.width}x${fixed.height}`)
+  check('反例（getBounds 回喂）：确实会持续累积增长', regressed.width > 400, `${regressed.width}x${regressed.height}`)
 }
 
 // ------------------------------------------------------------------ 汇总

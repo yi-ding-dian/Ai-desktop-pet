@@ -299,12 +299,18 @@ export default function PetBubble({
     }
     const ro = new ResizeObserver(report)
     ro.observe(el)
+    // 窗口尺寸变化（首弹预估尺寸 → 内容真实尺寸的收紧、以及主进程任何重摆）必须重报形状：
+    // 气泡是 bottom 锚定的，窗口变高会让气泡在窗内下移，而形状矩形是"窗内绝对坐标"——
+    // 不重报就会把气泡裁出形状区（元素尺寸没变，ResizeObserver 不会触发）。tail 变化同理
+    // （翻向会移动尾巴/气泡的窗内落点），一并纳入依赖重报。
+    window.addEventListener('resize', report)
     report()
     return () => {
       if (raf) cancelAnimationFrame(raf)
       ro.disconnect()
+      window.removeEventListener('resize', report)
     }
-  }, [onSize, onShape])
+  }, [onSize, onShape, tail])
 
   const closingCls = closing
     ? exitMode === 'hand'

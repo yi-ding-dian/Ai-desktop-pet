@@ -40,6 +40,20 @@ export interface BubblePlacement {
   tail: 'down' | 'up'
 }
 
+/**
+ * 宠物移动跟随重摆时使用的尺寸（DIP）：**只认渲染侧上报的内容尺寸**；尚未上报（极早期）
+ * 才用预估值。
+ *
+ * 为什么单列成函数并强调：Windows fractional DPI（如 175%）下，`setBounds(174x87)` 之后
+ * `getBounds()` 会回吐舍入后的值（实测 176x89）。若跟随逻辑把 getBounds 再喂回 setBounds，
+ * 每移动一帧就累积增长（+1~2px）。宠物走动/拖拽时跟随以 ~60fps 触发，几秒内气泡窗被撑大；
+ * 气泡是 bottom 锚定的，会随窗口变高下沉，而窗口形状停在旧位置——整条消息最终被形状裁掉
+ * （真机现象："一动宠物消息就消失"）。契约：跟随尺寸只能来自 REPORT_SIZE（见 index.ts 的 contentSize）。
+ */
+export function followSize(reported: Size | null, fallback: Size): Size {
+  return reported ?? fallback
+}
+
 /** 数值夹取 */
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), hi)
