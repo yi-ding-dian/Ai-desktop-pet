@@ -10,7 +10,7 @@
    - load_history{session_id=旧会话} → 断言历史仍在（气泡回填）；
    - 在旧会话继续问"我叫什么名字" → 断言回复含名字（记忆注入生效）；
    - 读后端日志文件，断言 "记忆注入：画像 N 条 / 长期记忆 M 条"（N,M>0）。
-6. 打印完整摘要（供 p3-memory-report.md 引用）。
+6. 打印完整摘要（供 docs/报告/后端/p3-memory-report.md 引用）。
 
 前置：与 ws_smoke.py 相同——LLM key 已配置（env > keyring > 600 文件）；
 用户 config.toml（~/.config/ai-desktop-pet/config.toml）的 [llm] 段被复制到

@@ -1,3 +1,5 @@
+> ⚠️ 历史快照（2026-10-14，**部分过期**）：默认配置已改为空 base_url（首启向导），文中 get/set/test 未接线的遗留均已闭环，embed() 仍为 NotImplementedError；reasoning_content 跳过、key 链与脱敏等结论仍有效。索引见 docs/报告/README.md。
+
 # P1 步骤 5：后端 LLM 接入 报告
 
 > 完成时间：2026-10-14 18:00

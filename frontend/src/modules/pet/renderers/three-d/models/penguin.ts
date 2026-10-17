@@ -26,7 +26,7 @@
  * 由渲染器 applyFrame 驱动；企鹅专属件（呆毛/肉翅）在 build 返回的 applyExtras
  * 闭包里驱动——帧数据里的兔耳/尾巴字段企鹅直接忽略（不消费）。
  *
- * 调整造型只改本文件；修改后建议用离屏预览（见 three-d-rabbit-report.md）核对观感。
+ * 调整造型只改本文件；修改后建议用离屏预览（见 docs/报告/前端/three-d-rabbit-report.md）核对观感。
  */
 import * as THREE from 'three'
 import type {

@@ -1,3 +1,5 @@
+> ⚠️ 历史快照（2026-10-14，**部分过期**）：穿透主机制已改为「空气让路」（见 electron/window/hit-gate.ts + xdotool 光标源），文中穿透方案部分作废；①forward 不转发 mousemove ②光标坐标冻结 ③setShape([]) 陷阱等实测结论**仍有效**（气泡窗仍在用 setShape）。索引见 docs/报告/README.md。
+
 # 前端窗口能力验证报告（P1 步骤 1+2）
 
 > 环境：Deepin Linux / X11（DISPLAY=:0，双屏 1920x1080 + HDMI-1 1920x1080+1920+0）

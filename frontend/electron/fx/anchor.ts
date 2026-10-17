@@ -12,7 +12,7 @@
  * ② **中心加权 RGB 颜色校验**精选（兔头的白毛/绿眼/粉腮色彩独特）——综合分 = NCC × 颜色分，
  *    阈值判定；命中区域中心 = 图标中心（模板绕图标中心裁制）。
  *
- * 抓屏路径（Linux/X11 实测：desktopCapturer 可用，见 fx-report.md）：优先 `desktopCapturer`
+ * 抓屏路径（Linux/X11 实测：desktopCapturer 可用，见 docs/报告/前端/fx-report.md）：优先 `desktopCapturer`
  * （原生、无子进程），异常/空图时回退 `ffmpeg -f x11grab` 子进程抓图（环境自带 ffmpeg，不新增依赖）。
  *
  * 模板：`resources/tray-anchor-template.png`（从实测截图裁出的 24×24 真实渲染兔头，中心 = 图标中心），
