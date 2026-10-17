@@ -11,7 +11,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
-    "test:hit-gate": "esbuild electron/window/hit-gate.test.ts --bundle --platform=node --format=esm --outfile=out/tests/hit-gate.test.mjs && esbuild electron/window/xdotool-cursor-source.test.ts --bundle --platform=node --format=esm --outfile=out/tests/xdotool-cursor-source.test.mjs && node out/tests/hit-gate.test.mjs && node out/tests/xdotool-cursor-source.test.mjs",
+    "test:click-through": "esbuild electron/window/click-through.test.ts --bundle --platform=node --format=esm --outfile=out/tests/click-through.test.mjs && esbuild electron/window/xdotool-cursor-source.test.ts --bundle --platform=node --format=esm --outfile=out/tests/xdotool-cursor-source.test.mjs && node out/tests/click-through.test.mjs && node out/tests/xdotool-cursor-source.test.mjs",
     "test:bubble-geometry": "esbuild electron/bubble/geometry.test.ts --bundle --platform=node --format=esm --outfile=out/tests/bubble-geometry.test.mjs && node out/tests/bubble-geometry.test.mjs",
     "test:teaching-geometry": "esbuild electron/teaching/geometry.test.ts --bundle --platform=node --format=esm --outfile=out/tests/teaching-geometry.test.mjs && node out/tests/teaching-geometry.test.mjs",
     "dist:linux": "npm run build && electron-builder --linux AppImage",

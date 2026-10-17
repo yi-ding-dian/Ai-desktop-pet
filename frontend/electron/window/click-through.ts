@@ -39,17 +39,17 @@
  *    判定无变化、不报告 → 主进程再也收不回接管权）。而"指针在窗外"本身无害：窗口不吃窗外点击，
  *    指针移动回窗内必经 pointermove → 渲染判定报告链路自然工作——故守卫状态切换整个移除。
  *    同理，切到 YIELDED 时主动补推一次 null（并重置出窗边沿），作为给渲染侧的"状态已让路"信号
- *    （渲染侧若把 null 视为"重置判定去重"则能进一步消除边界残留——见 air-pass 对接建议）。
+ *    （渲染侧若把 null 视为"重置判定去重"则能进一步消除边界残留——见 pixel-hit-test 对接建议）。
  *
  * 平台无关：本模块不 import electron 运行时（仅类型 + 通道常量），依赖经 deps 注入（离线可测）。
  */
 import { IPC_EVENTS } from '../ipc/channels'
 import { isWindows } from '../platform'
 import type { Point, Rect } from './index'
-import type { HitGateCursorSource } from './cursor-source'
+import type { ClickThroughCursorSource } from './cursor-source'
 
 /** 状态机所需的最小窗口接口（BrowserWindow 结构兼容；离线测试注入假窗口） */
-export interface HitGateWindow {
+export interface ClickThroughWindow {
   /** 输入放行开关（ignore=true 时窗口不接收输入；forward 在 X11 下实测无效，显式 false） */
   setIgnoreMouseEvents(ignore: boolean, options?: { forward?: boolean }): void
   isVisible(): boolean
@@ -62,7 +62,7 @@ export interface HitGateWindow {
 }
 
 /** 调度器抽象（默认=全局定时器；离线测试注入假时钟精确驱动时序） */
-export interface HitGateScheduler {
+export interface ClickThroughScheduler {
   now(): number
   setInterval(fn: () => void, ms: number): unknown
   clearInterval(handle: unknown): void
@@ -70,7 +70,7 @@ export interface HitGateScheduler {
   clearTimeout(handle: unknown): void
 }
 
-const defaultScheduler: HitGateScheduler = {
+const defaultScheduler: ClickThroughScheduler = {
   now: () => Date.now(),
   setInterval: (fn, ms) => setInterval(fn, ms),
   clearInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
@@ -79,10 +79,10 @@ const defaultScheduler: HitGateScheduler = {
 }
 
 /** 接管状态：taken=窗口接收输入；yielded=输入让路（穿透） */
-export type HitGateState = 'taken' | 'yielded'
+export type ClickThroughState = 'taken' | 'yielded'
 
 /** 时序常量（集中可调；设计文档 §5.1：轮询 ~50ms、防抖"连续一致判定 + 最短间隔"） */
-export interface HitGateTiming {
+export interface ClickThroughTiming {
   /** YIELDED 态轮询间隔（ms） */
   POLL_INTERVAL_MS: number
   /** 防抖：状态切换需连续 N 次一致判定 */
@@ -97,7 +97,7 @@ export interface HitGateTiming {
   PULSE_MS: number
 }
 
-export const HIT_GATE_TIMING: HitGateTiming = {
+export const CLICK_THROUGH_TIMING: ClickThroughTiming = {
   POLL_INTERVAL_MS: 50,
   DEBOUNCE_STREAK: 2,
   DEBOUNCE_MIN_INTERVAL_MS: 120,
@@ -106,16 +106,16 @@ export const HIT_GATE_TIMING: HitGateTiming = {
   PULSE_MS: 20
 }
 
-export interface HitGateDeps {
-  win: HitGateWindow
+export interface ClickThroughDeps {
+  win: ClickThroughWindow
   /** 光标坐标源（见 cursor-source.ts：Linux 首选 XI2 实时流；降级源 isLive=false 时配合脉冲） */
-  cursorSource: HitGateCursorSource
+  cursorSource: ClickThroughCursorSource
   /** 调度器（缺省用全局定时器；测试注入） */
-  scheduler?: HitGateScheduler
+  scheduler?: ClickThroughScheduler
 }
 
 /** 状态机句柄（main.ts 持有：start / 清理 / 渲染回报转发） */
-export interface HitGate {
+export interface ClickThrough {
   /** 启动（初值 YIELDED：不挡用户，首次滑入由轮询+渲染判定自然接管）；幂等 */
   start(): void
   /** 停止并解绑（退出/窗口销毁清理） */
@@ -123,7 +123,7 @@ export interface HitGate {
   /** 渲染侧命中判定回报（IPC 转发入口：IPC.PET_REPORT_HIT_TEST） */
   notifyReport(solid: boolean): void
   /** 当前状态（调试/测试观测） */
-  getState(): HitGateState
+  getState(): ClickThroughState
 }
 
 /**
@@ -137,14 +137,14 @@ export interface HitGate {
  *   YIELDED --渲染报 solid=true--> TAKEN（setIgnoreMouseEvents(false)）
  * 守卫：窗口不可见 / 最小化 / 销毁 → 停轮询、状态复位 YIELDED（重新显示恢复轮询并立即脉冲）。
  */
-export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GATE_TIMING): HitGate {
+export function createClickThrough(deps: ClickThroughDeps, timing: ClickThroughTiming = CLICK_THROUGH_TIMING): ClickThrough {
   const { win, cursorSource } = deps
   const sched = deps.scheduler ?? defaultScheduler
 
   /** 读取光标屏幕坐标；null = 坐标源暂无可信数据（如 XI2 首事件前）→ 本轮跳过 */
   const readCursor = (): Point | null => cursorSource.read()
 
-  let state: HitGateState = 'yielded'
+  let state: ClickThroughState = 'yielded'
   let started = false
   let pollTimer: unknown = null
   let pulseTimer: unknown = null
@@ -167,7 +167,7 @@ export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GAT
    *  - X11：转发本就无效（DDE 实测 `{forward:true}` 不转发 mousemove），取值无差别 → 保持 false；
    *  - Windows：**必须 true**。让路态下要把 mousemove 转发给渲染进程，否则渲染侧收不到任何
    *    指针事件——换用未实现 hitTest 的渲染器（three-d / part-animation）时，空气让路会
-   *    自动退回 App.tsx 的旧悬停逻辑（见 air-pass.ts 的 active 条件），而旧逻辑正是靠转发来的
+   *    自动退回 App.tsx 的旧悬停逻辑（见 pixel-hit-test.ts 的 active 条件），而旧逻辑正是靠转发来的
    *    mousemove 判定"滑回宠物身上"，转发被关掉就成了**永远收不回输入的穿透态**（宠物再也点不到）。
    *    与本平台 window/win32.ts 的 setClickThrough 保持同一取值。
    */
@@ -271,7 +271,7 @@ export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GAT
     candidate = null
     streak = 0
     resetYieldedSide()
-    console.log(`[window/hit-gate] 守卫暂停（${reason}）：停轮询、状态复位 YIELDED`)
+    console.log(`[window/click-through] 守卫暂停（${reason}）：停轮询、状态复位 YIELDED`)
   }
 
   const stopInternal = (reason: string): void => {
@@ -283,7 +283,7 @@ export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GAT
     win.removeListener('hide', onHide)
     win.removeListener('minimize', onMinimize)
     win.removeListener('restore', onRestore)
-    console.log(`[window/hit-gate] 停止（${reason}）`)
+    console.log(`[window/click-through] 停止（${reason}）`)
   }
 
   const onShow = (): void => resumeInternal('shown')
@@ -297,11 +297,11 @@ export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GAT
     pulseDueAt = -Infinity // 恢复后首个 tick 立即脉冲（降级源尽快刷新缓存；实时源无此路径）
     cursorSource.start()
     ensurePolling()
-    console.log(`[window/hit-gate] 守卫恢复（${reason}）：重启轮询`)
+    console.log(`[window/click-through] 守卫恢复（${reason}）：重启轮询`)
   }
 
   /** 尝试状态切换（防抖：需满足最短间隔；不满足时保留候选，由确认定时器补足剩余时间再试） */
-  const trySwitch = (target: HitGateState): void => {
+  const trySwitch = (target: ClickThroughState): void => {
     if (state === target) return
     const now = sched.now()
     if (lastSwitchAt !== null && now - lastSwitchAt < timing.DEBOUNCE_MIN_INTERVAL_MS) return
@@ -313,7 +313,7 @@ export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GAT
     if (target === 'taken') {
       stopPolling() // 接管态窗口收真实事件：停轮询/脉冲，判定交渲染 mousemove 事件
       applyIgnore(false)
-      console.log('[window/hit-gate] → TAKEN（接管输入，渲染事件驱动判定）')
+      console.log('[window/click-through] → TAKEN（接管输入，渲染事件驱动判定）')
     } else {
       applyIgnore(true)
       resetYieldedSide()
@@ -321,7 +321,7 @@ export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GAT
       // 可消除"主进程状态变化但渲染判定值未变"的边界残留——见文件头对接说明 ②）
       win.webContents.send(IPC_EVENTS.PET_POINTER_POS, null)
       ensurePolling()
-      console.log('[window/hit-gate] → YIELDED（输入让路，轮询 + 脉冲感知）')
+      console.log('[window/click-through] → YIELDED（输入让路，轮询 + 脉冲感知）')
     }
   }
 
@@ -332,7 +332,7 @@ export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GAT
   const onConfirm = (): void => {
     confirmTimer = null
     if (!started || candidate === null) return
-    const target: HitGateState = candidate ? 'taken' : 'yielded'
+    const target: ClickThroughState = candidate ? 'taken' : 'yielded'
     if (target === state) return
     const now = sched.now()
     if (lastSwitchAt !== null && now - lastSwitchAt < timing.DEBOUNCE_MIN_INTERVAL_MS) {
@@ -356,7 +356,7 @@ export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GAT
    */
   const notifyReport = (solid: boolean): void => {
     if (!started || win.isDestroyed()) return
-    const target: HitGateState = solid ? 'taken' : 'yielded'
+    const target: ClickThroughState = solid ? 'taken' : 'yielded'
     if (target === state) {
       // 与当前状态一致的回报：清零候选（维护"稳定"语义）
       candidate = null
@@ -390,7 +390,7 @@ export function createHitGate(deps: HitGateDeps, timing: HitGateTiming = HIT_GAT
     win.on('minimize', onMinimize)
     win.on('restore', onRestore)
     if (win.isVisible() && !win.isMinimized()) ensurePolling()
-    console.log('[window/hit-gate] 启动：初值 YIELDED（轮询 + 坐标源）')
+    console.log('[window/click-through] 启动：初值 YIELDED（轮询 + 坐标源）')
   }
 
   const stop = (): void => stopInternal('stopped')

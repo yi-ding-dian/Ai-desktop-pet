@@ -22,7 +22,7 @@ export {
   interruptPetBehavior,
   debugTriggerBehavior,
   subscribeBehaviorStatus
-} from './behaviors'
-export type { BehaviorStatus } from './behaviors'
+} from './behavior'
+export type { BehaviorStatus } from './behavior'
 // 空气让路（§5.1 增补）：App 的旧"hitbox 悬停切穿透"逻辑据此短路（渲染器实现 hitTest 时停用）
-export { isAirPassActive } from './air-pass'
+export { isPixelHitTestActive } from './pixel-hit-test'

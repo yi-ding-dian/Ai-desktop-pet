@@ -6,7 +6,7 @@
 import type { ReactElement } from 'react'
 import Section from '../components/section'
 import { Field, SwitchRow, TextField } from '../components/fields'
-import type { PanelProps } from './common'
+import type { PanelProps } from './panel-props'
 
 interface BehaviorPanelProps extends PanelProps {
   /** 免打扰时段的格式校验错误（保存时产生） */

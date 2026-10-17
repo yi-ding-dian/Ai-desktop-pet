@@ -1,20 +1,20 @@
 /**
- * hit-gate 输入接管状态机 —— 离线自测（mock 窗口/时钟，不依赖 Electron 运行时）。
+ * click-through 输入接管状态机 —— 离线自测（mock 窗口/时钟，不依赖 Electron 运行时）。
  *
  * 运行方式（esbuild 打包后以 Node 执行）：
  *   cd frontend
- *   node_modules/.bin/esbuild electron/window/hit-gate.test.ts --bundle --platform=node --format=esm \
- *     --outfile=/tmp/hit-gate.test.mjs && node /tmp/hit-gate.test.mjs
+ *   node_modules/.bin/esbuild electron/window/click-through.test.ts --bundle --platform=node --format=esm \
+ *     --outfile=/tmp/click-through.test.mjs && node /tmp/click-through.test.mjs
  *
  * 覆盖：TAKEN→空气→YIELDED；YIELDED→回实体→TAKEN；防抖（连续一致/最短间隔/交替不累计）；
  *       出窗保持 + null 边沿；隐藏/最小化守卫与恢复；拖拽恒实体路径；脉冲机制；销毁守卫；坐标边界。
  */
-import { createHitGate, HIT_GATE_TIMING, type HitGateScheduler, type HitGateWindow } from './hit-gate'
-import type { HitGateCursorSource } from './cursor-source'
+import { createClickThrough, CLICK_THROUGH_TIMING, type ClickThroughScheduler, type ClickThroughWindow } from './click-through'
+import type { ClickThroughCursorSource } from './cursor-source'
 
 // ---------------------------------------------------------------- 假时钟调度器
 
-class FakeScheduler implements HitGateScheduler {
+class FakeScheduler implements ClickThroughScheduler {
   private t = 0
   private seq = 0
   private timers = new Map<number, { fn: () => void; at: number; every: number | null }>()
@@ -72,7 +72,7 @@ class FakeScheduler implements HitGateScheduler {
 
 // ---------------------------------------------------------------- 假窗口
 
-interface FakeWindow extends HitGateWindow {
+interface FakeWindow extends ClickThroughWindow {
   ignoreState: boolean
   ignoreCalls: boolean[]
   sent: Array<{ channel: string; payload: unknown }>
@@ -124,7 +124,7 @@ function createFakeWindow(): FakeWindow {
 
 // ---------------------------------------------------------------- 假坐标源
 
-interface FakeCursorSource extends HitGateCursorSource {
+interface FakeCursorSource extends ClickThroughCursorSource {
   point: { x: number; y: number } | null
   live: boolean
   startCount: number
@@ -163,13 +163,13 @@ function check(name: string, cond: boolean, detail = ''): void {
   }
 }
 
-const T = HIT_GATE_TIMING
+const T = CLICK_THROUGH_TIMING
 
 function setup(cursor: { x: number; y: number } = { x: 300, y: 300 }) {
   const sched = new FakeScheduler()
   const win = createFakeWindow()
   const source = createFakeCursorSource(cursor)
-  const gate = createHitGate({ win, cursorSource: source, scheduler: sched })
+  const gate = createClickThrough({ win, cursorSource: source, scheduler: sched })
   return { sched, win, gate, source }
 }
 
@@ -397,7 +397,7 @@ const TICK = T.POLL_INTERVAL_MS + 1
   check('实时源下坐标照常推送', win.sent.some((s) => s.payload !== null))
 }
 
-// 14. 坐标源生命周期（随 hit-gate 启动/暂停/恢复/停止转发）
+// 14. 坐标源生命周期（随 click-through 启动/暂停/恢复/停止转发）
 {
   console.log('用例 14：坐标源生命周期')
   const { win, gate, source } = setup()
@@ -446,7 +446,7 @@ const TICK = T.POLL_INTERVAL_MS + 1
 // ---------------------------------------------------------------- 汇总
 
 console.log('')
-console.log(`=== hit-gate 离线测试：${pass} 通过 / ${failures.length} 失败 ===`)
+console.log(`=== click-through 离线测试：${pass} 通过 / ${failures.length} 失败 ===`)
 if (failures.length > 0) {
   for (const f of failures) console.error(` - ${f}`)
   process.exitCode = 1

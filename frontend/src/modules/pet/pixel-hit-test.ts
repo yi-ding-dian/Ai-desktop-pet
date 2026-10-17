@@ -23,7 +23,7 @@
  * 上报，不会打断正在生效的让路。摸头点击判定不在此模块（仍在 PetView，行为不变）。
  *
  * 与旧悬停逻辑的关系：本模块激活（渲染器实现 hitTest）时，App.tsx 旧"hitbox 进出切
- * clickThrough"逻辑经 `isAirPassActive()` 短路停用——输入全权交主进程状态机，避免双源
+ * clickThrough"逻辑经 `isPixelHitTestActive()` 短路停用——输入全权交主进程状态机，避免双源
  * 打架；未激活时旧逻辑照常（fallback）。挂载/卸载由 PetView 驱动（见 PetView.tsx）。
  */
 import type { PetRenderer } from './renderers'
@@ -56,7 +56,7 @@ let lastSolid: boolean | null = null
 let pointerHeld = false
 
 /** 供 App 判断是否停用旧"hitbox 进出切 clickThrough"逻辑（见文件头） */
-export function isAirPassActive(): boolean {
+export function isPixelHitTestActive(): boolean {
   return active
 }
 
@@ -90,7 +90,7 @@ function isInteractiveDomAt(x: number, y: number): boolean {
  * 返回的卸载函数仅清理引用。
  * @returns 卸载函数（PetView 卸载渲染器前调用）
  */
-export function setupAirPass(r: PetRenderer): () => void {
+export function setupPixelHitTest(r: PetRenderer): () => void {
   const bridge = getPetBridge()
   renderer = r
   // 激活条件：渲染器实现 hitTest 且 preload 已具备上报通道（主进程侧先行的契约；

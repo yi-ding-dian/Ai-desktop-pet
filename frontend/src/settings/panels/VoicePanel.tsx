@@ -6,7 +6,7 @@
 import { useMemo, type ReactElement } from 'react'
 import Section from '../components/section'
 import { Field, SelectField, SwitchRow } from '../components/fields'
-import type { PanelProps } from './common'
+import type { PanelProps } from './panel-props'
 
 /** 内置常见 Edge TTS 中文音色（ShortName；后端 provider=edge） */
 const EDGE_VOICES: ReadonlyArray<{ value: string; label: string }> = [

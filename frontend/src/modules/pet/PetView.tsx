@@ -14,9 +14,9 @@ import type { WsClient } from '../../shared/ws-client'
 import { EMOTION_VALUES } from '../../shared/protocol'
 import { getPetBridge } from '../../shared/pet-bridge'
 import { createPetRenderer, type PetRenderer } from './renderers'
-import { setupAirPass } from './air-pass'
+import { setupPixelHitTest } from './pixel-hit-test'
 import { setActivePetRenderer, setPetEmotion } from './controller'
-import { debugTriggerBehavior, interruptPetBehavior } from './behaviors'
+import { debugTriggerBehavior, interruptPetBehavior } from './behavior'
 
 /** dev 态日志（转发到主进程日志，便于无 devtools 验证）；生产构建自动剔除 */
 const devLog = (msg: string): void => {
@@ -65,10 +65,10 @@ export default function PetView({ client }: PetViewProps): ReactElement {
     // 注册到 pet 域控制器：voice 域口型驱动（setPetMouth）经此转发到当前渲染器
     setActivePetRenderer(renderer)
     // 空气让路（设计文档 §5.1 增补）：像素级命中的判定与上报（渲染器实现 hitTest 时激活；
-    // 未实现则零接线，App 旧悬停逻辑保留——见 air-pass.ts 文件头）
-    const disposeAirPass = setupAirPass(renderer)
+    // 未实现则零接线，App 旧悬停逻辑保留——见 pixel-hit-test.ts 文件头）
+    const disposePixelHitTest = setupPixelHitTest(renderer)
     return () => {
-      disposeAirPass()
+      disposePixelHitTest()
       rendererRef.current = null
       setActivePetRenderer(null)
       renderer.dispose()

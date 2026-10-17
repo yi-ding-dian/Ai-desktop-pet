@@ -20,9 +20,9 @@
  */
 import { execFile } from 'node:child_process'
 import type { Point } from './index'
-import type { HitGateCursorSource } from './cursor-source'
+import type { ClickThroughCursorSource } from './cursor-source'
 
-/** 轮询间隔（ms；缺省 50 与 hit-gate 轮询同频） */
+/** 轮询间隔（ms；缺省 50 与 click-through 轮询同频） */
 const DEFAULT_INTERVAL_MS = 50
 /** 连续失败上限（达到即判定不可用） */
 const DEFAULT_MAX_FAILURES = 3
@@ -56,7 +56,7 @@ export interface XdotoolCursorSourceOptions {
 }
 
 /** 创建 xdotool 光标源（Linux；失败经 isFailed() 信号交组合器降级） */
-export function createXdotoolCursorSource(opts: XdotoolCursorSourceOptions = {}): HitGateCursorSource {
+export function createXdotoolCursorSource(opts: XdotoolCursorSourceOptions = {}): ClickThroughCursorSource {
   const log = opts.log ?? ((msg: string) => console.log(`[window/xdotool-cursor] ${msg}`))
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS
   const maxFailures = opts.maxFailures ?? DEFAULT_MAX_FAILURES

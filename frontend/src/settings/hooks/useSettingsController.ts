@@ -24,8 +24,8 @@ import {
   hasChanges,
   snapshotToForm,
   type FormValues
-} from '../model/config-form'
-import { parseQuietHours } from '../model/quiet-hours'
+} from '../form/config-form'
+import { parseQuietHours } from '../form/quiet-hours'
 import { createSettingsBackendClient, type SettingsBackendClient } from '../api/config-client'
 
 /** 加载阶段：waiting=等后端连接，loading=已发 get_config 等回执，ready=已填充 */

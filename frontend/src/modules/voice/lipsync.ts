@@ -7,7 +7,7 @@
  *
  * 口型策略：上升快（跟开口）、下降慢（防抖动），时间常数按帧率无关的指数平滑计算。
  */
-import { clamp01 } from './util'
+import { clamp01 } from './audio-util'
 
 /** 口型驱动参数 */
 export interface LipsyncConfig {

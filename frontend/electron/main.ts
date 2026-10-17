@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { resolveWindowImpl } from './window/registry'
 import { registerIpcHandlers, pushDebugState, type IpcContext } from './ipc'
 import { IPC, IPC_EVENTS } from './ipc/channels'
-import { createHitGate, type HitGate } from './window/hit-gate'
+import { createClickThrough, type ClickThrough } from './window/click-through'
 import { resolveCursorSource } from './window/cursor-source'
 import { backendManager } from './backend-process'
 import { createTray, destroyTrayMenu } from './tray'
@@ -43,7 +43,7 @@ let tray: Tray | null = null
 /** 调试态：hitbox 边框显示开关（主进程持有，渲染侧只渲染） */
 let hitboxVisible = false
 /** 空气让路（§5.1 增补）：输入接管状态机（仅"透明窗口可用"的平台启用；降级态不启动） */
-let hitGate: HitGate | null = null
+let hitGate: ClickThrough | null = null
 /** PET_REPORT_HIT_TEST 的 ipcMain 监听器引用（退出清理 removeListener 用） */
 let hitReportListener: ((event: Electron.IpcMainEvent, payload: { solid: boolean }) => void) | null =
   null
@@ -112,7 +112,7 @@ function registerDebugShortcuts(): void {
   }
 
   // F9 调试键（走旧 setShape 形状穿透路径，原样保留）：空气让路启用后，常规输入切换由
-  // window/hit-gate 状态机全权接管（setIgnoreMouseEvents 路径，§5.1 增补）——本键仅作
+  // window/click-through 状态机全权接管（setIgnoreMouseEvents 路径，§5.1 增补）——本键仅作
   // 调试绕过 / 两条穿透机制对比，不再是常规穿透开关。
   bind(SHORTCUTS.toggleClickThrough, () => {
     if (!ipcCtx) return
@@ -173,7 +173,7 @@ if (!app.requestSingleInstanceLock()) {
     // xdotool 缺失/异常自动降级 screen + 脉冲方案——见 window/cursor-source.ts），其余平台用 screen API。
     // 与旧机制约定（§5.1）：启用后本状态机全权接管输入切换（渲染侧停用旧悬停切换）。
     if (!pet.degraded) {
-      hitGate = createHitGate({
+      hitGate = createClickThrough({
         win: petWin,
         cursorSource: resolveCursorSource({
           screenGetCursor: () => screen.getCursorScreenPoint(),
@@ -184,7 +184,7 @@ if (!app.requestSingleInstanceLock()) {
       ipcMain.on(IPC.PET_REPORT_HIT_TEST, hitReportListener)
       hitGate.start()
     } else {
-      console.log('[main] 降级平台：不启用空气让路（hit-gate）')
+      console.log('[main] 降级平台：不启用空气让路（click-through）')
     }
     // 关窗=躲进托盘（用户确认的行为）：Alt+F4 等关闭动作只隐藏窗口，且走魔法球捕获动画
     // （fx 域负责时序；动画异常/超时有兜底，结果语义"躲进托盘"一定生效）；

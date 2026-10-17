@@ -4,7 +4,7 @@
 import type { ReactElement } from 'react'
 import Section from '../components/section'
 import { SwitchRow } from '../components/fields'
-import type { PanelProps } from './common'
+import type { PanelProps } from './panel-props'
 
 export default function MemoryPanel({ form, setField }: PanelProps): ReactElement {
   return (

@@ -14,9 +14,9 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import Section from '../components/section'
 import { Field, SelectField, TextField } from '../components/fields'
-import { findProvider, LLM_PROVIDER_PRESETS, matchProviderId } from '../model/llm-providers'
+import { findProvider, LLM_PROVIDER_PRESETS, matchProviderId } from '../form/llm-providers'
 import type { TestResult } from '../hooks/useSettingsController'
-import type { PanelProps } from './common'
+import type { PanelProps } from './panel-props'
 
 interface LlmPanelProps extends PanelProps {
   /** 「测试连接」成功拉到的模型列表（null = 尚未拿到，用输入框） */

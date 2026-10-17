@@ -1,5 +1,5 @@
 /**
- * LLM 服务商预设（settings 域 model 层，首启引导 §7.6.5 步 2 的数据源）。
+ * LLM 服务商预设（settings 域 form 层，首启引导 §7.6.5 步 2 的数据源）。
  *
  * 每个预设给常用 base_url + 模型；keyUrl = 申请 Key 的官网（null = 不显示「去获取 Key」，
  * 如本地部署 / 自定义）。「本地部署」模型留空，用 modelPlaceholder 提示手填。

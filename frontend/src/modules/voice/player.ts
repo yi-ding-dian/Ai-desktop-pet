@@ -11,7 +11,7 @@
 import type { AudioFramePacket } from '../../shared/protocol'
 import { AudioQueue } from './audio-queue'
 import { MouthDriver } from './lipsync'
-import { shortId } from './util'
+import { shortId } from './audio-util'
 
 /** 口型驱动最小接口（测试可注入替身） */
 export interface MouthDriverLike {

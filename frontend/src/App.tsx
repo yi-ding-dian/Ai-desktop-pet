@@ -41,7 +41,7 @@ import {
   subscribeBehaviorStatus,
   setPetConversationActive,
   setPetState,
-  isAirPassActive,
+  isPixelHitTestActive,
   type BehaviorStatus
 } from './modules/pet'
 import {
@@ -378,14 +378,14 @@ export default function App(): ReactElement {
   // Linux：物理穿透由窗口形状静态保证，本逻辑负责"形状接管 ↔ 全窗接管"的动态切换；
   // Windows：本逻辑是穿透切换的主力（forward 可转发穿透态下的 mousemove）。
   // 空气让路整合（§5.1 增补，2026-10-16）：当前渲染器实现像素级命中（hitTest）时，
-  // 输入判定与上报全权交主进程接管状态机（pet 域 air-pass：实体/空气 + 让路态光标轮询），
+  // 输入判定与上报全权交主进程接管状态机（pet 域 pixel-hit-test：实体/空气 + 让路态光标轮询），
   // 本逻辑短路停用——避免"hitbox 进出"与"像素命中"双源打架；渲染器未实现时保持本逻辑（fallback）。
   useEffect(() => {
     const bridge = getPetBridge()
 
     const handleMove = (e: MouseEvent): void => {
       if (draggingRef.current) return // 拖拽期间穿透由拖拽流程控制，避免跟随抖动误开穿透
-      if (isAirPassActive()) return // 渲染器支持像素级命中：交主进程状态机（见上注释）
+      if (isPixelHitTestActive()) return // 渲染器支持像素级命中：交主进程状态机（见上注释）
       const el = hitboxRef.current
       if (!el) return
       const rect = el.getBoundingClientRect()

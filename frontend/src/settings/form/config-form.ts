@@ -1,5 +1,5 @@
 /**
- * 设置表单模型（settings 域 model 层）：config 快照 ⇄ 表单值 ⇄ set_config patch。
+ * 设置表单模型（settings 域 form 层）：config 快照 ⇄ 表单值 ⇄ set_config patch。
  *
  * 职责边界（纯函数，无 React / 无 IO）：
  * - snapshotToForm：后端 `config` 事件（宽松 JSON）→ 表单值（字段缺失给安全默认，不崩）；

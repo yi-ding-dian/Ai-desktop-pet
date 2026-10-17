@@ -11,7 +11,7 @@
  *       降级组合器（primary 失败 → 永久切 fallback + 日志一次）。
  */
 import { createXdotoolCursorSource, parseXdotoolLocation } from './xdotool-cursor-source'
-import { createDegradableCursorSource, type HitGateCursorSource } from './cursor-source'
+import { createDegradableCursorSource, type ClickThroughCursorSource } from './cursor-source'
 
 // ---------------------------------------------------------------- 断言工具
 
@@ -88,7 +88,7 @@ const SHELL_OUT = (x: number, y: number): string => `X=${x}\nY=${y}\nSCREEN=0\nW
   src.start()
   await sleep(80)
   check('连续失败达上限 → isFailed()', src.isFailed?.() === true)
-  check('降级后 isLive() 为 false（hit-gate 将启用脉冲）', src.isLive() === false)
+  check('降级后 isLive() 为 false（click-through 将启用脉冲）', src.isLive() === false)
   src.stop()
 
   // 坏输出同样计入失败（xdotool 版本差异等）
@@ -129,7 +129,7 @@ const SHELL_OUT = (x: number, y: number): string => `X=${x}\nY=${y}\nSCREEN=0\nW
   console.log('用例 5：降级组合器')
   const primaryPoint = { x: 11, y: 22 }
   let primaryFailed = false
-  const primary: HitGateCursorSource = {
+  const primary: ClickThroughCursorSource = {
     read: () => primaryPoint,
     isLive: () => true,
     isFailed: () => primaryFailed,
@@ -149,7 +149,7 @@ const SHELL_OUT = (x: number, y: number): string => `X=${x}\nY=${y}\nSCREEN=0\nW
   check('primary 正常 → isLive 用 primary', combo.isLive() === true)
   primaryFailed = true
   check('primary 失败 → read 切 fallback', combo.read() === fallbackPoint)
-  check('primary 失败 → isLive 变 false（hit-gate 将启用脉冲）', combo.isLive() === false)
+  check('primary 失败 → isLive 变 false（click-through 将启用脉冲）', combo.isLive() === false)
   check('降级日志提示一次', logs.length === 1, JSON.stringify(logs))
   check('重复读取不重复提示', logs.length === 1)
 }
