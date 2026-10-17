@@ -51,9 +51,17 @@
  * 路径的 KWin/Chromium 残屏缺陷规避，排查全程见 destroyBubbleWindow 注释）；退出（will-quit）destroy。
  * 策略出口：platform.REUSE_BUBBLE_WINDOW（bubble 域不直接读 process.platform）。
  */
-import { app, BrowserWindow, ipcMain, screen, type WebContents } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  ipcMain,
+  Menu,
+  screen,
+  type WebContents
+} from 'electron'
 import { join } from 'node:path'
-import { linuxOnlyWindowOptions, REUSE_BUBBLE_WINDOW } from '../platform'
+import { isWindows, linuxOnlyWindowOptions, REUSE_BUBBLE_WINDOW } from '../platform'
 import {
   IPC,
   IPC_BUBBLE,
@@ -179,6 +187,23 @@ let speechCancelled = false
 let suppressSpeechRestore = false
 /** 最新文本快照（渲染侧全文覆盖式；begin 异步就绪期间到达的文本在此暂存，就绪后补发；常驻期间为"当前显示内容"） */
 let speechText = ''
+/** 回复气泡空闲自动收起时长（ms；0=不自动收）——设置保存后经 SET_IDLE_TTL 下发 */
+let speechIdleMs = 30_000
+/** 本轮回复是否已进入"可自动收起"阶段（SAY_END(false) 后置位；新一轮 SAY_BEGIN 清除；菜单让位保留） */
+let speechIdleEligible = false
+/** 悬浮/选中文字期间暂停计时（气泡渲染侧上报） */
+let speechIdlePaused = false
+/** 空闲收起定时器（关闭/让位/新回复/交互时清理） */
+let speechIdleTimer: NodeJS.Timeout | null = null
+/** 本轮说话的空闲时长覆盖（本地短提示 5s；普通回复为 null → 用设置值） */
+let speechIdleOverrideMs: number | null = null
+/** 下一次 SAY_BEGIN 使用的临时空闲时长（由 SET_NEXT_SPEECH_TTL 预置，BEGIN 消费一次） */
+let pendingSpeechTtlMs: number | null = null
+/** 说话气泡右键菜单打开中：原生菜单可能让窗失焦，blur 守卫必须放行 */
+let speechContextMenuOpen = false
+/** Windows 光标悬浮轮询（气泡在宠物窗下层时渲染侧收不到 pointerenter，主进程兜底） */
+let speechHoverPoll: NodeJS.Timeout | null = null
+let speechHoverInside = false
 /** 宠物移动跟随节流标志（move 事件高频；至多每 FOLLOW_THROTTLE_MS 重摆一次） */
 let followPending = false
 /** 气泡窗交互形状（渲染侧 REPORT_SHAPE 上报；Linux 用 win.setShape 裁输入区——说话气泡悬浮交互 + 其余穿透） */
@@ -237,6 +262,133 @@ function isSpeechShowing(): boolean {
       bubbleWin.isVisible() &&
       !closing &&
       currentPayload?.variant === 'text'
+  )
+}
+
+// ---- 回复气泡空闲自动收起（设置：pet.bubble_idle_seconds） ----
+
+function clearSpeechIdleTimer(): void {
+  if (speechIdleTimer !== null) {
+    clearTimeout(speechIdleTimer)
+    speechIdleTimer = null
+  }
+}
+
+/**
+ * 启动空闲收起计时（幂等：先清旧计时）。
+ * 仅在"回复已结束（eligible）+ 文本还在 + 气泡正在显示 + 未暂停 + 时长>0"时启动；
+ * 菜单让位/教学/向导/气泡关闭时条件不满足，自然不计时。
+ */
+function scheduleSpeechIdleDismiss(): void {
+  clearSpeechIdleTimer()
+  const idleMs = speechIdleOverrideMs ?? speechIdleMs
+  if (
+    !speechIdleEligible ||
+    speechIdlePaused ||
+    speechHoverInside ||
+    speechContextMenuOpen ||
+    idleMs <= 0
+  ) {
+    return
+  }
+  if (!speechText || !isSpeechShowing() || isMenuShowing()) return
+  if (getTeachingMode() === 'teaching') return
+  speechIdleTimer = setTimeout(() => {
+    speechIdleTimer = null
+    if (!speechIdleEligible || speechIdlePaused || speechHoverInside) return
+    if (!speechText || !isSpeechShowing()) return
+    console.log(`[bubble] 空闲 ${idleMs}ms，自动收起说话气泡`)
+    stopSpeech('空闲自动收起', false)
+  }, idleMs)
+  speechIdleTimer.unref?.()
+}
+
+function stopSpeechHoverPoll(): void {
+  if (speechHoverPoll !== null) {
+    clearInterval(speechHoverPoll)
+    speechHoverPoll = null
+  }
+  speechHoverInside = false
+}
+
+/**
+ * Windows 兜底：气泡在宠物窗下层时，渲染侧收不到 pointerenter（悬浮不暂停）。
+ * 主进程轮询光标是否在气泡窗内——进入即清零并停表，移出后重新计满。
+ * 非 Windows 不轮询（X11 的 getCursorScreenPoint 会冻结；渲染侧事件足够）。
+ */
+function startSpeechHoverPoll(): void {
+  if (!isWindows || speechHoverPoll !== null) return
+  speechHoverPoll = setInterval(() => {
+    if (!isSpeechShowing()) {
+      stopSpeechHoverPoll()
+      return
+    }
+    const inside = pointInsideBubble(screen.getCursorScreenPoint())
+    if (inside === speechHoverInside) return
+    speechHoverInside = inside
+    if (inside) {
+      clearSpeechIdleTimer()
+    } else if (speechIdleEligible) {
+      scheduleSpeechIdleDismiss()
+    }
+  }, 200)
+  speechHoverPoll.unref?.()
+}
+
+/**
+ * 说话气泡右键复制菜单（由渲染侧 contextmenu 主动请求——比 webContents 的
+ * 原生 context-menu 事件可控：能阻止事件继续派发，避免右键穿透到宠物窗把气泡让位）。
+ * 复制动作只写剪贴板，**不收起气泡**；收起是独立的菜单项。
+ */
+function showSpeechContextMenu(selectionText: string): void {
+  if (speechContextMenuOpen) return // 已有复制菜单：忽略重复请求（双窗口都收到右键的情况）
+  if (!isSpeechShowing() || currentPayload?.variant !== 'text' || !speechText) return
+  const selected = selectionText.replace(/\r\n/g, '\n')
+  const template: Electron.MenuItemConstructorOptions[] = []
+  if (selected.trim()) {
+    template.push({
+      label: '复制选中内容',
+      click: () => clipboard.writeText(selected)
+    })
+  }
+  template.push({
+    label: '复制整条消息',
+    click: () => clipboard.writeText(speechText)
+  })
+  template.push({ type: 'separator' })
+  template.push({
+    label: '收起气泡',
+    click: () => stopSpeech('右键收起', false)
+  })
+  console.log(`[bubble] 右键菜单（选中 ${selected.length} 字）`)
+  const win = bubbleWin
+  // 菜单期间：不清空文本、不计空闲收起、blur 守卫放行
+  interactive = false
+  speechContextMenuOpen = true
+  clearSpeechIdleTimer()
+  const onClosed = (): void => {
+    speechContextMenuOpen = false
+    if (speechIdleEligible) scheduleSpeechIdleDismiss()
+  }
+  try {
+    Menu.buildFromTemplate(template).popup(
+      win && !win.isDestroyed() ? { window: win, callback: onClosed } : { callback: onClosed }
+    )
+  } catch {
+    onClosed()
+  }
+}
+
+/** 点是否在当前说话气泡窗内（右键落到宠物窗时的兜底判定） */
+function pointInsideBubble(point: Point): boolean {
+  const win = bubbleWin
+  if (!win || win.isDestroyed() || !win.isVisible()) return false
+  const b = win.getBounds()
+  return (
+    point.x >= b.x &&
+    point.x < b.x + b.width &&
+    point.y >= b.y &&
+    point.y < b.y + b.height
   )
 }
 
@@ -344,9 +496,10 @@ function createBubbleWindow(): BrowserWindow {
 
   // 失焦自动收起（标准弹窗行为：点别处即收）。仅交互态注册——纯展示态（场景3）不聚焦也无 blur
   win.on('blur', () => {
-    if (!interactive) return
+    if (speechContextMenuOpen || !interactive) return
     if (!win.isDestroyed() && win.isVisible()) closeBubble('blur（点击别处）')
   })
+
 
   win.on('closed', () => {
     if (bubbleWin === win) {
@@ -433,6 +586,13 @@ export function destroyBubble(): void {
   speechCancelled = false
   suppressSpeechRestore = false
   speechText = ''
+  speechIdleMs = 30_000
+  speechIdleEligible = false
+  speechIdlePaused = false
+  speechIdleOverrideMs = null
+  pendingSpeechTtlMs = null
+  clearSpeechIdleTimer()
+  stopSpeechHoverPoll()
   shapeRects = []
   if (win && !win.isDestroyed()) win.destroy()
 }
@@ -453,6 +613,8 @@ export function destroyBubble(): void {
  * ⇒ 每次全新渲染进程**；本函数负责"每次销毁重建"，是根治方案的必要一环。
  */
 function destroyBubbleWindow(reason: string): void {
+  clearSpeechIdleTimer()
+  stopSpeechHoverPoll()
   const win = bubbleWin
   shapeRects = [] // 旧形状不得套用到下一份内容（渲染侧会重新上报）
   contentSize = null
@@ -620,6 +782,8 @@ function reposition(win: BrowserWindow, size: Size): void {
  * 见 maybeRestoreSpeech 的守卫）。
  */
 function finishClose(reason: string): void {
+  clearSpeechIdleTimer()
+  stopSpeechHoverPoll()
   if (closeTimer) {
     clearTimeout(closeTimer)
     closeTimer = null
@@ -638,6 +802,8 @@ function finishClose(reason: string): void {
 function closeBubble(reason: string): void {
   const win = bubbleWin
   if (!win || win.isDestroyed() || !win.isVisible() || closing) return
+  clearSpeechIdleTimer()
+  stopSpeechHoverPoll()
   closing = true
   console.log(`[bubble] 收起气泡（${reason}）——等待渲染侧退场动画回报`)
   sendTo(win, IPC_BUBBLE.REQUEST_CLOSE)
@@ -658,7 +824,15 @@ function closeBubble(reason: string): void {
  */
 function stopSpeech(reason: string, hard: boolean, keepText = false): void {
   speechActive = false
-  if (!keepText) speechText = ''
+  clearSpeechIdleTimer()
+  stopSpeechHoverPoll()
+  speechIdlePaused = false
+  if (!keepText) {
+    speechText = ''
+    speechIdleEligible = false
+    speechIdleOverrideMs = null
+    pendingSpeechTtlMs = null
+  }
   const showing = isSpeechShowing()
   if (!showing) speechCancelled = true
   console.log(`[bubble] 说话气泡收起（${reason}${hard ? '，硬收' : ''}${showing ? '' : '，弹出中作废'}）`)
@@ -674,7 +848,11 @@ function stopSpeech(reason: string, hard: boolean, keepText = false): void {
  * （✕/打断/让位——speechText 为空）；教学/向导中（各自气泡体系）；宠物隐藏中。
  */
 function maybeRestoreSpeech(): void {
-  if (suppressSpeechRestore || !speechText) return
+  if (suppressSpeechRestore || !speechText) {
+    speechIdleEligible = false
+    clearSpeechIdleTimer()
+    return
+  }
   if (opening) return // 菜单/说话气泡正在打开中（含"重新弹出前收尾"）——不抢场
   if (isSpeechShowing()) return // 已被别的路径恢复/正在显示
   if (getTeachingMode() === 'teaching') return
@@ -710,6 +888,8 @@ async function openSpeechBubble(): Promise<void> {
     // 常驻复用：上一条还显示着 → 原地刷新（同 session 直接 UPDATE，无入场动画）
     if (isSpeechShowing()) {
       console.log('[bubble] 复用当前说话气泡（原地刷新内容）')
+      startSpeechHoverPoll()
+      scheduleSpeechIdleDismiss()
       return
     }
 
@@ -757,6 +937,8 @@ async function openSpeechBubble(): Promise<void> {
     )
     // 就绪等待期间到达的文本：立即补上（气泡不空等下一条 TEXT）
     if (speechText) updateSpeechBubble(speechText)
+    startSpeechHoverPoll()
+    scheduleSpeechIdleDismiss()
   } catch (err) {
     console.error('[bubble] 弹出说话气泡异常：', err)
     speechActive = false
@@ -771,6 +953,7 @@ async function openSpeechBubble(): Promise<void> {
  */
 function updateSpeechBubble(text: string): void {
   speechText = text
+  clearSpeechIdleTimer()
   if (!speechActive || !isSpeechShowing()) return
   const win = bubbleWin
   const payload = currentPayload
@@ -779,6 +962,8 @@ function updateSpeechBubble(text: string): void {
   currentPayload = { ...payload, message: text }
   const update: BubbleUpdatePayload = { session: payload.session, message: text }
   sendTo(win, IPC_BUBBLE.UPDATE, update)
+  // 菜单恢复等"已结束但 speechActive 仍为 true"的路径：文本更新后重新计时
+  if (speechIdleEligible) scheduleSpeechIdleDismiss()
 }
 
 /**
@@ -790,13 +975,26 @@ function updateSpeechBubble(text: string): void {
  */
 function endSpeechBubble(immediate: boolean): void {
   if (immediate) {
+    speechIdleEligible = false
+    clearSpeechIdleTimer()
     if (speechActive || isSpeechShowing()) stopSpeech('被打断/让位', false)
     return
   }
-  // 常驻：仅复位会话活跃标志（本轮不再接收 TEXT）——气泡保持显示
-  if (!speechActive) return
+  // 常驻：仅复位会话活跃标志（本轮不再接收 TEXT）——气泡保持显示，开始空闲计时
+  if (!speechActive) {
+    // 菜单让位期间到达的 SAY_END：文本被 keepText 保留，菜单关闭恢复后应继续计时
+    if (speechText) {
+      speechIdleEligible = true
+      scheduleSpeechIdleDismiss()
+    }
+    return
+  }
   speechActive = false
-  console.log(`[bubble] 说话结束（${speechText.length} 字）——气泡常驻（等用户处理）`)
+  speechIdleEligible = true
+  console.log(
+    `[bubble] 说话结束（${speechText.length} 字）——气泡常驻，${speechIdleMs > 0 ? `${speechIdleMs}ms 空闲后收起` : '不自动收起'}`
+  )
+  scheduleSpeechIdleDismiss()
 }
 
 /**
@@ -995,6 +1193,27 @@ export function initBubble(pet: BrowserWindow): void {
   ipcMain.on(IPC.BUBBLE_REQUEST_OPEN, (event, request: unknown) => {
     if (!isPetSender(event.sender)) return
     if (!isMenuRequest(request)) return
+    // 右键实际落在说话气泡上、但事件被宠物窗收到：不要走菜单让位（会收掉气泡），
+    // 改为气泡的复制菜单（选中文本从气泡页现取）。
+    const requestX = Number(request.x)
+    const requestY = Number(request.y)
+    const point: Point =
+      Number.isFinite(requestX) && Number.isFinite(requestY)
+        ? { x: requestX, y: requestY }
+        : screen.getCursorScreenPoint()
+    if (isSpeechShowing() && pointInsideBubble(point)) {
+      const win = bubbleWin
+      console.log('[bubble] 右键落在说话气泡上 → 改为复制菜单（不让位宠物菜单）')
+      if (win && !win.isDestroyed()) {
+        void win.webContents
+          .executeJavaScript(`window.getSelection ? window.getSelection().toString() : ''`)
+          .then((text: unknown) => showSpeechContextMenu(typeof text === 'string' ? text : ''))
+          .catch(() => showSpeechContextMenu(''))
+      } else {
+        showSpeechContextMenu('')
+      }
+      return
+    }
     console.log('[bubble] 收到弹出请求（menu）')
     void openMenuBubble()
   })
@@ -1050,6 +1269,16 @@ export function initBubble(pet: BrowserWindow): void {
   // 说话气泡三件套（场景3；只认宠物窗——chat 域的驱动）：出现/文本快照/结束
   ipcMain.on(IPC_BUBBLE.SAY_BEGIN, (event) => {
     if (!isPetSender(event.sender)) return
+    clearSpeechIdleTimer()
+    speechIdleEligible = false
+    // 本地短提示（不支持文件等）预置的 5s 只消费一次；普通回复回落设置值
+    if (pendingSpeechTtlMs !== null) {
+      speechIdleOverrideMs = pendingSpeechTtlMs
+      pendingSpeechTtlMs = null
+    } else {
+      speechIdleOverrideMs = null
+    }
+    // 不清 speechIdlePaused：气泡原地复用时鼠标可能仍在上面，保留渲染侧上报的悬浮/选区状态
     speechText = '' // 新会话清快照（maybeRestoreSpeech 复用 openSpeechBubble 时不经过本入口，文本得以保留）
     void openSpeechBubble()
   })
@@ -1062,6 +1291,47 @@ export function initBubble(pet: BrowserWindow): void {
   ipcMain.on(IPC_BUBBLE.SAY_END, (event, payload: unknown) => {
     if (!isPetSender(event.sender)) return
     endSpeechBubble((payload as BubbleSayEndPayload | null)?.immediate === true)
+  })
+
+  // 本地短提示（不支持文件等）：只覆盖下一次 SAY_BEGIN 的空闲时长（5s），不影响普通回复设置
+  ipcMain.on(IPC_BUBBLE.SET_NEXT_SPEECH_TTL, (event, ms: unknown) => {
+    if (!isPetSender(event.sender)) return
+    const value = Number(ms)
+    if (!Number.isFinite(value)) return
+    pendingSpeechTtlMs = Math.min(60_000, Math.max(1_000, Math.round(value)))
+    console.log(`[bubble] 下一轮说话临时空闲时长 -> ${pendingSpeechTtlMs}ms`)
+  })
+
+  // 回复气泡自动收起：设置时长（宠物面）/ 新消息重置（宠物面）/ 悬浮选中暂停（气泡面）
+  ipcMain.on(IPC_BUBBLE.SET_IDLE_TTL, (event, seconds: unknown) => {
+    if (!isPetSender(event.sender)) return
+    const value = Number(seconds)
+    if (!Number.isFinite(value)) return
+    speechIdleMs =
+      value <= 0 ? 0 : Math.min(300, Math.max(5, Math.round(value))) * 1000
+    console.log(
+      `[bubble] 回复气泡空闲收起时长 -> ${speechIdleMs > 0 ? `${speechIdleMs}ms` : '不自动收'}`
+    )
+    clearSpeechIdleTimer()
+    if (speechIdleEligible) scheduleSpeechIdleDismiss()
+  })
+  ipcMain.on(IPC_BUBBLE.SPEECH_TOUCH, (event) => {
+    if (!isPetSender(event.sender)) return
+    if (!speechIdleEligible) return
+    scheduleSpeechIdleDismiss()
+  })
+  ipcMain.on(IPC_BUBBLE.SPEECH_ACTIVITY, (event, payload: unknown) => {
+    if (!isBubbleSender(event.sender)) return
+    const paused = (payload as { paused?: unknown } | null)?.paused === true
+    speechIdlePaused = paused
+    if (paused) clearSpeechIdleTimer()
+    else if (!speechHoverInside && speechIdleEligible) scheduleSpeechIdleDismiss()
+  })
+  ipcMain.on(IPC_BUBBLE.REQUEST_CONTEXT_MENU, (event, payload: unknown) => {
+    if (!isBubbleSender(event.sender)) return
+    const selectionText = (payload as { selectionText?: unknown } | null)?.selectionText
+    if (typeof selectionText !== 'string') return
+    showSpeechContextMenu(selectionText)
   })
 
   // 用户动作：按当前内容白名单校验后分发

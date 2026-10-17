@@ -194,9 +194,9 @@ export default function PetView({ client }: PetViewProps): ReactElement {
   }, [])
 
   // ---- ③b 右键 → 气泡菜单（气泡系统第一步）：请求主进程弹出气泡窗（定位/防出屏/收起都在主进程） ----
-  const requestBubbleMenu = (): void => {
+  const requestBubbleMenu = (point?: { x: number; y: number }): void => {
     // 旧 preload 无 bubble 段时静默跳过（可选链容错，先例：settings?.open?.()）
-    getPetBridge().bubble?.requestOpen?.({ kind: 'menu' })
+    getPetBridge().bubble?.requestOpen?.({ kind: 'menu', ...point })
     devLog('右键 → 请求弹气泡菜单')
   }
 
@@ -206,9 +206,10 @@ export default function PetView({ client }: PetViewProps): ReactElement {
       className="pet-view"
       data-testid="pet-view"
       onContextMenu={(e) => {
-        // 阻断系统右键菜单；右键"空气"时窗口处于穿透态天然收不到，无需额外判定
+        // 阻断系统右键菜单；右键"空气"时窗口处于穿透态天然收不到，无需额外判定。
+        // 带上屏幕坐标：若右键实际落在说话气泡上但事件被宠物窗收到，主进程据此改弹复制菜单。
         e.preventDefault()
-        requestBubbleMenu()
+        requestBubbleMenu({ x: Math.round(e.screenX), y: Math.round(e.screenY) })
       }}
     />
   )

@@ -85,7 +85,13 @@ export default function SettingsApp(): ReactElement {
           />
         )
       case 'pet':
-        return <PetPanel form={ctrl.form} setField={ctrl.setField} />
+        return (
+          <PetPanel
+            form={ctrl.form}
+            setField={ctrl.setField}
+            bubbleIdleError={ctrl.bubbleIdleError}
+          />
+        )
       case 'voice':
         return <VoicePanel form={ctrl.form} setField={ctrl.setField} />
       case 'behavior':

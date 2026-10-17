@@ -38,6 +38,7 @@ import {
   IconTeaching,
   type PetIconProps
 } from '../shared/icons'
+import { getPetBridge } from '../shared/pet-bridge'
 import type { Rect } from '../../electron/window'
 import type {
   BubbleMenuItemPayload,
@@ -98,6 +99,15 @@ export interface PetBubbleProps {
   onSize?: (size: { width: number; height: number }) => void
   /** 交互形状（气泡 + 悬浮工具条矩形，窗内坐标；主进程 Linux setShape 裁输入区——其余穿透） */
   onShape?: (rects: Rect[]) => void
+}
+
+/** 告诉主进程：悬浮/选中文字期间暂停回复气泡的空闲自动收起（5s/30s 计时） */
+function reportSpeechActivity(paused: boolean): void {
+  try {
+    getPetBridge().bubble?.reportSpeechActivity?.(paused)
+  } catch {
+    /* 旧 preload / 浏览器直开调试：静默 */
+  }
 }
 
 /** 光点当前置点（元素本体定位在 (0,0)，用 transform 平移——性能友好） */
@@ -173,6 +183,24 @@ export default function PetBubble({
   const flyCancelRef = useRef<(() => void) | null>(null)
   /** onExited 只回报一次（StrictMode/异常路径防重复） */
   const exitedRef = useRef(false)
+  /** 说话气泡：鼠标是否在气泡/工具条上（悬浮时暂停自动收起） */
+  const hoveringRef = useRef(false)
+
+  // 说话气泡：悬浮或存在文字选区时暂停 30s 空闲收起；移开/取消选区后恢复计时。
+  // 选择变化的监听放在 document 上——拖选时指针可能移出气泡本体。
+  useEffect(() => {
+    if (variant !== 'text') return
+    const report = (): void => {
+      const selected = Boolean(window.getSelection()?.toString().trim())
+      reportSpeechActivity(selected || hoveringRef.current)
+    }
+    document.addEventListener('selectionchange', report)
+    report()
+    return () => {
+      document.removeEventListener('selectionchange', report)
+      reportSpeechActivity(false)
+    }
+  }, [variant])
 
   /** 运动预设（缺省 hand）：
    *  - hand = 手来手回（光点飞行 + 气泡弹性展开；右键菜单/清空确认）；
@@ -325,7 +353,41 @@ export default function PetBubble({
   const stageCls = `bubble-stage tail-${tail} motion-${enterMode}`
 
   return (
-    <div className={stageCls} data-testid="bubble-stage">
+    <div
+      className={stageCls}
+      data-testid="bubble-stage"
+      onPointerEnter={
+        variant === 'text'
+          ? () => {
+              hoveringRef.current = true
+              reportSpeechActivity(true)
+            }
+          : undefined
+      }
+      onPointerLeave={
+        variant === 'text'
+          ? () => {
+              hoveringRef.current = false
+              reportSpeechActivity(Boolean(window.getSelection()?.toString().trim()))
+            }
+          : undefined
+      }
+      onContextMenu={
+        variant === 'text'
+          ? (event) => {
+              // 右键由气泡窗自己消费：弹复制菜单、不收起、也不让事件穿到宠物窗触发菜单让位
+              event.preventDefault()
+              event.stopPropagation()
+              const selected = window.getSelection()?.toString() ?? ''
+              try {
+                getPetBridge().bubble?.requestContextMenu?.(selected)
+              } catch {
+                /* 旧 preload：静默 */
+              }
+            }
+          : undefined
+      }
+    >
       {/* 光点（手来手回的主角；绝对定位 + transform 弧线飞行） */}
       <div ref={dotRef} className="pet-bubble-dot" aria-hidden="true" />
 

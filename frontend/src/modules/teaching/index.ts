@@ -202,6 +202,13 @@ export function sendUserMessage(
   const payload = refs && refs.length > 0 ? { text, attachments: refs } : { text }
   if (!client.send('user_message', payload)) return false
 
+  // 回复气泡空闲计时重置：旧气泡保留到新回复替换，30s 从"发送新消息"重新算起
+  try {
+    getPetBridge().bubble?.touchSpeech?.()
+  } catch {
+    /* 旧 preload 无该 API：主进程计时仍会在新 reply_start 时自然重置 */
+  }
+
   // 展示文本：顶部气泡/黑板要让人看到"这次带了什么文件"，但后端拿到的是原问题
   const names = refs?.map((item) => item.name).join('、') ?? ''
   const displayText = names ? `📎 ${names}${text ? `\n${text}` : ''}` : text

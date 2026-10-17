@@ -287,6 +287,28 @@ const api: PetBridgeApi = {
       ipcRenderer.send(IPC_BUBBLE.SAY_END, { immediate })
     },
 
+    setIdleTimeout(seconds: number): void {
+      ipcRenderer.send(IPC_BUBBLE.SET_IDLE_TTL, seconds)
+    },
+
+    setNextSpeechTtl(ms: number): void {
+      ipcRenderer.send(IPC_BUBBLE.SET_NEXT_SPEECH_TTL, ms)
+    },
+
+    touchSpeech(): void {
+      ipcRenderer.send(IPC_BUBBLE.SPEECH_TOUCH)
+    },
+
+    reportSpeechActivity(paused: boolean): void {
+      ipcRenderer.send(IPC_BUBBLE.SPEECH_ACTIVITY, { paused: Boolean(paused) })
+    },
+
+    requestContextMenu(selectionText: string): void {
+      ipcRenderer.send(IPC_BUBBLE.REQUEST_CONTEXT_MENU, {
+        selectionText: String(selectionText ?? '')
+      })
+    },
+
     ready(): void {
       ipcRenderer.send(IPC_BUBBLE.READY)
     },

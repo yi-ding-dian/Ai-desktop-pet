@@ -95,6 +95,19 @@ def test_empty_base_url_is_valid_unconfigured_state() -> None:
     assert 'base_url    = ""' in DEFAULT_CONFIG_TEMPLATE
 
 
+def test_bubble_idle_seconds_defaults_and_bounds() -> None:
+    """回复气泡自动收起：默认 30s；0=不自动收；其余 5–300。"""
+    assert AppConfig().pet.bubble_idle_seconds == 30
+    for value in (0, 5, 30, 300):
+        assert (
+            AppConfig.model_validate({"pet": {"bubble_idle_seconds": value}}).pet.bubble_idle_seconds
+            == value
+        )
+    for value in (1, 4, 301, -1):
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate({"pet": {"bubble_idle_seconds": value}})
+
+
 def test_file_and_context_limits_defaults_and_bounds() -> None:
     """文件分析限额：默认 20k 字 / 100k tokens；边界与越界校验。"""
     cfg = AppConfig()

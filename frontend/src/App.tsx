@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } 
 import { getPetBridge } from './shared/pet-bridge'
 import { setupWsFromBridge } from './shared/ws-client/bridge'
 import type { WsClient, WsConnectionState } from './shared/ws-client'
+import { subscribeBubbleIdleSeconds } from './shared/bubble-settings'
 // chat 域入口（输入行组件 + 说话气泡驱动 + 会话记录 + 情绪映射）
 import {
   ChatPanel,
@@ -350,6 +351,34 @@ export default function App(): ReactElement {
     ]
     return () => offs.forEach((off) => off())
   }, [wsClient])
+
+  // ---- 回复气泡自动收起时长：后端 config 为准，保存后由设置窗广播即时同步 ----
+  const applyBubbleIdle = useCallback((seconds: number): void => {
+    try {
+      getPetBridge().bubble?.setIdleTimeout?.(seconds)
+    } catch {
+      /* 旧 preload / bridge 缺失：主进程保持默认 30s */
+    }
+  }, [])
+
+  useEffect(() => subscribeBubbleIdleSeconds(applyBubbleIdle), [applyBubbleIdle])
+
+  useEffect(() => {
+    const offConfig = wsClient.on('config', (config) => {
+      const petCfg = (config as { pet?: { bubble_idle_seconds?: unknown } }).pet
+      const raw = petCfg?.bubble_idle_seconds
+      const seconds = typeof raw === 'number' ? raw : Number(raw)
+      if (Number.isFinite(seconds)) applyBubbleIdle(seconds)
+    })
+    const offState = wsClient.onStateChange((state) => {
+      if (state === 'connected') wsClient.send('get_config', {})
+    })
+    if (wsClient.connectionState === 'connected') wsClient.send('get_config', {})
+    return () => {
+      offConfig()
+      offState()
+    }
+  }, [applyBubbleIdle, wsClient])
 
   // ---- 首启引导检测（P4 §7.6.5）：LLM 未配置（base_url 空）→ 自动打开设置窗 ----
   // （引导模式由设置页自行判定——它读到空 base_url 即展示服务商预设欢迎条，无需参数）

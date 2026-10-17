@@ -400,6 +400,10 @@ body,
 .pet-bubble-text .pet-bubble-message {
   max-width: 300px;
   word-break: break-word;
+  /* 说话气泡正文允许选中/复制（全局 user-select:none 在这里放开；工具条按钮不放开） */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
   /* 长文裁切：8 行 + 省略号（气泡是穿透展示物不可滚动；超出内容去黑板/历史看）。
      高度链路：8 × 18.85 ≈ 151 + padding 16 + PAD 24（不含条区）≈ 190（+28 条区 = 窗 218，
      与 index.ts 的 ESTIMATED_SIZE.text.height 对齐） */

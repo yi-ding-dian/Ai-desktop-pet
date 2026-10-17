@@ -24,6 +24,8 @@ export interface FormValues {
   /** 服务端给出的 key 掩码（只读展示，如 sk-****f3a9 / (未配置)） */
   llmKeyMasked: string
   petName: string
+  /** 回复气泡自动收起时长（秒；字符串保存用户输入；0 = 不自动收起） */
+  bubbleIdleSeconds: string
   voiceEnabled: boolean
   voiceName: string
   behaviorEnabled: boolean
@@ -46,6 +48,7 @@ export const EMPTY_FORM: FormValues = {
   llmKeyInput: '',
   llmKeyMasked: '',
   petName: '',
+  bubbleIdleSeconds: '30',
   voiceEnabled: true,
   voiceName: '',
   behaviorEnabled: true,
@@ -121,6 +124,7 @@ export function snapshotToForm(config: ConfigData): FormValues {
     llmKeyInput: '', // 永远不回填明文/掩码到输入框（掩码单独字段展示）
     llmKeyMasked: readKeyMask(config, llm),
     petName: asString(pet?.name) ?? '',
+    bubbleIdleSeconds: asNumberText(pet?.bubble_idle_seconds) ?? '30',
     voiceEnabled: asBool(voice?.enabled) ?? true,
     voiceName: asString(voice?.voice) ?? '',
     behaviorEnabled: asBool(behavior?.enabled) ?? true,
@@ -156,9 +160,18 @@ export function buildPatch(
   if (newKey) llm.api_key = newKey // key 专用字段：空 = 不修改
   if (Object.keys(llm).length > 0) patch.llm = llm
 
+  const petPatch: Record<string, unknown> = {}
   if (form.petName.trim() !== baseline.petName.trim()) {
-    patch.pet = { name: form.petName.trim() }
+    petPatch.name = form.petName.trim()
   }
+  const bubbleIdle = parseIntegerText(form.bubbleIdleSeconds)
+  if (
+    bubbleIdle !== null &&
+    bubbleIdle !== parseIntegerText(baseline.bubbleIdleSeconds)
+  ) {
+    petPatch.bubble_idle_seconds = bubbleIdle
+  }
+  if (Object.keys(petPatch).length > 0) patch.pet = petPatch
 
   const voice: Record<string, unknown> = {}
   if (form.voiceEnabled !== baseline.voiceEnabled) voice.enabled = form.voiceEnabled
@@ -206,5 +219,6 @@ export function hasChanges(form: FormValues, baseline: FormValues): boolean {
   // 数字字段语法非法时也算"有改动"：否则保存按钮禁用，用户无法触发字段校验提示。
   if (parseIntegerText(form.fileMaxChars) === null) return true
   if (parseIntegerText(form.contextTokens) === null) return true
+  if (parseIntegerText(form.bubbleIdleSeconds) === null) return true
   return buildPatch(form, baseline, quiet.list) !== null
 }

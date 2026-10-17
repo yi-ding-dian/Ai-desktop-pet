@@ -163,6 +163,16 @@ export const IPC_BUBBLE = {
   SAY_TEXT: 'bubble:say-text',
   /** 宠物窗 → 主：说话结束（payload: BubbleSayEndPayload；缺省=按字数停留后自动收，immediate=被打断立即收） */
   SAY_END: 'bubble:say-end',
+  /** 宠物窗 → 主：回复气泡空闲自动收起时长（payload: number 秒；0=不自动收） */
+  SET_IDLE_TTL: 'bubble:set-idle-ttl',
+  /** 宠物窗 → 主：只覆盖下一轮说话的空闲收起时长（payload: number 毫秒；本地 5s 短提示用） */
+  SET_NEXT_SPEECH_TTL: 'bubble:set-next-speech-ttl',
+  /** 宠物窗 → 主：用户发送了新消息，重置当前回复气泡的空闲计时（气泡保留到新回复替换） */
+  SPEECH_TOUCH: 'bubble:speech-touch',
+  /** 气泡窗 → 主：悬浮/选中文字等交互（payload: { paused: boolean }；暂停期间不计自动收起） */
+  SPEECH_ACTIVITY: 'bubble:speech-activity',
+  /** 气泡窗 → 主：右键请求复制菜单（payload: { selectionText: string }；复制后气泡保持） */
+  REQUEST_CONTEXT_MENU: 'bubble:request-context-menu',
   /** 主 → 气泡窗：同 session 内容更新（payload: BubbleUpdatePayload；只换文字不重播入场——说话气泡流式刷新） */
   UPDATE: 'bubble:update'
 } as const
@@ -213,7 +223,12 @@ export type BubbleOpenPayload = {
 )
 
 /** 气泡请求（渲染面 → 主）：本期只有宠物窗右键菜单一种入口 */
-export type BubbleRequest = { kind: 'menu' }
+export type BubbleRequest = {
+  kind: 'menu'
+  /** 右键发生点的屏幕坐标（DIP）；用于"右键实际落到宠物窗但点在气泡上"的兜底判定 */
+  x?: number
+  y?: number
+}
 
 /** 说话气泡文本快照载荷（宠物面 → 主；全文覆盖式更新——渲染侧已节流，主进程转发气泡窗） */
 export interface BubbleSayTextPayload {
@@ -466,6 +481,16 @@ export interface PetBridgeApi {
     sayText(text: string): void
     /** 宠物面：说话结束（缺省按字数停留后自动收；immediate=true 被打断立即收） */
     sayEnd(immediate?: boolean): void
+    /** 宠物面：回复气泡空闲自动收起时长（秒；0=不自动收）；设置保存后即时同步 */
+    setIdleTimeout(seconds: number): void
+    /** 宠物面：只覆盖下一轮说话的空闲收起时长（毫秒；不支持文件的 5s 短提示用） */
+    setNextSpeechTtl(ms: number): void
+    /** 宠物面：用户发送新消息，重置当前回复气泡的空闲计时（不改变气泡文本） */
+    touchSpeech(): void
+    /** 气泡面：悬浮/选中文字 → 暂停自动收起；移开/取消选区 → 恢复计时 */
+    reportSpeechActivity(paused: boolean): void
+    /** 气泡面：右键请求复制菜单（传当前选中文本；主进程弹原生菜单，复制不收起气泡） */
+    requestContextMenu(selectionText: string): void
     /** 气泡面：渲染就绪（React 挂载完成；主进程收到后补发内容，防订阅前丢首帧） */
     ready(): void
     /** 气泡面：上报内容尺寸（ResizeObserver 驱动；主进程据此 setBounds 动态调窗） */

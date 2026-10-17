@@ -46,6 +46,8 @@ model = ""
 name     = "小兔"
 scale    = 1.0
 idle_fps = 10
+# 回复气泡自动收起时间（秒）：0 = 不自动收起；其余范围 5–300
+bubble_idle_seconds = 30
 
 [voice]            # Phase 2：语音播报（TTS）
 enabled  = true
@@ -138,11 +140,21 @@ class EmbeddingConfig(BaseModel):
 
 
 class PetConfig(BaseModel):
-    """宠物外观配置。"""
+    """宠物外观与聊天气泡配置。"""
 
     name: str = "小兔"
     scale: float = 1.0
     idle_fps: int = 10
+    #: 回复气泡自动收起时间（秒）；0 = 不自动收起
+    bubble_idle_seconds: int = 30
+
+    @field_validator("bubble_idle_seconds")
+    @classmethod
+    def _check_bubble_idle_seconds(cls, value: int) -> int:
+        """0（不自动收起）或 5–300 秒；避免 1–4 秒读都读不完。"""
+        if value != 0 and (value < 5 or value > 300):
+            raise ValueError("pet.bubble_idle_seconds 必须为 0 或 5–300")
+        return value
 
     @field_validator("name")
     @classmethod

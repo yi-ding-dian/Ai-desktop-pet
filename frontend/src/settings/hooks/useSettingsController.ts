@@ -27,6 +27,7 @@ import {
   type FormValues
 } from '../form/config-form'
 import { parseQuietHours } from '../form/quiet-hours'
+import { broadcastBubbleIdleSeconds } from '../../shared/bubble-settings'
 import { createSettingsBackendClient, type SettingsBackendClient } from '../api/config-client'
 
 /** 加载阶段：waiting=等后端连接，loading=已发 get_config 等回执，ready=已填充 */
@@ -60,6 +61,8 @@ export interface SettingsController {
   fileMaxCharsError: string | null
   /** 上下文预算字段的校验错误（提交前校验） */
   contextTokensError: string | null
+  /** 回复气泡自动收起时长字段的校验错误（提交前校验） */
+  bubbleIdleError: string | null
   /** 配置快照版本号（每应用一次服务端 config 事件 +1；面板据此收起瞬态编辑态，如 Key 更新框） */
   revision: number
   /** 引导模式（首启引导 §7.6.5：首次加载时 llm.base_url 为空 → 显示欢迎条 + 自动切 LLM 分区） */
@@ -97,6 +100,7 @@ export function useSettingsController(): SettingsController {
   const [quietHoursError, setQuietHoursError] = useState<string | null>(null)
   const [fileMaxCharsError, setFileMaxCharsError] = useState<string | null>(null)
   const [contextTokensError, setContextTokensError] = useState<string | null>(null)
+  const [bubbleIdleError, setBubbleIdleError] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
   const [guideMode, setGuideMode] = useState(false)
   const [guideDone, setGuideDone] = useState(false)
@@ -158,6 +162,9 @@ export function useSettingsController(): SettingsController {
     pendingRef.current = null
     const next = snapshotToForm(config)
     setRevision((r) => r + 1) // 快照版本 +1（面板收起瞬态编辑态的依据）
+    // 气泡时长是前端消费的：随配置快照广播给宠物窗（加载/保存都广播），保存即生效
+    const bubbleIdle = parseIntegerText(next.bubbleIdleSeconds)
+    if (bubbleIdle !== null) broadcastBubbleIdleSeconds(bubbleIdle)
     if (import.meta.env.DEV) {
       console.log(
         `[settings] config 事件（kind=${kind ?? '外部'}）：base_url=${next.llmBaseUrl || '-'} model=${next.llmModel || '-'} name=${next.petName || '-'}`
@@ -171,6 +178,7 @@ export function useSettingsController(): SettingsController {
       setQuietHoursError(null)
       setFileMaxCharsError(null)
       setContextTokensError(null)
+      setBubbleIdleError(null)
       setGuideMode(false) // 保存成功 → 欢迎条消失（首启引导 §7.6.5）
       setNotice({ kind: 'success', text: '已保存生效' })
       // 设置向导（§7.6.6）：保存成功上报主进程 → 宠物萌语气泡收起、飞回原位
@@ -318,6 +326,7 @@ export function useSettingsController(): SettingsController {
       if (key === 'quietHoursText') setQuietHoursError(null)
       if (key === 'fileMaxChars') setFileMaxCharsError(null)
       if (key === 'contextTokens') setContextTokensError(null)
+      if (key === 'bubbleIdleSeconds') setBubbleIdleError(null)
     },
     []
   )
@@ -350,6 +359,18 @@ export function useSettingsController(): SettingsController {
     }
     setFileMaxCharsError(null)
     setContextTokensError(null)
+
+    // 回复气泡自动收起：0（不自动收）或 5–300 秒，与后端 PetConfig 校验一致
+    const bubbleIdle = parseIntegerText(current.bubbleIdleSeconds)
+    if (
+      bubbleIdle === null ||
+      (bubbleIdle !== 0 && (bubbleIdle < 5 || bubbleIdle > 300))
+    ) {
+      setBubbleIdleError('请输入 0，或 5–300 的整数')
+      setNotice({ kind: 'error', text: '回复气泡收起时间不合法，请修正后再保存' })
+      return
+    }
+    setBubbleIdleError(null)
 
     const patch = buildPatch(current, baselineRef.current, quiet.list)
     if (!patch) return
@@ -430,6 +451,7 @@ export function useSettingsController(): SettingsController {
     quietHoursError,
     fileMaxCharsError,
     contextTokensError,
+    bubbleIdleError,
     revision,
     guideMode,
     guideDone,
