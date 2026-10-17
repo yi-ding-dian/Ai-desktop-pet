@@ -32,6 +32,7 @@ import { join } from 'node:path'
 import { IPC_EVENTS, IPC_BALL_ANIMATION, type BallAnimationCommand, type BallAnimationPetReactionPayload } from '../ipc/channels'
 import { BALL_ANIMATION_CONFIG } from './config'
 import { locateTrayAnchor } from './anchor'
+import { setWindowMoveLock } from '../window/move-lock'
 import type { Point, Rect, Size } from '../window'
 
 const isDev = !app.isPackaged
@@ -530,6 +531,9 @@ async function showFlow(
   // ② 释放：宠物窗口以原位缩小态出现（不抢焦点）→ 爆闪 + 落地 Q 弹 + 放大归位
   await releasePetAt(win, ball, home, ctx)
   assertLive(ctx)
+  // 精确归位：动画帧数值收口；同时兜底任何并发移动源（移动锁已挡拖拽/moveTo，
+  // 这里再保证一次"显示结束一定是完整 400×400"，避免留下缩小态只剩兔头）
+  if (!win.isDestroyed()) win.setBounds(home)
   stashedBounds = null
   stamp(`放大归位完成（${rectStr(win.getBounds())}）`)
 
@@ -690,6 +694,9 @@ async function runFlow(
     return
   }
   busy = true
+  // 动画逐帧改宠物窗口尺寸（缩小/放大）：期间锁住拖拽与 moveTo，防止外部移动源把
+  // 缩小态的 bounds 快照下来并一路保持，动画结束后宠物停在 ~100×100（只剩兔头）
+  setWindowMoveLock(true)
   const ctx: FlowContext = { aborted: false }
   const watchdog = setTimeout(() => {
     ctx.aborted = true
@@ -768,6 +775,8 @@ async function runFlow(
     }
     // 球窗收窗（异常/超时路径也要收，防残留一个飘着的球）
     if (ballWin && !ballWin.isDestroyed() && ballWin.isVisible()) ballWin.hide()
+    // 解锁必须在 finally：异常/超时/中止路径都要恢复用户拖拽与行为移动
+    setWindowMoveLock(false)
     busy = false
   }
 }

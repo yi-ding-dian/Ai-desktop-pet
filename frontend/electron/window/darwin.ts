@@ -12,6 +12,7 @@
 import { BrowserWindow, screen } from 'electron'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
 import { createEasedMover, readGeometry } from './move'
+import { isWindowMoveLocked } from './move-lock'
 
 export function createDarwinWindow(opts: PetWindowOptions): PlatformWindow {
   const win = new BrowserWindow({
@@ -60,11 +61,14 @@ export function createDarwinWindow(opts: PetWindowOptions): PlatformWindow {
     isAlwaysOnTop: () => win.isAlwaysOnTop(),
 
     startDrag(cursor: Point) {
+      // 魔法球动画期间不接受拖拽（动画逐帧改窗口尺寸，快照 bounds 可能是缩小态）
+      if (isWindowMoveLocked()) return
       // 坐标由渲染侧 pointermove 事件驱动（与 Linux 实现统一）
       dragOrigin = { start: cursor, bounds: win.getBounds() }
     },
 
     dragMove(cursor: Point) {
+      if (isWindowMoveLocked()) return
       if (!dragOrigin) return
       const { start, bounds } = dragOrigin
       win.setBounds({

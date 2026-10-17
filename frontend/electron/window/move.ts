@@ -12,6 +12,7 @@
  */
 import { screen, type BrowserWindow } from 'electron'
 import type { MoveResult, Point, Size, WindowGeometry } from './index'
+import { isWindowMoveLocked } from './move-lock'
 
 /** 逐帧间隔（ms）：≈60fps */
 const FRAME_INTERVAL_MS = 16
@@ -84,6 +85,12 @@ export function createEasedMover(win: BrowserWindow): EasedMover {
         resolve({ x: 0, y: 0, completed: false })
         return
       }
+      // 魔法球动画播放中：不接受外部移动（动画在逐帧 setBounds，外部移动会抢控制权/留下缩小态）
+      if (isWindowMoveLocked()) {
+        const b = win.getBounds()
+        resolve({ x: b.x, y: b.y, completed: false })
+        return
+      }
 
       const start = win.getBounds()
       const size: Size = { width: start.width, height: start.height }
@@ -99,6 +106,11 @@ export function createEasedMover(win: BrowserWindow): EasedMover {
       const t0 = Date.now()
       timer = setInterval(() => {
         if (win.isDestroyed()) {
+          finish(false)
+          return
+        }
+        // 动画期间被上锁：停在当前位置（调用方按"被打断"处理），不再与动画抢 setBounds
+        if (isWindowMoveLocked()) {
           finish(false)
           return
         }

@@ -25,6 +25,7 @@
 import { BrowserWindow, screen } from 'electron'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
 import { createEasedMover, readGeometry } from './move'
+import { isWindowMoveLocked } from './move-lock'
 
 /** X11 / Wayland 会话检测 */
 function isWaylandSession(): boolean {
@@ -111,6 +112,8 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
     isAlwaysOnTop: () => win.isAlwaysOnTop(),
 
     startDrag(cursor: Point) {
+      // 魔法球动画期间不接受拖拽：动画逐帧改窗口尺寸，此时快照 bounds 可能是缩小态
+      if (isWindowMoveLocked()) return
       // 拖拽期间必须全窗接管：一是避免 mouseup 丢失，二是保证 pointermove 事件连续到达渲染进程
       capability.setClickThrough(false)
       dragOrigin = { start: cursor, bounds: win.getBounds() }
@@ -118,6 +121,7 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
     },
 
     dragMove(cursor: Point) {
+      if (isWindowMoveLocked()) return
       if (!dragOrigin) return
       const { start, bounds } = dragOrigin
       win.setBounds({

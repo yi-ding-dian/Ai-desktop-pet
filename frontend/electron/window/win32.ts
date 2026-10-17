@@ -14,6 +14,7 @@
 import { BrowserWindow, screen } from 'electron'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
 import { createEasedMover, readGeometry } from './move'
+import { isWindowMoveLocked } from './move-lock'
 
 export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
   const win = new BrowserWindow({
@@ -66,12 +67,16 @@ export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
     isAlwaysOnTop: () => win.isAlwaysOnTop(),
 
     startDrag(cursor: Point) {
+      // 魔法球动画期间不接受拖拽：动画在逐帧改窗口尺寸，此时快照到的 bounds 可能是缩小态，
+      // 拖拽会把它一直保持在小尺寸（兔头/身体被裁）。动画结束后再允许拖拽。
+      if (isWindowMoveLocked()) return
       // 拖拽期间关闭穿透（避免 mouseup 丢失）；坐标由渲染侧 pointermove 事件驱动（与 Linux 实现统一）
       capability.setClickThrough(false)
       dragOrigin = { start: cursor, bounds: win.getBounds() }
     },
 
     dragMove(cursor: Point) {
+      if (isWindowMoveLocked()) return
       if (!dragOrigin) return
       const { start, bounds } = dragOrigin
       win.setBounds({
