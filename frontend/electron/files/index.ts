@@ -7,8 +7,8 @@
  * - 路径只在本机流转：不写日志、不进入 LLM 提示词（后端只把文件名交给模型）；
  * - 选择框是用户显式意图；`files:stat` 仅用于"粘贴一个路径"时的存在性校验，
  *   同样不读正文。
- * - 选择框筛选项包含文本/代码、.docx、图片；拖拽/粘贴路径不受筛选限制，
- *   最终格式由后端 reader 判定。
+ * - 选择框筛选项包含文本/代码、.docx、.xlsx/.xlsm、图片；拖拽/粘贴路径不受筛选限制，
+ *   最终格式由后端 reader 判定（Word/Excel 正文由后端提取，主进程不解析）。
  */
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { statSync } from 'node:fs'
@@ -94,6 +94,7 @@ export function initFileSelection(): void {
       filters: [
         { name: '文本 / 代码', extensions: TEXT_EXTENSIONS },
         { name: 'Word 文档（.docx）', extensions: ['docx'] },
+        { name: 'Excel 表格（.xlsx/.xlsm）', extensions: ['xlsx', 'xlsm'] },
         { name: '图片（PNG/JPEG/WebP/GIF）', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
         { name: '所有文件', extensions: ['*'] }
       ]

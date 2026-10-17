@@ -16,7 +16,7 @@
   用 `Path(__file__).resolve().parent` 读同目录 md；onedir 下 __file__ 指向
   `_internal/backend/modules/llm/prompts/__init__.pyc`，故 datas 收进同路径即被读到
   （业务代码零改动）。
-- uvicorn / edge_tts / keyring.backends / python-docx 大量动态导入，统一 collect_submodules 收全。
+- uvicorn / edge_tts / keyring.backends / python-docx / openpyxl 大量动态导入，统一 collect_submodules 收全。
 - keyring 经 importlib.metadata 的 entry points 发现后端，需 copy_metadata 随包带 dist-info。
 - excludes 掉 pytest/pip/setuptools/tkinter 等运行时无关项，显著减体积。
 """
@@ -49,10 +49,12 @@ hiddenimports = (
     + collect_submodules('edge_tts')       # 7.x 子模块（drm/submaker/...）动态引用
     + collect_submodules('keyring.backends')  # Linux: SecretService/fail/chainer...
     + collect_submodules('docx')           # python-docx: opc/oxml/text/table 等
+    + collect_submodules('openpyxl')       # Excel：worksheet/reader/writer/styles 等
     + [
         'aiohttp',                         # edge_tts 运行期核心依赖（兜底显式声明）
         'certifi',                         # edge_tts TLS 证书
         'lxml.etree',                      # python-docx 的 XML 解析后端
+        'et_xmlfile',                      # openpyxl 写/读 XML 依赖
     ]
 )
 

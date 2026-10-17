@@ -5,6 +5,8 @@
 - 文本：单文件与"本轮合计"都受 ``max_chars`` 限制；超限**拒绝整轮**，不做静默截断；
 - .docx：提取正文与表格（普通表格 Markdown、超大/超宽自动 TSV），提取文本走同一字数限额；
   老式 .doc 不支持，提示另存为 .docx；文档内图片暂不提取；
+- .xlsx/.xlsm：openpyxl 读可见工作表（TSV）、正式表格按名称拆块、合并单元格清单、公式缓存值优先；
+  老式 .xls 不支持，提示另存为 .xlsx；
 - 图片：PNG/JPEG/WebP/GIF（按 magic bytes，不信任扩展名），单张受
   ``max_image_bytes`` 限制；是否允许由 ``allow_images`` 控制（多模态模型开关）；
 - 只读 ``max_bytes`` 以内；先 stat 再读，避免超大文件把内存/CPU 吃掉；
@@ -22,6 +24,7 @@ from pathlib import Path
 from typing import Sequence
 
 from backend.modules.files.docx_reader import DocxExtractError, extract_docx_if_present
+from backend.modules.files.excel_reader import ExcelExtractError, extract_excel_if_present
 
 
 @dataclass(frozen=True)
@@ -156,16 +159,37 @@ def read_attachments(refs: Sequence[FileRef], limits: FileLimits) -> list[FileAt
             )
             continue
 
-        # 老式 .doc（OLE 复合文档）：没有可靠的纯 Python 解析器，明确引导另存为 .docx
+        # 老式 Office（OLE 复合文档）：没有可靠的纯 Python 解析器，明确引导另存为新格式。
+        # 注意：给 .xlsx/.docx 加密码后也会变成 OLE 容器，不能一律当成"老式 .doc"。
+        lower_name = name.lower()
         if data.startswith(_OLE_COMPOUND_MAGIC):
+            if lower_name.endswith((".xlsx", ".xlsm")):
+                raise FileRejected(
+                    "XLSX_ENCRYPTED",
+                    f"「{name}」可能是加密的 Excel 文件（或老式 .xls 改了扩展名）～"
+                    "请取消密码，或另存为未加密的 .xlsx 再发给我。",
+                )
+            if lower_name.endswith(".docx"):
+                raise FileRejected(
+                    "DOCX_ENCRYPTED",
+                    f"「{name}」可能是加密的 Word 文件～"
+                    "请取消密码，或另存为未加密的 .docx 再发给我。",
+                )
+            if lower_name.endswith(".xls"):
+                raise FileRejected(
+                    "XLS_LEGACY",
+                    f"「{name}」是老式 .xls 表格，暂时只支持 .xlsx～"
+                    "用 Excel/WPS 另存为 .xlsx 再发给我吧。",
+                )
             raise FileRejected(
                 "DOC_LEGACY",
                 f"「{name}」是老式 .doc 文档，暂时只支持 .docx～"
                 "用 Word 另存为 .docx 再发给我吧。",
             )
 
-        # .docx：ZIP + OOXML，提取正文与表格（表格 Markdown/TSV）后按普通文本限额处理
         remaining_chars = max(1, limits.max_chars - total_chars)
+
+        # .docx：ZIP + OOXML，提取正文与表格（表格 Markdown/TSV）后按普通文本限额处理
         try:
             docx_text = extract_docx_if_present(data, name, max_chars=remaining_chars)
         except DocxExtractError as exc:
@@ -177,9 +201,27 @@ def read_attachments(refs: Sequence[FileRef], limits: FileLimits) -> list[FileAt
                 ) from exc
             raise FileRejected(exc.code, exc.message) from exc
 
+        # .xlsx / .xlsm：openpyxl 读值；缓存值优先、公式原文兜底；工作表按 TSV 发送
+        excel_text: str | None = None
+        if docx_text is None:
+            try:
+                excel_text = extract_excel_if_present(
+                    data, name, max_chars=remaining_chars
+                )
+            except ExcelExtractError as exc:
+                if exc.code == "FILE_TOO_LONG":
+                    raise FileRejected(
+                        "FILE_TOO_LONG",
+                        f"「{name}」提取出的文字超过当前单轮上限 {limits.max_chars:,} 字～"
+                        "可以只保留需要的工作表/区域，或在设置 → 文件里调高上限。",
+                    ) from exc
+                raise FileRejected(exc.code, exc.message) from exc
+
         text = (
             docx_text
             if docx_text is not None
+            else excel_text
+            if excel_text is not None
             else _decode_text(data, name)
         )
         text = text.replace("\r\n", "\n").replace("\r", "\n")
