@@ -1,8 +1,10 @@
-"""本地文件读取（文件分析 P1）：读取用户选择的文本/代码文件与图片。
+"""本地文件读取（文件分析 P1）：读取文本/代码、图片与 Word .docx。
 
 设计约束（与产品讨论对齐，2026-10-17）：
 - 文件由用户在原生选择框/粘贴路径/拖拽时显式指定；后端只读**普通文件**，不执行、不修改；
 - 文本：单文件与"本轮合计"都受 ``max_chars`` 限制；超限**拒绝整轮**，不做静默截断；
+- .docx：提取正文与表格（普通表格 Markdown、超大/超宽自动 TSV），提取文本走同一字数限额；
+  老式 .doc 不支持，提示另存为 .docx；文档内图片暂不提取；
 - 图片：PNG/JPEG/WebP/GIF（按 magic bytes，不信任扩展名），单张受
   ``max_image_bytes`` 限制；是否允许由 ``allow_images`` 控制（多模态模型开关）；
 - 只读 ``max_bytes`` 以内；先 stat 再读，避免超大文件把内存/CPU 吃掉；
@@ -18,6 +20,8 @@ import codecs
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
+
+from backend.modules.files.docx_reader import DocxExtractError, extract_docx_if_present
 
 
 @dataclass(frozen=True)
@@ -76,6 +80,10 @@ class FileRejected(Exception):
         self.code = code
         self.message = message
         super().__init__(message)
+
+
+#: OLE 复合文档头（.doc / .xls / .ppt 等老式 Office 二进制）
+_OLE_COMPOUND_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
 def read_attachments(refs: Sequence[FileRef], limits: FileLimits) -> list[FileAttachment]:
@@ -148,7 +156,32 @@ def read_attachments(refs: Sequence[FileRef], limits: FileLimits) -> list[FileAt
             )
             continue
 
-        text = _decode_text(data, name)
+        # 老式 .doc（OLE 复合文档）：没有可靠的纯 Python 解析器，明确引导另存为 .docx
+        if data.startswith(_OLE_COMPOUND_MAGIC):
+            raise FileRejected(
+                "DOC_LEGACY",
+                f"「{name}」是老式 .doc 文档，暂时只支持 .docx～"
+                "用 Word 另存为 .docx 再发给我吧。",
+            )
+
+        # .docx：ZIP + OOXML，提取正文与表格（表格 Markdown/TSV）后按普通文本限额处理
+        remaining_chars = max(1, limits.max_chars - total_chars)
+        try:
+            docx_text = extract_docx_if_present(data, name, max_chars=remaining_chars)
+        except DocxExtractError as exc:
+            if exc.code == "FILE_TOO_LONG":
+                raise FileRejected(
+                    "FILE_TOO_LONG",
+                    f"「{name}」提取出的文字超过当前单轮上限 {limits.max_chars:,} 字～"
+                    "可以换小一点的文档，或在设置 → 文件里调高上限。",
+                ) from exc
+            raise FileRejected(exc.code, exc.message) from exc
+
+        text = (
+            docx_text
+            if docx_text is not None
+            else _decode_text(data, name)
+        )
         text = text.replace("\r\n", "\n").replace("\r", "\n")
         chars = len(text)
         if chars == 0:

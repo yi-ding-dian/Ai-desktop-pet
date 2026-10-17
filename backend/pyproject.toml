@@ -18,6 +18,7 @@ dependencies = [
     "loguru",
     "edge-tts",
     "tomlkit",
+    "python-docx>=1.1",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +38,7 @@ packages = [
     "backend.modules",
     "backend.modules.behavior",
     "backend.modules.chat",
+    "backend.modules.files",
     "backend.modules.llm",
     "backend.modules.llm.prompts",
     "backend.modules.memory",
