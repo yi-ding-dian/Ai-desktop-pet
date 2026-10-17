@@ -13,7 +13,7 @@
  * 对话镜像/统一发送等无 UI 部分在 modules/teaching 域内实现。
  *
  * P4 设置向导（§7.6.6）：settings.onVisibility 订阅（向导期间聊天面板收起 + 右眼右上萌语
- * 气泡）在 modules/settings-guide 域内实现，App 只做 UI 接线与形状上报；飞位动画由主进程 fx 编排。
+ * 气泡）在 modules/settings-guide 域内实现，App 只做 UI 接线与形状上报；飞位动画由主进程 ball-animation 编排。
  *
  * 工具机制（§4.7）：后端 tool_call 事件 → 前端按 name 执行（如 open_settings 打开设置窗），
  * 执行器在 modules/tools 域内实现，App 只做接线。
@@ -595,7 +595,7 @@ export default function App(): ReactElement {
         containerRef={teachingBubblesRef}
       />
 
-      {/* 设置向导：右眼右上方萌语气泡（§7.6.6；设置窗打开期间显示，飞位动画由主进程 fx 编排）。
+      {/* 设置向导：右眼右上方萌语气泡（§7.6.6；设置窗打开期间显示，飞位动画由主进程 ball-animation 编排）。
           纯视觉物（pointer-events:none），但可见时必须参与形状上报（X11 裁剪） */}
       <SettingsGuideBubble visible={guideActive} containerRef={settingsGuideRef} />
 

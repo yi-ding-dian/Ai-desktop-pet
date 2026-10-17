@@ -1,6 +1,6 @@
 /**
  * 气泡页入口（bubble.html）：气泡窗（bubble 域）的 React 挂载。
- * 与 board/fx/tray-menu 域同模式：独立 HTML + 独立 src 目录，共用同一 preload 基建。
+ * 与 board/ball-animation/tray-menu 域同模式：独立 HTML + 独立 src 目录，共用同一 preload 基建。
  * 窗口为 frameless + 透明的动态小窗（尺寸/定位/收起由主进程托管），本页只负责"画"。
  */
 import React from 'react'

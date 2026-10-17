@@ -13,8 +13,8 @@ import { createClickThrough, type ClickThrough } from './window/click-through'
 import { resolveCursorSource } from './window/cursor-source'
 import { backendManager } from './backend-process'
 import { createTray, destroyTrayMenu } from './tray'
-import { runHideAnimation, runShowAnimation, destroyFx } from './fx'
-import { runAnchorSelfTest } from './fx/anchor'
+import { runHideAnimation, runShowAnimation, destroyBallAnimation } from './ball-animation'
+import { runAnchorSelfTest } from './ball-animation/anchor'
 import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
 import { destroySettings, initSettings } from './settings'
 import { destroyBubble, initBubble } from './bubble'
@@ -187,7 +187,7 @@ if (!app.requestSingleInstanceLock()) {
       console.log('[main] 降级平台：不启用空气让路（click-through）')
     }
     // 关窗=躲进托盘（用户确认的行为）：Alt+F4 等关闭动作只隐藏窗口，且走魔法球捕获动画
-    // （fx 域负责时序；动画异常/超时有兜底，结果语义"躲进托盘"一定生效）；
+    // （ball-animation 域负责时序；动画异常/超时有兜底，结果语义"躲进托盘"一定生效）；
     // 真正退出走托盘菜单/系统退出（经 app.quit → before-quit 置 quitting=true 放行）
     petWin.on('close', (event) => {
       if (quitting) return
@@ -247,7 +247,7 @@ if (!app.requestSingleInstanceLock()) {
     tray?.destroy()
     tray = null
     // 魔法球动画窗（若存在）随退出直接销毁——退出链路不播动画、不做等待
-    destroyFx()
+    destroyBallAnimation()
     // 黑板窗口（若存在）同样直接销毁（教学模式编排中心复位为 normal）
     destroyTeaching()
     // 设置窗口（若存在）直接销毁并清引用

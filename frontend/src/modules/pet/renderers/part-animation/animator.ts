@@ -37,9 +37,9 @@ const NUMERIC_KEYS = (Object.keys(NEUTRAL_POSE) as Array<keyof PetPose>).filter(
 const BLINK_DURATION = 0.16 // 一次眨眼总时长（秒）
 const PET_REACTION_DURATION = 0.9 // 摸头反应时长（秒）
 const LOOK_AROUND_DURATION = 2.8 // 张望反应时长（秒；执行器按此循环播放以覆盖行为 duration）
-/** 被魔法球抓住（fx 域隐藏动画）反应时长（秒）：覆盖主进程捕获段（≈0.42s），被窗口 hide 截断属预期 */
+/** 被魔法球抓住（ball-animation 域隐藏动画）反应时长（秒）：覆盖主进程捕获段（≈0.42s），被窗口 hide 截断属预期 */
 const CAPTURED_REACTION_DURATION = 0.6
-/** 被魔法球放回（fx 域显示动画）反应时长（秒）：弹性回弹 + 落地 Q 弹余韵 */
+/** 被魔法球放回（ball-animation 域显示动画）反应时长（秒）：弹性回弹 + 落地 Q 弹余韵 */
 const RELEASED_REACTION_DURATION = 0.95
 const HEART_DURATION_MS = 1100 // 单颗心形粒子飘出时长
 const BLUSH_MAX_OPACITY = 0.9 // blush=1 时的实际不透明度
@@ -200,10 +200,10 @@ export class PetAnimator {
       // 张望：只驱动视线/头部扫视（见 update 的 lookAround 段），无弹跳与心形粒子
       this.reaction = { kind, elapsed: 0, duration: LOOK_AROUND_DURATION }
     } else if (kind === 'captured') {
-      // 被魔法球抓住（fx 域）：体态缩小 + 挣扎抖动（见 update 的捕获段），无弹跳/心形粒子
+      // 被魔法球抓住（ball-animation 域）：体态缩小 + 挣扎抖动（见 update 的捕获段），无弹跳/心形粒子
       this.reaction = { kind, elapsed: 0, duration: CAPTURED_REACTION_DURATION }
     } else if (kind === 'released') {
-      // 被魔法球放回（fx 域）：体态从缩小弹性回弹（见 update 的释放段）
+      // 被魔法球放回（ball-animation 域）：体态从缩小弹性回弹（见 update 的释放段）
       // + 弹簧给一次落地 Q 弹（与 glb-model 的 releasedReactionPose 观感对齐）
       this.reaction = { kind, elapsed: 0, duration: RELEASED_REACTION_DURATION }
       this.springVy -= 200
@@ -256,7 +256,7 @@ export class PetAnimator {
     this.springY += this.springVy * dt
 
     // ⑤ 即时反应：摸头（包络 + 心形粒子）/ 张望（视线与头部左右扫）/
-    //    被抓（缩小挣扎）/ 被放（弹性回弹）——魔法球捕获/释放由 fx 域触发
+    //    被抓（缩小挣扎）/ 被放（弹性回弹）——魔法球捕获/释放由 ball-animation 域触发
     let reactEnv = 0
     let lookAroundEnv = 0
     let lookAroundSweep = 0
@@ -334,7 +334,7 @@ export class PetAnimator {
     const lookX = clamp(p.lookX + 0.65 * lookAroundSweep * lookAroundEnv, -1, 1)
     const lookAroundTilt = 3.2 * lookAroundSweep * lookAroundEnv
 
-    // 魔法球捕获/释放（fx 域）：体态缩放与挣扎抖动（released 的落地弹跳已由弹簧承担）
+    // 魔法球捕获/释放（ball-animation 域）：体态缩放与挣扎抖动（released 的落地弹跳已由弹簧承担）
     const captureScale = 1 - 0.25 * captureEnv
     const releaseScale = 1 - 0.2 * releaseEnv * releaseWob
 

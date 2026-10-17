@@ -8,7 +8,7 @@
  *
  * 容错（重要）：teaching 段由主进程侧并行落地，运行时可能尚不存在——
  * 所有 bridge 调用一律可选链，缺失时静默跳过 + console.warn 一次
- * （先例：modules/pet/PetView.tsx 的 `fx?.onPetReaction?.`）。
+ * （先例：modules/pet/PetView.tsx 的 `ballAnimation?.onPetReaction?.`）。
  *
  * 视图两态：
  *  - 展开态 = 主视图（顶栏 / 滚动板书区 / 底部输入条；板体深色半透明圆角 20）；

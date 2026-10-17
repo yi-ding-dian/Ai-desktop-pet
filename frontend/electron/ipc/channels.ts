@@ -75,11 +75,11 @@ export const IPC_EVENTS = {
   BACKEND_STATUS_CHANGED: 'backend:status-changed',
   /** 后端就绪（payload: BackendReadyPayload，含 WS 端口与 hello token） */
   BACKEND_READY: 'backend:ready',
-  /** 魔法球动画：宠物遭到捕获/释放（payload: FxPetReactionPayload；只发宠物窗口，渲染侧播 captured/released 反应） */
+  /** 魔法球动画：宠物遭到捕获/释放（payload: BallAnimationPetReactionPayload；只发宠物窗口，渲染侧播 captured/released 反应） */
   PET_FX_REACTION: 'pet:fx-reaction',
   /** 教学模式：状态广播（payload: TeachingStatePayload；双端都收——宠物面走位/气泡/面板，黑板面视图） */
   TEACHING_STATE_CHANGED: 'teaching:state-changed',
-  /** 教学模式：黑板收件箱（payload: TeachingBoardInbox；只发黑板窗口，单通道多指令，先例见 IPC_FX.COMMAND） */
+  /** 教学模式：黑板收件箱（payload: TeachingBoardInbox；只发黑板窗口，单通道多指令，先例见 IPC_BALL_ANIMATION.COMMAND） */
   TEACHING_BOARD_INBOX: 'teaching:board-inbox',
   /** 教学模式：黑板输入条发送请求（payload: {text}；只发宠物窗口，宠物面收到后执行 WS user_message 发送） */
   TEACHING_SEND_REQUEST: 'teaching:send-request',
@@ -93,19 +93,19 @@ export const IPC_EVENTS = {
   PET_POINTER_POS: 'pet:pointer-pos'
 } as const
 
-/** 通道名：魔法球捕获动画（fx 域：主进程 ↔ fx 动画页） */
-export const IPC_FX = {
+/** 通道名：魔法球捕获动画（ball-animation 域：主进程 ↔ fx 动画页） */
+export const IPC_BALL_ANIMATION = {
   /** fx 动画页 → 主：动画页已就绪（首帧可接收指令） */
-  READY: 'fx:ready',
-  /** 主 → fx 动画页：动画指令（payload: FxCommand，单通道多指令类型） */
-  COMMAND: 'fx:command'
+  READY: 'ball-animation:ready',
+  /** 主 → fx 动画页：动画指令（payload: BallAnimationCommand，单通道多指令类型） */
+  COMMAND: 'ball-animation:command'
 } as const
 
 /**
  * fx 动画指令（主进程为指挥，fx 球窗页面只负责"画"；球固定在球窗中心，
  * 飞行 = 主进程移动球窗本身——指令不需要坐标，只有表现状态）。
  */
-export type FxCommand =
+export type BallAnimationCommand =
   | { type: 'reset' }
   /** 原地凝聚显现：球体在窗口中心从无到有（光点渐入 + 微脉动），durationMs 由主进程计时——到点发下一条指令 */
   | { type: 'spawn'; durationMs: number }
@@ -119,7 +119,7 @@ export type FxCommand =
   | { type: 'fade-out'; durationMs: number }
 
 /** 宠物反应事件载荷（主 → 宠物窗口渲染进程） */
-export interface FxPetReactionPayload {
+export interface BallAnimationPetReactionPayload {
   /** captured = 被魔法球抓住（隐藏动画）；released = 被放回原位（显示动画） */
   kind: 'captured' | 'released'
 }
@@ -129,7 +129,7 @@ export interface FxPetReactionPayload {
 /**
  * 通道名：气泡系统（主进程 bubble 域 ↔ 气泡窗 bubble.html；请求入口在宠物面）。
  * 分工：主进程为指挥（定位/防出屏/两态/动作分发），气泡窗只负责"画"与本地动画
- * （入场"手来手回"在窗内播，播毕经 CLOSED 回报，主进程再 hide——照 IPC_FX 先例）。
+ * （入场"手来手回"在窗内播，播毕经 CLOSED 回报，主进程再 hide——照 IPC_BALL_ANIMATION 先例）。
  */
 export const IPC_BUBBLE = {
   /** 气泡窗 → 主：渲染就绪（React 挂载完成，可接收内容；窗口重建后复位重报） */
@@ -253,7 +253,7 @@ export type TeachingBoardInbox =
 
 // ------------------------------------------------------------------ 设置向导宠物（P4，设计文档 §7.6.6）与自绘托盘菜单（§7.6.4）
 
-/** 设置窗显示状态（主 → 宠物窗；驱动向导 UI——飞位动画由主进程 fx 域编排，宠物面只做响应） */
+/** 设置窗显示状态（主 → 宠物窗；驱动向导 UI——飞位动画由主进程 ball-animation 域编排，宠物面只做响应） */
 export type SettingsVisibilityPhase = 'opened' | 'saved' | 'closed'
 
 /** SETTINGS_VISIBILITY 推送载荷 */
@@ -345,17 +345,17 @@ export interface PetBridgeApi {
     getIdleSeconds(): Promise<number>
   }
   /**
-   * 魔法球捕获动画（fx 域）：
-   *  - fx 动画页（fx.html）用 ready/onCommand 与主进程通信；
+   * 魔法球捕获动画（ball-animation 域）：
+   *  - fx 动画页（ball-animation.html）用 ready/onCommand 与主进程通信；
    *  - 宠物窗口用 onPetReaction 接收"被抓/被放"反应事件。
    */
-  fx: {
+  ballAnimation: {
     /** fx 动画页专用：通知主进程"动画页已就绪，可接收指令" */
     ready(): void
     /** fx 动画页专用：订阅主进程动画指令；返回取消订阅函数 */
-    onCommand(cb: (cmd: FxCommand) => void): () => void
+    onCommand(cb: (cmd: BallAnimationCommand) => void): () => void
     /** 宠物窗口专用：订阅"被抓/被放"反应事件（隐藏/显示动画触发）；返回取消订阅函数 */
-    onPetReaction(cb: (payload: FxPetReactionPayload) => void): () => void
+    onPetReaction(cb: (payload: BallAnimationPetReactionPayload) => void): () => void
   }
   /**
    * 教学模式（P5，设计文档 §7.5）：讲台 + 黑板形态。

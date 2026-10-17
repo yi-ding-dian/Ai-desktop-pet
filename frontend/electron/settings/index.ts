@@ -7,7 +7,7 @@
  *    用户预期是正常窗口；刻意**不**照抄宠物窗/黑板窗的「无边框 + 透明 + 置顶 + skipTaskbar +
  *    Linux type:'toolbar'」悬浮窗技术（那是给「不该出现在任务栏的桌宠层」用的）；
  *  - 向导编排（§7.6.6）：设置窗打开 → 记宠物原位 + 广播 SETTINGS_VISIBILITY{opened} +
- *    fx 域 relocate 宠物到"扒窗沿"向导位（几何纯函数见 settings/geometry.ts）；
+ *    ball-animation 域 relocate 宠物到"扒窗沿"向导位（几何纯函数见 settings/geometry.ts）；
  *    **保存不回位**（SETTINGS_SAVED 只记日志——宠物留在向导位候命，2026-10-16 用户定稿）；
  *    **关闭设置窗**（closed 链）→ 反向 relocate 回原位 + 广播 closed。
  *    状态机（wizardActive / returning）防重入：已回位不重复回位；
@@ -20,14 +20,14 @@
  *
  * 数据流（§7.6.2）：设置页**自持 WS 连接**（经 backend.getSnapshot() 取 port/token 自行连接），
  * 本域不参与设置项读写——只管「窗口怎么开、怎么关、向导怎么编排、重启怎么做」。
- * 飞位动画一律经 fx 域 runRelocateAnimation（本域不碰球窗/时序，只给目标坐标）。
+ * 飞位动画一律经 ball-animation 域 runRelocateAnimation（本域不碰球窗/时序，只给目标坐标）。
  */
 import { app, BrowserWindow, ipcMain, screen, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { isLinux } from '../platform'
 import { IPC, IPC_EVENTS, type SettingsVisibilityPhase } from '../ipc/channels'
 import { backendManager } from '../backend-process'
-import { runRelocateAnimation } from '../fx'
+import { runRelocateAnimation } from '../ball-animation'
 import { wizardPetRect } from './geometry'
 import { getTeachingMode } from '../teaching'
 import { probeXWindowAlive, type XWindowAlive } from './window-health'

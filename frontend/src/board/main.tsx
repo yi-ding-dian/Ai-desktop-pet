@@ -1,6 +1,6 @@
 /**
  * 黑板页入口（board.html）：教学模式黑板窗口（board 域）的 React 挂载。
- * 与 fx 域同模式：独立 HTML + 独立 src 目录，共用同一 preload 基建。
+ * 与 ball-animation 域同模式：独立 HTML + 独立 src 目录，共用同一 preload 基建。
  */
 import React from 'react'
 import { createRoot } from 'react-dom/client'

@@ -317,7 +317,7 @@ export class PetAnimator3D {
     } else if (kind === 'look_around') {
       this.reaction = { kind, elapsed: 0, duration: LOOK_AROUND_DURATION }
     }
-    // captured/released（魔法球捕获/释放，fx 域触发）：本渲染器暂不实现专属表现——
+    // captured/released（魔法球捕获/释放，ball-animation 域触发）：本渲染器暂不实现专属表现——
     // 窗口缩放/移动本身已有"被吸走/被放回"的观感（新 kind 静默忽略，向后兼容）
   }
 

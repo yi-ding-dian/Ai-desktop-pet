@@ -36,7 +36,7 @@ import {
   offscreenRight,
   podiumPoint
 } from './geometry'
-import { runRelocateAnimation } from '../fx'
+import { runRelocateAnimation } from '../ball-animation'
 import type { Rect } from '../window'
 
 const isDev = !app.isPackaged
@@ -616,7 +616,7 @@ export function initTeaching(pet: BrowserWindow): void {
   console.log('[teaching] IPC 处理器已注册')
 }
 
-/** 应用退出清理（will-quit；仿 destroyFx：退出链路不播动画、不等待，直接销毁黑板窗口） */
+/** 应用退出清理（will-quit；仿 destroyBallAnimation：退出链路不播动画、不等待，直接销毁黑板窗口） */
 export function destroyTeaching(): void {
   ++opSeq
   mode = 'normal'

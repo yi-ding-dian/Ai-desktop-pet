@@ -1,5 +1,5 @@
 /**
- * 魔法球捕获动画（fx 域）参数配置——**集中在此处调整，改这里即可改观感/时长**。
+ * 魔法球捕获动画（ball-animation 域）参数配置——**集中在此处调整，改这里即可改观感/时长**。
  *
  * 逃生门：`ENABLED = false` 时隐藏/显示退化为原本的 show()/hide() 瞬时切换
  * （不创建球窗、不播动画），用于动画出问题/不喜欢时的快速关停。
@@ -7,7 +7,7 @@
  * 方案：**球窗**（ballWindowSize×ballWindowSize 的透明小窗，"球"本体）+ 移动球窗完成飞行；
  * 全屏透明层方案已弃用（避免遮挡用户其它操作）。
  * 视觉/运动设计整体移植自参考实现（magic-flight：二次贝塞尔拱线 + easeInOut 三次 +
- * 星屑尾迹 + 抵达爆散），视觉参数在渲染侧 `src/fx/config.ts`（本文件只管窗口与时序）。
+ * 星屑尾迹 + 抵达爆散），视觉参数在渲染侧 `src/ball-animation/config.ts`（本文件只管窗口与时序）。
  *
  * 时序总览（隐藏方向，默认参数合计 ≈ 2.0s）：
  *   飞行（球窗沿拱线：托盘 → 宠物中心）   flightMs
@@ -17,7 +17,7 @@
  * 显示方向（反向）：飞行（球窗载宠物剪影：托盘 → 原位拱线）flightMs
  *   → 释放爆散（宠物窗从缩小态放大归位）releaseMs → 淡出 fadeMs。
  */
-export const FX_CONFIG = {
+export const BALL_ANIMATION_CONFIG = {
   /** 总开关（false = 直接 show/hide，无动画；改这里后重启应用生效） */
   ENABLED: true,
 
@@ -84,7 +84,7 @@ export const FX_CONFIG = {
 } as const
 
 /**
- * 托盘锚点**兜底值**（屏幕坐标 px）：仅在自动定位（抓屏+模板匹配，见 fx/anchor.ts）失败时使用。
+ * 托盘锚点**兜底值**（屏幕坐标 px）：仅在自动定位（抓屏+模板匹配，见 ball-animation/anchor.ts）失败时使用。
  * 实测环境：主屏 1920×1080（Deepin DDE，Dock 在底部；兔头图标位于 Dock 托盘区
  * 微信/云兔头/QQ 一组内，图标本体约 20px，取中心）。⚠ 托盘图标增删/布局变化会让它漂移——
  * 正常情况下**不依赖这个值**（自动定位每次实时找兔头）；换环境后如需更新兜底值：
@@ -102,6 +102,6 @@ function resolveTrayAnchor(): { x: number; y: number } {
   if (parts.length === 2 && parts.every((n) => Number.isFinite(n))) {
     return { x: Math.round(parts[0]!), y: Math.round(parts[1]!) }
   }
-  console.warn(`[fx] PET_TRAY_ANCHOR 格式无效（应为 "x,y"）："${raw}"，使用实测默认锚点`)
+  console.warn(`[ball-animation] PET_TRAY_ANCHOR 格式无效（应为 "x,y"）："${raw}"，使用实测默认锚点`)
   return fallback
 }

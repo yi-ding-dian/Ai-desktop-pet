@@ -1,3 +1,5 @@
+> ℹ️ 该域已于 2026-10-17 改名 ball-animation（原名 fx 是命名规范点名的反例）；本文为历史报告，正文保留当时的目录与常量名。
+
 # 魔法球捕获动画（fx 域）—— 实施与验证报告
 
 日期：2026-10-15 ｜ 环境：Deepin DDE + X11（KWin）、主屏 1920x1080、DPR=1 ｜ Electron 33 / electron-vite dev

@@ -240,7 +240,7 @@ export function lookAroundYaw(t: number): number {
   return 0.14 * Math.sin(p * Math.PI * 2) * Math.sin(p * Math.PI)
 }
 
-// ------------------------------------------------------------------ 魔法球捕获/释放反应（fx 域）
+// ------------------------------------------------------------------ 魔法球捕获/释放反应（ball-animation 域）
 
 /** 反应姿态增量（叠加在阻尼姿态/动态起伏之上；全部为 0/1 = 无反应） */
 export interface GlbReactionPose {

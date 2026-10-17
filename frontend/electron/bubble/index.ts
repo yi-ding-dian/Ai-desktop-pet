@@ -2,7 +2,7 @@
  * 气泡窗域（用户定稿"气泡系统"）：**独立透明气泡窗** + 标准气泡内容编排。
  *
  * 为什么独立窗口：宠物窗口仅 400×400、兔子占中间，气泡放不下会被窗口裁掉。
- * 故气泡做独立透明小窗（窗口技术照 fx 球窗/自绘托盘菜单先例：transparent + frame:false +
+ * 故气泡做独立透明小窗（窗口技术照 ball-animation 球窗/自绘托盘菜单先例：transparent + frame:false +
  * alwaysOnTop(screen-saver) + skipTaskbar + Linux type:'toolbar'），**动态尺寸**——渲染侧
  * ResizeObserver 测内容尺寸 → REPORT_SIZE 上报 → 本域 setBounds 调窗（首帧先用预估尺寸定位，
  * 宁大勿小防内容被裁，收到真实尺寸后收紧重定位）。
@@ -18,7 +18,7 @@
  * geometry.ts（优先后上 tail=down，放不下翻向 tail=up，横向夹进工作区）。尺寸上报引发翻向
  * 变化时经 SET_TAIL 轻量下发（仅换样式，不重播动画）。
  *
- * 动画分工（照 IPC_FX 先例：主进程是指挥、渲染页负责"画"）：入场动画在气泡窗内播
+ * 动画分工（照 IPC_BALL_ANIMATION 先例：主进程是指挥、渲染页负责"画"）：入场动画在气泡窗内播
  * （菜单"手来手回"光点飞入 / 说话气泡"轻量展开"弹性绽放；退场同款反向）；收起 = 本域先发
  * REQUEST_CLOSE → 渲染侧播退场动画 → CLOSED 回报 → 本域 hide（渲染异常时 CLOSE_TIMEOUT_MS
  * 超时兜底强制 hide）。
@@ -64,7 +64,7 @@ import {
   type BubbleTail,
   type BubbleUpdatePayload
 } from '../ipc/channels'
-import { runHideAnimation } from '../fx'
+import { runHideAnimation } from '../ball-animation'
 import { openSettings } from '../settings'
 import { enterTeaching, exitTeaching, getTeachingMode } from '../teaching'
 import { computeBubblePlacement } from './geometry'
@@ -267,7 +267,7 @@ function loadBubblePage(win: BrowserWindow): void {
   void win.loadFile(join(__dirname, '../renderer/bubble.html'))
 }
 
-/** 创建气泡窗（窗口技术照 fx 球窗/自绘托盘菜单先例；见文件头"交互两态"） */
+/** 创建气泡窗（窗口技术照 ball-animation 球窗/自绘托盘菜单先例；见文件头"交互两态"） */
 function createBubbleWindow(): BrowserWindow {
   const est = ESTIMATED_SIZE.menu
   const win = new BrowserWindow({
@@ -366,7 +366,7 @@ function ensureBubbleWindow(): BrowserWindow {
   return bubbleWin
 }
 
-/** 等待气泡页就绪（带超时；照 fx/tray 域 waitReady 模式） */
+/** 等待气泡页就绪（带超时；照 ball-animation/tray 域 waitReady 模式） */
 function waitBubbleReady(timeoutMs: number): Promise<boolean> {
   if (bubbleReady) return Promise.resolve(true)
   return new Promise((resolve) => {

@@ -1,5 +1,5 @@
 /**
- * 魔法球动画页（fx.html）：Canvas 2D 程序化绘制——零素材，全部代码画出来。
+ * 魔法球动画页（ball-animation.html）：Canvas 2D 程序化绘制——零素材，全部代码画出来。
  * **视觉与运动设计整体移植自参考实现（magic-flight）**：核心光球（径向渐变光点）、
  * 星屑尾迹（细→粗、青→白、发光）、抵达爆散（径向粒子 + 收敛光晕 + 扩散环）。
  *
@@ -7,7 +7,7 @@
  * 本页里球固定在窗口中心；尾迹/星屑按"窗口位移的反向"在窗内滑动——
  * 还原"球飞过、身后留下一路星屑"的观感（方向感无需 IPC 指令，screenX/Y 差分即得）。
  *
- * 状态机（由 fx:command 驱动）：
+ * 状态机（由 ball-animation:command 驱动）：
  *   idle →（spawn）原地凝聚显现（光点从无到有 + 微脉动；设置向导 relocate 的起手式）
  *        →（flight）飞行表现（球 + 尾迹 + 星屑）
  *        →（capture-burst / release-burst）爆散表现（420ms，球消失、粒子/光晕/环）
@@ -17,8 +17,8 @@
  * 注意：窗口为全穿透（主进程 setIgnoreMouseEvents(true)），本页不处理任何鼠标事件。
  */
 import { getPetBridge } from '../shared/pet-bridge'
-import type { FxCommand } from '../../electron/ipc/channels'
-import { FX_VISUAL } from './config'
+import type { BallAnimationCommand } from '../../electron/ipc/channels'
+import { BALL_ANIMATION_VISUAL } from './config'
 
 // ------------------------------------------------------------------ 基础
 
@@ -79,7 +79,7 @@ let spawnDurationMs = 250
 let burstT0 = 0
 /** 淡出开始时刻与时长 */
 let fadeStartTs = 0
-let fadeDurationMs: number = FX_VISUAL.fadeFallbackMs
+let fadeDurationMs: number = BALL_ANIMATION_VISUAL.fadeFallbackMs
 
 let trail: TrailPoint[] = []
 let parts: Particle[] = []
@@ -89,7 +89,7 @@ let lastPos = { x: 0, y: 0, init: false }
 
 // ------------------------------------------------------------------ 指令
 
-function handleCommand(cmd: FxCommand): void {
+function handleCommand(cmd: BallAnimationCommand): void {
   const now = performance.now()
   switch (cmd.type) {
     case 'reset':
@@ -134,7 +134,7 @@ function handleCommand(cmd: FxCommand): void {
 
 /** 撒一颗星屑（照参考：随机方向速度 + vy 轻微下坠） */
 function spawnDust(x: number, y: number): void {
-  const cfg = FX_VISUAL.dust
+  const cfg = BALL_ANIMATION_VISUAL.dust
   const a = Math.random() * Math.PI * 2
   const sp = Math.random() * cfg.spawnSpeed
   parts.push({
@@ -145,13 +145,13 @@ function spawnDust(x: number, y: number): void {
     life: 0,
     max: lerp(cfg.lifeS[0], cfg.lifeS[1], Math.random()),
     r: lerp(cfg.radius[0], cfg.radius[1], Math.random()),
-    c: FX_VISUAL.colors[(Math.random() * FX_VISUAL.colors.length) | 0]
+    c: BALL_ANIMATION_VISUAL.colors[(Math.random() * BALL_ANIMATION_VISUAL.colors.length) | 0]
   })
 }
 
 /** 抵达爆散（照参考）：30 颗径向粒子（角度均分 + 抖动） */
 function spawnBurst(): void {
-  const cfg = FX_VISUAL.burst
+  const cfg = BALL_ANIMATION_VISUAL.burst
   const cx = vw / 2
   const cy = vh / 2
   for (let i = 0; i < cfg.particles; i++) {
@@ -165,7 +165,7 @@ function spawnBurst(): void {
       life: 0,
       max: lerp(cfg.lifeS[0], cfg.lifeS[1], Math.random()),
       r: lerp(cfg.radius[0], cfg.radius[1], Math.random()),
-      c: FX_VISUAL.colors[(Math.random() * FX_VISUAL.colors.length) | 0]
+      c: BALL_ANIMATION_VISUAL.colors[(Math.random() * BALL_ANIMATION_VISUAL.colors.length) | 0]
     })
   }
 }
@@ -203,21 +203,21 @@ function update(f: number, shift: { dx: number; dy: number }): void {
   if (mode === 'flight') {
     // 尾迹：每帧在当前球位置（窗心）压入新点；裁剪到点数上限与最大跨度（球窗内的紧凑化）
     trail.push({ x: cx, y: cy })
-    while (trail.length > FX_VISUAL.trail.maxPoints) trail.shift()
+    while (trail.length > BALL_ANIMATION_VISUAL.trail.maxPoints) trail.shift()
     while (trail.length > 1) {
       const d = Math.hypot(trail[0].x - cx, trail[0].y - cy)
-      if (d > FX_VISUAL.trail.maxSpanPx) trail.shift()
+      if (d > BALL_ANIMATION_VISUAL.trail.maxSpanPx) trail.shift()
       else break
     }
     // 星屑：飞行中每帧撒 3 颗
-    for (let i = 0; i < FX_VISUAL.dust.spawnPerFrame; i++) spawnDust(cx, cy)
+    for (let i = 0; i < BALL_ANIMATION_VISUAL.dust.spawnPerFrame; i++) spawnDust(cx, cy)
   } else if (trail.length > 0) {
     // 非飞行：尾迹快速消散（每帧丢最老一点）
     trail.shift()
   }
 
   // 粒子推进（照参考：阻尼 0.98/帧、寿命回收；越界留 30px 余量后淘汰）
-  const damp = Math.pow(FX_VISUAL.dust.damping, f)
+  const damp = Math.pow(BALL_ANIMATION_VISUAL.dust.damping, f)
   const dtS = (f * FRAME_MS) / 1000
   parts = parts.filter((p) => {
     p.life += dtS
@@ -239,12 +239,12 @@ function drawBall(cx: number, cy: number, r: number, alpha: number): void {
   ctx2d!.globalCompositeOperation = 'lighter'
 
   // 外圈紫晕（魔法紫的"底"，与参考色池同系）
-  const halo = ctx2d!.createRadialGradient(cx, cy, r * 0.4, cx, cy, FX_VISUAL.haloRadius)
+  const halo = ctx2d!.createRadialGradient(cx, cy, r * 0.4, cx, cy, BALL_ANIMATION_VISUAL.haloRadius)
   halo.addColorStop(0, `rgba(167,139,250,${0.3 * alpha})`)
   halo.addColorStop(1, 'rgba(167,139,250,0)')
   ctx2d!.fillStyle = halo
   ctx2d!.beginPath()
-  ctx2d!.arc(cx, cy, FX_VISUAL.haloRadius, 0, Math.PI * 2)
+  ctx2d!.arc(cx, cy, BALL_ANIMATION_VISUAL.haloRadius, 0, Math.PI * 2)
   ctx2d!.fill()
 
   // 核心光点（照参考的 17px 渐变：白 → #7dd3fc 0.9 → 透明）
@@ -290,7 +290,7 @@ function drawCargo(cx: number, cy: number, r: number, now: number): void {
 
 /** 尾迹线（照参考：由细到粗 0.6→4.2、青色→白色（后 28%）、shadowBlur 发光，越新越亮） */
 function drawTrail(): void {
-  const cfg = FX_VISUAL.trail
+  const cfg = BALL_ANIMATION_VISUAL.trail
   if (trail.length < 2) return
   ctx2d!.save()
   ctx2d!.lineCap = 'round'
@@ -328,7 +328,7 @@ function drawParticles(baseAlpha: number): void {
 
 /** 抵达爆散（照参考）：收敛光晕（白→紫渐隐、半径收缩）+ 扩散环（6→32px 描边渐隐） */
 function drawBurst(cx: number, cy: number, now: number): void {
-  const cfg = FX_VISUAL.burst
+  const cfg = BALL_ANIMATION_VISUAL.burst
   const b = clamp01((now - burstT0) / cfg.durationMs)
   // 收敛光晕
   const rad = Math.max(1, cfg.haloRadius * (1 - b * cfg.haloShrink))
@@ -372,7 +372,7 @@ function draw(now: number): void {
   if (mode === 'flight') {
     // 渐入（约 140ms），防指令到达瞬间"生硬出现"
     const appear = clamp01((now - modeStartTs) / 140)
-    const r = FX_VISUAL.ballRadius * (cargo ? FX_VISUAL.cargoBallScale : 1)
+    const r = BALL_ANIMATION_VISUAL.ballRadius * (cargo ? BALL_ANIMATION_VISUAL.cargoBallScale : 1)
     drawBall(cx, cy, r, appear)
     if (cargo) drawCargo(cx, cy, r, now)
   } else if (mode === 'spawn') {
@@ -380,7 +380,7 @@ function draw(now: number): void {
     const p = clamp01((now - modeStartTs) / spawnDurationMs)
     const eased = 1 - Math.pow(1 - p, 3)
     const pulse = 1 + 0.07 * Math.sin((now - modeStartTs) / 48) * p
-    drawBall(cx, cy, FX_VISUAL.ballRadius * (0.72 + 0.28 * eased) * pulse, eased)
+    drawBall(cx, cy, BALL_ANIMATION_VISUAL.ballRadius * (0.72 + 0.28 * eased) * pulse, eased)
   } else if (mode === 'burst') {
     drawBurst(cx, cy, now)
   }
@@ -409,8 +409,8 @@ function tick(ts: number): void {
 
 // ------------------------------------------------------------------ 接线
 
-getPetBridge().fx.onCommand(handleCommand)
-getPetBridge().fx.ready()
+getPetBridge().ballAnimation.onCommand(handleCommand)
+getPetBridge().ballAnimation.ready()
 requestAnimationFrame(tick)
 
-console.log('[fx] 动画页已就绪')
+console.log('[ball-animation] 动画页已就绪')

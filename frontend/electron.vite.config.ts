@@ -21,7 +21,7 @@ export default defineConfig({
       }
     }
   },
-  // 渲染进程：index.html（宠物窗口）/ fx.html（魔法球动画窗）/ board.html（教学模式黑板）/
+  // 渲染进程：index.html（宠物窗口）/ ball-animation.html（魔法球动画窗）/ board.html（教学模式黑板）/
   // settings.html（设置窗口）/ tray-menu.html（自绘托盘菜单）/ bubble.html（气泡窗）六个入口
   //（对齐设计文档 §2.2、§7.5.2、§7.6.1、§7.6.4 v2 与气泡系统）
   renderer: {
@@ -31,8 +31,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'index.html'),
-          // 第二渲染入口：魔法球捕获动画（fx 域球窗的页面）
-          fx: resolve(__dirname, 'fx.html'),
+          // 第二渲染入口：魔法球捕获动画（ball-animation 域球窗的页面）
+          'ball-animation': resolve(__dirname, 'ball-animation.html'),
           // 第三渲染入口：教学模式黑板（board 域黑板窗的页面，设计文档 §7.5.2）
           board: resolve(__dirname, 'board.html'),
           // 第四渲染入口：设置窗口（settings 域设置页，设计文档 §7.6.1）

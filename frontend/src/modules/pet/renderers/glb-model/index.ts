@@ -454,7 +454,7 @@ export class GlbModelRenderer implements PetRenderer {
     }
 
     // ---- 即时反应（独立时间轴；pet = 弹跳，look_around = 左右转头，
-    //      captured/released = 魔法球捕获/释放姿态（fx 域隐藏/显示动画触发）） ----
+    //      captured/released = 魔法球捕获/释放姿态（ball-animation 域隐藏/显示动画触发）） ----
     let reactionOffsetY = 0
     let reactionYaw = 0
     let reactionPose: GlbReactionPose = ZERO_REACTION_POSE

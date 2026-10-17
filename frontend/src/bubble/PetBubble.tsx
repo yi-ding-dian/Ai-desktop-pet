@@ -111,7 +111,7 @@ function easeInOutQuad(t: number): number {
 }
 
 /**
- * 光点沿二次贝塞尔弧线飞行（照 fx 域拱线手法；rAF 驱动）。
+ * 光点沿二次贝塞尔弧线飞行（照 ball-animation 域拱线手法；rAF 驱动）。
  * 控制点向"两端上方"抬起——"从爪子抛上来"的抛物感（灵动不生硬）。返回取消函数。
  */
 function flyDot(

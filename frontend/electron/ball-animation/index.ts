@@ -13,23 +13,23 @@
  *   relocateSpawnMs）→ 爆闪捕获 → 携宠沿拱线飞行 → 释放（不经过托盘锚点）；近距
  *   （< 上限）→ 平滑移位（relocateGlideMs 小弧滑行，无球无爆闪）/ 太近
  *   （< relocateNearStepPx）直接落位；托盘隐藏/显示（hide/show）的托盘进出语义不变；
- * - **锚点自动定位**：托盘兔头图标的屏幕坐标由 `fx/anchor.ts` 每轮动画前"抓屏 + 模板匹配"
- *   现场定位（图标位置无 API 可查且会漂移），失败回退兜底配置 TRAY_ANCHOR（见 fx/config.ts）；
- * - 球窗内容（src/fx/main.ts）：Canvas 2D 程序化绘制魔法球（球固定在窗口中心）；
+ * - **锚点自动定位**：托盘兔头图标的屏幕坐标由 `ball-animation/anchor.ts` 每轮动画前"抓屏 + 模板匹配"
+ *   现场定位（图标位置无 API 可查且会漂移），失败回退兜底配置 TRAY_ANCHOR（见 ball-animation/config.ts）；
+ * - 球窗内容（src/ball-animation/main.ts）：Canvas 2D 程序化绘制魔法球（球固定在窗口中心）；
  *   拖尾/光晕按窗口尺寸收敛（超出窗口的部分会被裁，视觉设计已按此约束做）；
  * - **主进程是唯一指挥**：时序、球窗/宠物窗的移动缩放、指令下发全在这里；
  *   渲染页只负责"画"，不做时间判断；
  * - **锁**：同一时刻只允许一个动画（隐藏/显示动画中再次触发显/隐直接忽略）；
  *   **移动（relocate，设置向导）例外**——入位/回位不可静默丢失：先等锁空闲（上限见
- *   FX_CONFIG.relocateBusyWaitMs），超时才放弃；
+ *   BALL_ANIMATION_CONFIG.relocateBusyWaitMs），超时才放弃；
  * - **退出不播动画**：本域不参与 app.quit 链路（before-quit 后窗口直接销毁）；
- * - **兜底**：等待 fx 页就绪有超时；整个流程有 totalTimeoutMs 看门狗；异常/超时一律走
+ * - **兜底**：等待 动画页就绪有超时；整个流程有 totalTimeoutMs 看门狗；异常/超时一律走
  *   try/catch/finally 保证结果语义（隐藏 = 一定 hide；显示 = 一定 show 且归位）。
  */
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'node:path'
-import { IPC_EVENTS, IPC_FX, type FxCommand, type FxPetReactionPayload } from '../ipc/channels'
-import { FX_CONFIG } from './config'
+import { IPC_EVENTS, IPC_BALL_ANIMATION, type BallAnimationCommand, type BallAnimationPetReactionPayload } from '../ipc/channels'
+import { BALL_ANIMATION_CONFIG } from './config'
 import { locateTrayAnchor } from './anchor'
 import type { Point, Rect, Size } from '../window'
 
@@ -42,9 +42,9 @@ const FRAME_INTERVAL_MS = 16
 
 /** 球窗（懒创建；首次隐藏/显示时建立，之后复用——hide 而非 destroy，下次秒开） */
 let ballWin: BrowserWindow | null = null
-/** fx 页已就绪标志（收到 fx:ready 后置位；窗口重建后复位） */
+/** 动画页已就绪标志（收到 ball-animation:ready 后置位；窗口重建后复位） */
 let fxReady = false
-/** 等待就绪的回调队列（fx 页加载完成时统一唤醒） */
+/** 等待就绪的回调队列（动画页加载完成时统一唤醒） */
 let readyWaiters: Array<() => void> = []
 /** 动画锁：true = 有动画进行中（期间新的显/隐请求直接忽略） */
 let busy = false
@@ -105,10 +105,10 @@ function easeOutCubic(t: number): number {
  */
 function makeArcPath(from: Point, to: Point, wa: Rect): (u: number) => Point {
   const dist = Math.hypot(to.x - from.x, to.y - from.y)
-  const arc = Math.min(FX_CONFIG.arcMax, Math.max(FX_CONFIG.arcMin, dist * FX_CONFIG.arcFactor))
+  const arc = Math.min(BALL_ANIMATION_CONFIG.arcMax, Math.max(BALL_ANIMATION_CONFIG.arcMin, dist * BALL_ANIMATION_CONFIG.arcFactor))
   const mid = {
     x: (from.x + to.x) / 2,
-    y: Math.max(wa.y + FX_CONFIG.arcTopMargin, (from.y + to.y) / 2 - arc)
+    y: Math.max(wa.y + BALL_ANIMATION_CONFIG.arcTopMargin, (from.y + to.y) / 2 - arc)
   }
   return (u: number) => {
     const v = 1 - u
@@ -133,11 +133,11 @@ const ptStr = (p: Point): string => `${Math.round(p.x)},${Math.round(p.y)}`
 
 // ------------------------------------------------------------------ 球窗
 
-/** 注册 fx 页就绪监听（一次）：fx 页 preload 加载完成后 send fx:ready */
+/** 注册 动画页就绪监听（一次）：动画页 preload 加载完成后 send ball-animation:ready */
 function installReadyListener(): void {
   if (readyListenerInstalled) return
   readyListenerInstalled = true
-  ipcMain.on(IPC_FX.READY, () => {
+  ipcMain.on(IPC_BALL_ANIMATION.READY, () => {
     fxReady = true
     const waiters = readyWaiters
     readyWaiters = []
@@ -145,7 +145,7 @@ function installReadyListener(): void {
   })
 }
 
-/** 等待 fx 页就绪（带超时；超时返回 false → 调用方降级为直接 show/hide） */
+/** 等待 动画页就绪（带超时；超时返回 false → 调用方降级为直接 show/hide） */
 function waitFxReady(timeoutMs: number): Promise<boolean> {
   if (fxReady) return Promise.resolve(true)
   return new Promise((resolve) => {
@@ -167,7 +167,7 @@ function waitFxReady(timeoutMs: number): Promise<boolean> {
  * 无需覆盖特定显示器（原全屏方案的多屏限制在球窗方案下自动消失）。
  */
 function createBallWindow(): BrowserWindow {
-  const size = FX_CONFIG.ballWindowSize
+  const size = BALL_ANIMATION_CONFIG.ballWindowSize
   const win = new BrowserWindow({
     width: size,
     height: size,
@@ -207,11 +207,11 @@ function createBallWindow(): BrowserWindow {
 
   fxReady = false
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
-    void win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/fx.html`)
+    void win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/ball-animation.html`)
   } else {
-    void win.loadFile(join(__dirname, '../renderer/fx.html'))
+    void win.loadFile(join(__dirname, '../renderer/ball-animation.html'))
   }
-  console.log(`[fx] 球窗已创建（${size}x${size}，全穿透）`)
+  console.log(`[ball-animation] 球窗已创建（${size}x${size}，全穿透）`)
   return win
 }
 
@@ -224,20 +224,20 @@ function ensureBallWindow(): BrowserWindow {
 }
 
 /** 下发动画指令（窗口/页面异常时静默忽略） */
-function sendCommand(win: BrowserWindow, cmd: FxCommand): void {
+function sendCommand(win: BrowserWindow, cmd: BallAnimationCommand): void {
   if (win.isDestroyed() || win.webContents.isDestroyed()) return
-  win.webContents.send(IPC_FX.COMMAND, cmd)
+  win.webContents.send(IPC_BALL_ANIMATION.COMMAND, cmd)
 }
 
 /** 通知宠物窗口渲染侧播放"被抓/被放"反应（隐藏窗口也能收到，渲染进程仍存活） */
-function sendPetReaction(win: BrowserWindow, kind: FxPetReactionPayload['kind']): void {
+function sendPetReaction(win: BrowserWindow, kind: BallAnimationPetReactionPayload['kind']): void {
   if (win.isDestroyed() || win.webContents.isDestroyed()) return
-  const payload: FxPetReactionPayload = { kind }
+  const payload: BallAnimationPetReactionPayload = { kind }
   win.webContents.send(IPC_EVENTS.PET_FX_REACTION, payload)
 }
 
 /** 应用退出时销毁球窗（走 will-quit；正常退出路径不播动画、也不等待动画） */
-export function destroyFx(): void {
+export function destroyBallAnimation(): void {
   if (ballWin && !ballWin.isDestroyed()) ballWin.destroy()
   ballWin = null
   fxReady = false
@@ -292,7 +292,7 @@ function flyBallArc(
   ctx: FlowContext
 ): Promise<void> {
   const path = makeArcPath(from, to, wa)
-  const size = FX_CONFIG.ballWindowSize
+  const size = BALL_ANIMATION_CONFIG.ballWindowSize
   return animateWindowBounds(
     ball,
     durationMs,
@@ -317,7 +317,7 @@ function flyBothArc(
   ctx: FlowContext
 ): Promise<void> {
   const path = makeArcPath(from, to, wa)
-  const size = FX_CONFIG.ballWindowSize
+  const size = BALL_ANIMATION_CONFIG.ballWindowSize
   return new Promise((resolve) => {
     if (durationMs <= 0 || ball.isDestroyed()) {
       resolve()
@@ -356,9 +356,9 @@ async function flyBallFromAnchor(
   cargo: boolean,
   ctx: FlowContext
 ): Promise<void> {
-  ball.setBounds(boundsAround(anchor, FX_CONFIG.ballWindowSize, FX_CONFIG.ballWindowSize))
+  ball.setBounds(boundsAround(anchor, BALL_ANIMATION_CONFIG.ballWindowSize, BALL_ANIMATION_CONFIG.ballWindowSize))
   sendCommand(ball, { type: 'flight', cargo })
-  await flyBallArc(ball, anchor, to, wa, FX_CONFIG.flightMs, ctx)
+  await flyBallArc(ball, anchor, to, wa, BALL_ANIMATION_CONFIG.flightMs, ctx)
 }
 
 /**
@@ -372,14 +372,14 @@ async function capturePetAt(
   petCenter: Point,
   ctx: FlowContext
 ): Promise<void> {
-  sendCommand(ball, { type: 'capture-burst', holdMs: FX_CONFIG.captureMs })
+  sendCommand(ball, { type: 'capture-burst', holdMs: BALL_ANIMATION_CONFIG.captureMs })
   sendPetReaction(win, 'captured')
   const start = win.getBounds()
-  const targetW = Math.max(2, Math.round(start.width * FX_CONFIG.shrinkScale))
-  const targetH = Math.max(2, Math.round(start.height * FX_CONFIG.shrinkScale))
+  const targetW = Math.max(2, Math.round(start.width * BALL_ANIMATION_CONFIG.shrinkScale))
+  const targetH = Math.max(2, Math.round(start.height * BALL_ANIMATION_CONFIG.shrinkScale))
   await animateWindowBounds(
     win,
-    FX_CONFIG.captureMs,
+    BALL_ANIMATION_CONFIG.captureMs,
     easeInOutCubic,
     (e) => boundsAround(petCenter, lerp(start.width, targetW, e), lerp(start.height, targetH, e)),
     ctx
@@ -399,8 +399,8 @@ async function releasePetAt(
   const homeCenter = centerOf(home)
   const start = boundsAround(
     homeCenter,
-    home.width * FX_CONFIG.shrinkScale,
-    home.height * FX_CONFIG.shrinkScale
+    home.width * BALL_ANIMATION_CONFIG.shrinkScale,
+    home.height * BALL_ANIMATION_CONFIG.shrinkScale
   )
   win.setBounds(start)
   win.showInactive()
@@ -408,7 +408,7 @@ async function releasePetAt(
   sendPetReaction(win, 'released')
   await animateWindowBounds(
     win,
-    FX_CONFIG.releaseMs,
+    BALL_ANIMATION_CONFIG.releaseMs,
     easeOutCubic,
     (e) => boundsAround(homeCenter, lerp(start.width, home.width, e), lerp(start.height, home.height, e)),
     ctx
@@ -417,8 +417,8 @@ async function releasePetAt(
 
 /** 收尾：球窗淡出（异常/超时路径的收窗由 runFlow 的 finally 兜底） */
 async function fadeBallOut(ball: BrowserWindow, ctx: FlowContext): Promise<void> {
-  sendCommand(ball, { type: 'fade-out', durationMs: FX_CONFIG.fadeMs })
-  await sleep(FX_CONFIG.fadeMs, ctx)
+  sendCommand(ball, { type: 'fade-out', durationMs: BALL_ANIMATION_CONFIG.fadeMs })
+  await sleep(BALL_ANIMATION_CONFIG.fadeMs, ctx)
 }
 
 // ------------------------------------------------------------------ 隐藏流程
@@ -436,7 +436,7 @@ async function hideFlow(
   ctx: FlowContext
 ): Promise<void> {
   const t0 = Date.now()
-  const stamp = (msg: string): void => console.log(`[fx] t=${Date.now() - t0}ms ${msg}`)
+  const stamp = (msg: string): void => console.log(`[ball-animation] t=${Date.now() - t0}ms ${msg}`)
 
   const stash = win.getBounds()
   stashedBounds = stash
@@ -446,12 +446,12 @@ async function hideFlow(
   // ① 球（空载）沿拱线从托盘飞到宠物中心
   await flyBallFromAnchor(ball, anchor, petCenter, wa, false, ctx)
   assertLive(ctx)
-  stamp(`球到达宠物（flight ${FX_CONFIG.flightMs}ms）`)
+  stamp(`球到达宠物（flight ${BALL_ANIMATION_CONFIG.flightMs}ms）`)
 
   // ② 抵达爆散（捕获）：球窗播爆散粒子/光晕/扩散环 + 渲染侧挣扎反应 + 宠物窗口原地缩小
   await capturePetAt(win, ball, petCenter, ctx)
   assertLive(ctx)
-  stamp(`捕获完成（宠物缩至 ${FX_CONFIG.shrinkScale}×，${rectStr(win.getBounds())}）`)
+  stamp(`捕获完成（宠物缩至 ${BALL_ANIMATION_CONFIG.shrinkScale}×，${rectStr(win.getBounds())}）`)
 
   // ③ 球拎着缩小态的宠物沿同一条拱线一起飞回托盘（球窗盖在宠物上=吸进球里）
   const petShrunk = win.getBounds()
@@ -463,11 +463,11 @@ async function hideFlow(
     anchor,
     wa,
     { width: petShrunk.width, height: petShrunk.height },
-    FX_CONFIG.returnMs,
+    BALL_ANIMATION_CONFIG.returnMs,
     ctx
   )
   assertLive(ctx)
-  stamp(`到达托盘锚点（return ${FX_CONFIG.returnMs}ms）`)
+  stamp(`到达托盘锚点（return ${BALL_ANIMATION_CONFIG.returnMs}ms）`)
 
   // ④ 宠物 hide（此刻它已在托盘处的缩小态）；球淡出收窗
   win.hide()
@@ -490,7 +490,7 @@ async function showFlow(
   ctx: FlowContext
 ): Promise<void> {
   const t0 = Date.now()
-  const stamp = (msg: string): void => console.log(`[fx] t=${Date.now() - t0}ms ${msg}`)
+  const stamp = (msg: string): void => console.log(`[ball-animation] t=${Date.now() - t0}ms ${msg}`)
 
   // 原位：优先用隐藏时记录的家；缺失（异常路径）时退回当前 bounds
   const home = stashedBounds ?? win.getBounds()
@@ -500,7 +500,7 @@ async function showFlow(
   // ① 球（载宠物剪影）沿拱线从托盘飞到原位中心（飞行期间宠物窗口保持隐藏，由球"携带"）
   await flyBallFromAnchor(ball, anchor, homeCenter, wa, true, ctx)
   assertLive(ctx)
-  stamp(`球到达原位（flight ${FX_CONFIG.flightMs}ms）`)
+  stamp(`球到达原位（flight ${BALL_ANIMATION_CONFIG.flightMs}ms）`)
 
   // ② 释放：宠物窗口以原位缩小态出现（不抢焦点）→ 爆闪 + 落地 Q 弹 + 放大归位
   await releasePetAt(win, ball, home, ctx)
@@ -537,13 +537,13 @@ async function relocateMagicFlow(
   ctx: FlowContext
 ): Promise<void> {
   const t0 = Date.now()
-  const stamp = (msg: string): void => console.log(`[fx] t=${Date.now() - t0}ms ${msg}`)
+  const stamp = (msg: string): void => console.log(`[ball-animation] t=${Date.now() - t0}ms ${msg}`)
 
   // 防御：宠物当前隐藏时（向导流程理论上总在可见时触发；竞态下可能赶上隐藏）——
   // 只静默 setBounds(target)（不播动画、不显示：避免"回位"把用户刚隐藏的宠物弹出，
   // 保持可见性状态不变，见 settings 域回位约定）
   if (!win.isVisible()) {
-    console.log(`[fx] 移动动画：宠物当前隐藏 → 仅静默改坐标至 ${rectStr(target)}（不播动画、不显示）`)
+    console.log(`[ball-animation] 移动动画：宠物当前隐藏 → 仅静默改坐标至 ${rectStr(target)}（不播动画、不显示）`)
     win.setBounds(target)
     return
   }
@@ -553,17 +553,17 @@ async function relocateMagicFlow(
   const toCenter = centerOf(target)
   stamp(`移动动画开始（远距魔法）：宠物 ${rectStr(from)} → ${rectStr(target)}`)
 
-  // ① 球在宠物处原地凝聚显现（球窗定位到宠物中心；fx 页从无到有画出光球 + 微脉动）
-  ball.setBounds(boundsAround(petCenter, FX_CONFIG.ballWindowSize, FX_CONFIG.ballWindowSize))
-  sendCommand(ball, { type: 'spawn', durationMs: FX_CONFIG.relocateSpawnMs })
-  await sleep(FX_CONFIG.relocateSpawnMs, ctx)
+  // ① 球在宠物处原地凝聚显现（球窗定位到宠物中心；动画页从无到有画出光球 + 微脉动）
+  ball.setBounds(boundsAround(petCenter, BALL_ANIMATION_CONFIG.ballWindowSize, BALL_ANIMATION_CONFIG.ballWindowSize))
+  sendCommand(ball, { type: 'spawn', durationMs: BALL_ANIMATION_CONFIG.relocateSpawnMs })
+  await sleep(BALL_ANIMATION_CONFIG.relocateSpawnMs, ctx)
   assertLive(ctx)
-  stamp(`球凝聚完成（原地 ${FX_CONFIG.relocateSpawnMs}ms）`)
+  stamp(`球凝聚完成（原地 ${BALL_ANIMATION_CONFIG.relocateSpawnMs}ms）`)
 
   // ② 捕获爆闪：宠物原地缩小（只改几何，不 hide）
   await capturePetAt(win, ball, petCenter, ctx)
   assertLive(ctx)
-  stamp(`捕获完成（宠物缩至 ${FX_CONFIG.shrinkScale}×，${rectStr(win.getBounds())}）`)
+  stamp(`捕获完成（宠物缩至 ${BALL_ANIMATION_CONFIG.shrinkScale}×，${rectStr(win.getBounds())}）`)
 
   // ③ 球拎着缩小态宠物沿拱线飞向目标位（终点 = 目标矩形中心，释放点与目标同中心）
   const petShrunk = win.getBounds()
@@ -575,11 +575,11 @@ async function relocateMagicFlow(
     toCenter,
     wa,
     { width: petShrunk.width, height: petShrunk.height },
-    FX_CONFIG.returnMs,
+    BALL_ANIMATION_CONFIG.returnMs,
     ctx
   )
   assertLive(ctx)
-  stamp(`到达目标位（fly ${FX_CONFIG.returnMs}ms）`)
+  stamp(`到达目标位（fly ${BALL_ANIMATION_CONFIG.returnMs}ms）`)
 
   // ④ 释放爆闪 + 宠物在目标位放大归位
   await releasePetAt(win, ball, target, ctx)
@@ -596,7 +596,7 @@ async function relocateMagicFlow(
  * 时由 runFlow 分流至此）：宠物原样沿小弧**平滑滑过去**——无球无爆闪（"离设置很近就别
  * 表演整套魔法了"）；**太近**（< relocateNearStepPx）则直接落位（"太近了不用飞"）。
  *
- * 与魔法档共用同一条贝塞尔拱线（makeArcPath），仅时长与视觉分量不同；不依赖球窗/fx 页
+ * 与魔法档共用同一条贝塞尔拱线（makeArcPath），仅时长与视觉分量不同；不依赖球窗/动画页
  * （纯窗口移动）。防御与魔法档一致：宠物隐藏时只静默改坐标。
  */
 async function relocateGlideFlow(
@@ -606,10 +606,10 @@ async function relocateGlideFlow(
   ctx: FlowContext
 ): Promise<void> {
   const t0 = Date.now()
-  const stamp = (msg: string): void => console.log(`[fx] t=${Date.now() - t0}ms ${msg}`)
+  const stamp = (msg: string): void => console.log(`[ball-animation] t=${Date.now() - t0}ms ${msg}`)
 
   if (!win.isVisible()) {
-    console.log(`[fx] 移动动画：宠物当前隐藏 → 仅静默改坐标至 ${rectStr(target)}（不播动画、不显示）`)
+    console.log(`[ball-animation] 移动动画：宠物当前隐藏 → 仅静默改坐标至 ${rectStr(target)}（不播动画、不显示）`)
     win.setBounds(target)
     return
   }
@@ -619,10 +619,10 @@ async function relocateGlideFlow(
   const toCenter = centerOf(target)
   const dist = Math.hypot(toCenter.x - fromCenter.x, toCenter.y - fromCenter.y)
 
-  if (dist < FX_CONFIG.relocateNearStepPx) {
+  if (dist < BALL_ANIMATION_CONFIG.relocateNearStepPx) {
     win.setBounds(target)
     stamp(
-      `移动动画：距离 ${Math.round(dist)}px < ${FX_CONFIG.relocateNearStepPx}px → 直接落位（太近了不用飞）`
+      `移动动画：距离 ${Math.round(dist)}px < ${BALL_ANIMATION_CONFIG.relocateNearStepPx}px → 直接落位（太近了不用飞）`
     )
     return
   }
@@ -631,7 +631,7 @@ async function relocateGlideFlow(
   const path = makeArcPath(fromCenter, toCenter, wa)
   await animateWindowBounds(
     win,
-    FX_CONFIG.relocateGlideMs,
+    BALL_ANIMATION_CONFIG.relocateGlideMs,
     easeInOutCubic,
     (e) => boundsAround(path(e), from.width, from.height),
     ctx
@@ -661,34 +661,34 @@ async function runFlow(
   const label = direction === 'hide' ? '隐藏' : direction === 'show' ? '显示' : '移动'
   if (win.isDestroyed()) return
   if (busy) {
-    console.log(`[fx] 动画进行中，忽略本次${label}请求`)
+    console.log(`[ball-animation] 动画进行中，忽略本次${label}请求`)
     return
   }
   busy = true
   const ctx: FlowContext = { aborted: false }
   const watchdog = setTimeout(() => {
     ctx.aborted = true
-    console.warn(`[fx] ${label}动画超时（>${FX_CONFIG.totalTimeoutMs}ms），看门狗中止`)
-  }, FX_CONFIG.totalTimeoutMs)
+    console.warn(`[ball-animation] ${label}动画超时（>${BALL_ANIMATION_CONFIG.totalTimeoutMs}ms），看门狗中止`)
+  }, BALL_ANIMATION_CONFIG.totalTimeoutMs)
   try {
     if (direction === 'relocate') {
       // 移动方向按距离分档（2026-10-16 用户定稿）：
-      //   远距（≥ relocateMagicMinPx）：完整魔法，需要球窗与 fx 页就绪；不定位托盘锚点
+      //   远距（≥ relocateMagicMinPx）：完整魔法，需要球窗与 动画页就绪；不定位托盘锚点
       //     （球不走"从托盘飞来"的绕路，直接在宠物处凝聚）；
-      //   近距（< 上限）：平滑移位 / 太近直接落位——纯窗口移动，不建球窗、不等 fx 页。
+      //   近距（< 上限）：平滑移位 / 太近直接落位——纯窗口移动，不建球窗、不等 动画页。
       if (!target) return
       const wa = screen.getPrimaryDisplay().workArea
       const fromC = centerOf(win.getBounds())
       const toC = centerOf(target)
       const dist = Math.hypot(toC.x - fromC.x, toC.y - fromC.y)
-      if (dist < FX_CONFIG.relocateMagicMinPx || forceGlide) {
-        // 近距档 / 强制滑步（教学入位）：平滑移位或直接落位——不建球窗、不等 fx 页
+      if (dist < BALL_ANIMATION_CONFIG.relocateMagicMinPx || forceGlide) {
+        // 近距档 / 强制滑步（教学入位）：平滑移位或直接落位——不建球窗、不等 动画页
         await relocateGlideFlow(win, wa, target, ctx)
       } else {
         const ball = ensureBallWindow()
-        const ready = await waitFxReady(FX_CONFIG.readyTimeoutMs)
+        const ready = await waitFxReady(BALL_ANIMATION_CONFIG.readyTimeoutMs)
         if (!ready) {
-          console.warn(`[fx] 动画页未就绪（>${FX_CONFIG.readyTimeoutMs}ms），本次降级为直接${label}`)
+          console.warn(`[ball-animation] 动画页未就绪（>${BALL_ANIMATION_CONFIG.readyTimeoutMs}ms），本次降级为直接${label}`)
           degrade()
           return
         }
@@ -699,14 +699,14 @@ async function runFlow(
       }
     } else {
       const ball = ensureBallWindow()
-      // fx 页就绪等待 与 锚点自动定位（抓屏+模板匹配）并行 —— 降低"按下到球起飞"的感知延迟；
+      // 动画页就绪等待 与 锚点自动定位（抓屏+模板匹配）并行 —— 降低"按下到球起飞"的感知延迟；
       // 定位失败/超时都返回兜底值，绝不影响动画播放
       const [ready, anchorRes] = await Promise.all([
-        waitFxReady(FX_CONFIG.readyTimeoutMs),
+        waitFxReady(BALL_ANIMATION_CONFIG.readyTimeoutMs),
         locateTrayAnchor()
       ])
       if (!ready) {
-        console.warn(`[fx] 动画页未就绪（>${FX_CONFIG.readyTimeoutMs}ms），本次降级为直接${label}`)
+        console.warn(`[ball-animation] 动画页未就绪（>${BALL_ANIMATION_CONFIG.readyTimeoutMs}ms），本次降级为直接${label}`)
         degrade()
         return
       }
@@ -719,7 +719,7 @@ async function runFlow(
       else await showFlow(win, ball, wa, anchor, ctx)
     }
   } catch (err) {
-    console.error(`[fx] ${label}动画异常，兜底直接${label}：`, err)
+    console.error(`[ball-animation] ${label}动画异常，兜底直接${label}：`, err)
     if (!win.isDestroyed()) {
       if (direction === 'hide') {
         win.hide()
@@ -748,7 +748,7 @@ async function runFlow(
 
 /** 隐藏流程：托盘"隐藏宠物"、Alt+F4 关窗拦截、单击切换等路径统一调用 */
 export function runHideAnimation(win: BrowserWindow): Promise<void> {
-  if (!FX_CONFIG.ENABLED) {
+  if (!BALL_ANIMATION_CONFIG.ENABLED) {
     win.hide()
     return Promise.resolve()
   }
@@ -757,7 +757,7 @@ export function runHideAnimation(win: BrowserWindow): Promise<void> {
 
 /** 显示流程：托盘菜单"显示宠物"、托盘单击等路径统一调用 */
 export function runShowAnimation(win: BrowserWindow): Promise<void> {
-  if (!FX_CONFIG.ENABLED) {
+  if (!BALL_ANIMATION_CONFIG.ENABLED) {
     win.showInactive()
     return Promise.resolve()
   }
@@ -795,7 +795,7 @@ function waitBusyFree(timeoutMs: number): Promise<boolean> {
  *   < 上限：近距平滑移位 / 太近直接落位（见 relocateGlideFlow）。
  *
  * 与隐藏/显示不同：relocate 是向导编排（入位/回位）的关键一步，不采用"忙则忽略"——
- * 在途动画优先收尾（上限 FX_CONFIG.relocateBusyWaitMs），超时才放弃本次（日志警告；
+ * 在途动画优先收尾（上限 BALL_ANIMATION_CONFIG.relocateBusyWaitMs），超时才放弃本次（日志警告；
  * 调用方按"未移动"处理，见 settings 域的向导状态机）。
  * 结果语义：宠物窗口在 target；可见性保持调用前状态（可见进可见出；隐藏态只搬家不弹出）。
  *
@@ -810,14 +810,14 @@ export async function runRelocateAnimation(
   opts?: { forceGlide?: boolean }
 ): Promise<void> {
   if (!win || win.isDestroyed()) return
-  if (!FX_CONFIG.ENABLED) {
+  if (!BALL_ANIMATION_CONFIG.ENABLED) {
     win.setBounds(target)
     return
   }
-  const free = await waitBusyFree(FX_CONFIG.relocateBusyWaitMs)
+  const free = await waitBusyFree(BALL_ANIMATION_CONFIG.relocateBusyWaitMs)
   if (!free) {
     console.warn(
-      `[fx] 在途动画超过 ${FX_CONFIG.relocateBusyWaitMs}ms 未收尾，放弃本次移动（目标 ${rectStr(target)}）`
+      `[ball-animation] 在途动画超过 ${BALL_ANIMATION_CONFIG.relocateBusyWaitMs}ms 未收尾，放弃本次移动（目标 ${rectStr(target)}）`
     )
     return
   }
@@ -825,7 +825,7 @@ export async function runRelocateAnimation(
   // 隐藏态早退（在锁空闲之后判断：此刻无在途动画、窗口静止）——只搬家不显示、不播动画，
   // 也避免白闪一个空球窗；"就绪等待期间被隐藏"的竞态由 relocate 流程内防御分支兜底
   if (!win.isVisible()) {
-    console.log(`[fx] 移动动画：宠物当前隐藏 → 仅静默改坐标至 ${rectStr(target)}（不播动画、不显示）`)
+    console.log(`[ball-animation] 移动动画：宠物当前隐藏 → 仅静默改坐标至 ${rectStr(target)}（不播动画、不显示）`)
     win.setBounds(target)
     return
   }
@@ -833,7 +833,7 @@ export async function runRelocateAnimation(
     win,
     'relocate',
     () => {
-      // 降级：瞬时落位（fx 页未就绪/超时——不播动画，位置语义照旧）
+      // 降级：瞬时落位（动画页未就绪/超时——不播动画，位置语义照旧）
       win.setBounds(target)
     },
     target,

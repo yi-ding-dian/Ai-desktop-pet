@@ -43,8 +43,8 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { isLinux, linuxOnlyWindowOptions } from '../platform'
 import { IPC, IPC_EVENTS, type TrayMenuAction } from '../ipc/channels'
-import { runHideAnimation, runShowAnimation } from '../fx'
-import { locateTrayAnchor } from '../fx/anchor'
+import { runHideAnimation, runShowAnimation } from '../ball-animation'
+import { locateTrayAnchor } from '../ball-animation/anchor'
 import { enterTeaching } from '../teaching'
 import { openSettings } from '../settings'
 
@@ -235,7 +235,7 @@ function ensureTrayMenuWindow(): BrowserWindow {
   return trayMenuWin
 }
 
-/** 等待菜单页加载完成（带超时；照 fx 域 waitFxReady 模式） */
+/** 等待菜单页加载完成（带超时；照 ball-animation 域 waitFxReady 模式） */
 function waitMenuReady(timeoutMs: number): Promise<boolean> {
   if (menuReady) return Promise.resolve(true)
   return new Promise((resolve) => {
@@ -252,7 +252,7 @@ function waitMenuReady(timeoutMs: number): Promise<boolean> {
 }
 
 /**
- * 菜单弹出位置：优先托盘图标锚点（fx/anchor 抓屏模板匹配——图标旁弹出，与原生菜单方位一致）；
+ * 菜单弹出位置：优先托盘图标锚点（ball-animation/anchor 抓屏模板匹配——图标旁弹出，与原生菜单方位一致）；
  * 模板未命中/失败（source=fallback）回退"当前鼠标位置"（鼠标就在托盘图标上）。
  * 一律 clamp 进所在显示器工作区。
  */
@@ -374,8 +374,8 @@ export function createTray(win: BrowserWindow): Tray | null {
   tray.setToolTip('AI 桌面宠物')
 
   /**
-   * 切换宠物窗口显隐（走 fx 域魔法球动画；结果语义不变：可见→隐藏、不可见→显示）。
-   * 动画期间重复触发由 fx 域的锁忽略；动画异常/超时有兜底，hide/show 一定生效。
+   * 切换宠物窗口显隐（走 ball-animation 域魔法球动画；结果语义不变：可见→隐藏、不可见→显示）。
+   * 动画期间重复触发由 ball-animation 域的锁忽略；动画异常/超时有兜底，hide/show 一定生效。
    */
   const toggleVisibility = (): void => {
     const w = petWin

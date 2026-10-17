@@ -3,7 +3,7 @@
  *
  * 职责（单一）：订阅主进程 `SETTINGS_VISIBILITY`（opened / saved / closed）→ 归一为
  * "向导进行中"布尔 → 分发给 App（App 据此：聊天面板收起 + 渲染萌语气泡 + 形状上报）。
- * **飞位动画由主进程 fx 域编排**，本域只做 UI 响应，不自行移动窗口（§7.6.6 分工）。
+ * **飞位动画由主进程 ball-animation 域编排**，本域只做 UI 响应，不自行移动窗口（§7.6.6 分工）。
  *
  * 兼容性：bridge 的 settings 段由并行实现提供（旧 preload 无此段）——
  * 所有调用一律可选链容错（先例：modules/teaching/index.ts 的 `teaching?.onState?.`）。

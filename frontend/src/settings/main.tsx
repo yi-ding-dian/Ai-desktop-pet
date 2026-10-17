@@ -1,6 +1,6 @@
 /**
  * 设置页入口（settings.html）：主题初始化 + React 挂载 + 真机排障探针。
- * 与 board/fx 域同模式：独立 HTML + 独立 src 目录，共用同一 preload 基建。
+ * 与 board/ball-animation 域同模式：独立 HTML + 独立 src 目录，共用同一 preload 基建。
  * 数据流见 hooks/useSettingsController（自持 WS 连接，§7.6.2）。
  */
 import React from 'react'

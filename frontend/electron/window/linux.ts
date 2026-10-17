@@ -65,7 +65,7 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
 
   // 层级提到 screen-saver（2026-10-16 用户实反馈修复）：与黑板（普通 alwaysOnTop）**拉开层级**——
   // 黑板展开/滑入时不再盖住宠物（"移动兔子后展开黑板，兔子跑到白板后面"）。同层的球窗/气泡窗
-  // 各自在显示前 moveTop 自保（见 fx/bubble 域）；宠物自身不主动 raise（后显示的球/气泡在它上面）。
+  // 各自在显示前 moveTop 自保（见 ball-animation/bubble 域）；宠物自身不主动 raise（后显示的球/气泡在它上面）。
   win.setAlwaysOnTop(true, 'screen-saver')
 
   // 初始位置：主屏工作区底部居中（桌宠站立位，留 48px 边距）

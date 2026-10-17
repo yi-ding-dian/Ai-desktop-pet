@@ -7,7 +7,7 @@ import {
   IPC,
   IPC_BUBBLE,
   IPC_EVENTS,
-  IPC_FX,
+  IPC_BALL_ANIMATION,
   type BackendReadyPayload,
   type BackendSnapshot,
   type BackendStatusPayload,
@@ -15,8 +15,8 @@ import {
   type BubbleRequest,
   type BubbleTail,
   type BubbleUpdatePayload,
-  type FxCommand,
-  type FxPetReactionPayload,
+  type BallAnimationCommand,
+  type BallAnimationPetReactionPayload,
   type PetBridgeApi,
   type SettingsVisibilityPayload,
   type TeachingBoardInbox,
@@ -117,21 +117,21 @@ const api: PetBridgeApi = {
     }
   },
 
-  fx: {
+  ballAnimation: {
     ready(): void {
-      ipcRenderer.send(IPC_FX.READY)
+      ipcRenderer.send(IPC_BALL_ANIMATION.READY)
     },
 
-    onCommand(cb: (cmd: FxCommand) => void): () => void {
-      const listener = (_event: Electron.IpcRendererEvent, cmd: FxCommand): void => cb(cmd)
-      ipcRenderer.on(IPC_FX.COMMAND, listener)
+    onCommand(cb: (cmd: BallAnimationCommand) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, cmd: BallAnimationCommand): void => cb(cmd)
+      ipcRenderer.on(IPC_BALL_ANIMATION.COMMAND, listener)
       return () => {
-        ipcRenderer.removeListener(IPC_FX.COMMAND, listener)
+        ipcRenderer.removeListener(IPC_BALL_ANIMATION.COMMAND, listener)
       }
     },
 
-    onPetReaction(cb: (payload: FxPetReactionPayload) => void): () => void {
-      const listener = (_event: Electron.IpcRendererEvent, payload: FxPetReactionPayload): void =>
+    onPetReaction(cb: (payload: BallAnimationPetReactionPayload) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, payload: BallAnimationPetReactionPayload): void =>
         cb(payload)
       ipcRenderer.on(IPC_EVENTS.PET_FX_REACTION, listener)
       return () => {

@@ -1,14 +1,14 @@
 /**
- * 魔法球动画页（fx.html）视觉参数——**颜色/粒子/尺寸集中在这里调**。
+ * 魔法球动画页（ball-animation.html）视觉参数——**颜色/粒子/尺寸集中在这里调**。
  * 数值与运动设计整体移植自参考实现（magic-flight：贝塞尔拱线 + easeInOut 三次 +
  * 星屑尾迹 + 抵达爆散），按球窗尺寸做紧凑化适配。
  *
- * 约束（重要）：球窗只有 ballWindowSize×ballWindowSize（见 electron/fx/config.ts，默认 360），
+ * 约束（重要）：球窗只有 ballWindowSize×ballWindowSize（见 electron/ball-animation/config.ts，默认 360），
  * **画到窗口外的内容会被裁掉**——尾迹长度/爆散半径都按此收敛；
  * "球的飞行"由主进程移动窗口完成（沿贝塞尔拱线），本页面里球**固定**在窗口中心，
  * 尾迹/星屑按"窗口位移的反向"在窗内滑动，还原"球飞过留下一路星屑"的观感。
  */
-export const FX_VISUAL = {
+export const BALL_ANIMATION_VISUAL = {
   /**
    * 星屑/爆散的颜色池（青 → 紫 → 粉 → 白；与参考 magic-flight 完全一致）
    */

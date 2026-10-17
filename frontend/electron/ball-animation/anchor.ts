@@ -1,5 +1,5 @@
 /**
- * 托盘锚点定位（fx 域）：**抓屏 + 模板匹配**自动找出托盘兔头图标的屏幕坐标。
+ * 托盘锚点定位（ball-animation 域）：**抓屏 + 模板匹配**自动找出托盘兔头图标的屏幕坐标。
  *
  * 为什么需要：球必须从"兔头图标"腾起/收回，但图标位置无 API 可查（Electron `tray.getBounds()`
  * 仅 Win/macOS；SNI 协议不含位置；DDE 无公开查询），且图标顺序/增删/分辨率变化会让写死的
@@ -124,17 +124,17 @@ async function capturePrimaryScreen(): Promise<ImagePair | null> {
         try {
           writeFileSync(debugCaptureSavePath, src.thumbnail.toPNG())
         } catch (err) {
-          console.warn('[fx] 抓屏图保存失败：', err)
+          console.warn('[ball-animation] 抓屏图保存失败：', err)
         }
       }
       const pair = imageToPairs(src.thumbnail, w, h)
       if (pair) return pair
-      console.warn('[fx] desktopCapturer 返回空图，改用 ffmpeg 抓屏')
+      console.warn('[ball-animation] desktopCapturer 返回空图，改用 ffmpeg 抓屏')
     } else {
-      console.warn('[fx] desktopCapturer 无屏幕源，改用 ffmpeg 抓屏')
+      console.warn('[ball-animation] desktopCapturer 无屏幕源，改用 ffmpeg 抓屏')
     }
   } catch (err) {
-    console.warn('[fx] desktopCapturer 抓屏异常，改用 ffmpeg 抓屏：', err)
+    console.warn('[ball-animation] desktopCapturer 抓屏异常，改用 ffmpeg 抓屏：', err)
   }
 
   // ---- 路径 2：ffmpeg -f x11grab 子进程（环境自带；抓主屏区域到临时 png 再读入） ----
@@ -154,7 +154,7 @@ async function capturePrimaryScreen(): Promise<ImagePair | null> {
     )
     return imageToPairs(nativeImage.createFromPath(out), w, h)
   } catch (err) {
-    console.warn('[fx] ffmpeg 抓屏失败：', err)
+    console.warn('[ball-animation] ffmpeg 抓屏失败：', err)
     return null
   }
 }
@@ -209,7 +209,7 @@ function locateWithTemplate(
   if (verbose) {
     for (const r of debugRows) {
       console.log(
-        `[fx/自检] 候选 (${r.x},${r.y}) ncc=${r.ncc.toFixed(3)} 颜色=${r.color.toFixed(3)} 综合=${r.combined.toFixed(3)}`
+        `[ball-animation/自检] 候选 (${r.x},${r.y}) ncc=${r.ncc.toFixed(3)} 颜色=${r.color.toFixed(3)} 综合=${r.combined.toFixed(3)}`
       )
     }
   }
@@ -229,7 +229,7 @@ export async function locateTrayAnchor(): Promise<AnchorResult> {
   try {
     const shot = await capturePrimaryScreen()
     if (!shot) {
-      console.warn(`[fx] 锚点定位：抓屏失败，用兜底 (${fallback.x},${fallback.y})`)
+      console.warn(`[ball-animation] 锚点定位：抓屏失败，用兜底 (${fallback.x},${fallback.y})`)
       return fallback
     }
     // 主模板：实测截图裁出的真实渲染兔头
@@ -238,12 +238,12 @@ export async function locateTrayAnchor(): Promise<AnchorResult> {
       const hit = locateWithTemplate(shot, tplPath, TEMPLATE_MIN_SCORE, false)
       if (hit) {
         console.log(
-          `[fx] 锚点定位：自动命中 (${hit.x},${hit.y}) 置信 ${hit.score.toFixed(3)}（耗时 ${Date.now() - t0}ms）`
+          `[ball-animation] 锚点定位：自动命中 (${hit.x},${hit.y}) 置信 ${hit.score.toFixed(3)}（耗时 ${Date.now() - t0}ms）`
         )
         return { x: hit.x, y: hit.y, source: 'auto', score: hit.score }
       }
     } else {
-      console.warn('[fx] 锚点定位：主模板文件缺失（resources/tray-anchor-template.png）')
+      console.warn('[ball-animation] 锚点定位：主模板文件缺失（resources/tray-anchor-template.png）')
     }
     // 备用模板：托盘图标素材（主模板失配时试）
     const iconPath = resolveIconPath()
@@ -251,15 +251,15 @@ export async function locateTrayAnchor(): Promise<AnchorResult> {
       const hit = locateWithTemplate(shot, iconPath, FALLBACK_TEMPLATE_MIN_SCORE, false)
       if (hit) {
         console.log(
-          `[fx] 锚点定位：自动命中（备用模板）(${hit.x},${hit.y}) 置信 ${hit.score.toFixed(3)}（耗时 ${Date.now() - t0}ms）`
+          `[ball-animation] 锚点定位：自动命中（备用模板）(${hit.x},${hit.y}) 置信 ${hit.score.toFixed(3)}（耗时 ${Date.now() - t0}ms）`
         )
         return { x: hit.x, y: hit.y, source: 'auto', score: hit.score }
       }
     }
-    console.warn(`[fx] 锚点定位：模板未命中，用兜底 (${fallback.x},${fallback.y})（耗时 ${Date.now() - t0}ms）`)
+    console.warn(`[ball-animation] 锚点定位：模板未命中，用兜底 (${fallback.x},${fallback.y})（耗时 ${Date.now() - t0}ms）`)
     return fallback
   } catch (err) {
-    console.warn(`[fx] 锚点定位异常，用兜底 (${fallback.x},${fallback.y})：`, err)
+    console.warn(`[ball-animation] 锚点定位异常，用兜底 (${fallback.x},${fallback.y})：`, err)
     return fallback
   }
 }
@@ -275,13 +275,13 @@ export async function runAnchorSelfTest(arg: string): Promise<void> {
     // 文件模式：对给定截图跑匹配（输出全部候选，便于调参/排查）
     const pair = imageToPairs(nativeImage.createFromPath(arg))
     if (!pair) {
-      console.warn(`[fx/自检] 截图读取失败：${arg}`)
+      console.warn(`[ball-animation/自检] 截图读取失败：${arg}`)
       return
     }
     const tplPath = resolveTemplatePath()
     const hit = tplPath ? locateWithTemplate(pair, tplPath, TEMPLATE_MIN_SCORE, true) : null
     console.log(
-      `[fx/自检] 文件模式 ${arg}（${pair.gray.width}x${pair.gray.height}）→ ` +
+      `[ball-animation/自检] 文件模式 ${arg}（${pair.gray.width}x${pair.gray.height}）→ ` +
         (hit ? `命中 (${hit.x},${hit.y}) 综合置信 ${hit.score.toFixed(3)}` : '未命中（全部候选如上）') +
         `（耗时 ${Date.now() - t0}ms）`
     )
@@ -291,8 +291,8 @@ export async function runAnchorSelfTest(arg: string): Promise<void> {
   debugCaptureSavePath = join(app.getPath('temp'), 'pet-anchor-capture.png')
   const res = await locateTrayAnchor()
   debugCaptureSavePath = null
-  console.log(`[fx/自检] 抓屏图已保存：${join(app.getPath('temp'), 'pet-anchor-capture.png')}`)
+  console.log(`[ball-animation/自检] 抓屏图已保存：${join(app.getPath('temp'), 'pet-anchor-capture.png')}`)
   console.log(
-    `[fx/自检] 抓屏模式 → ${res.source === 'auto' ? `自动命中 (${res.x},${res.y}) 置信 ${res.score.toFixed(3)}` : `兜底 (${res.x},${res.y})`}`
+    `[ball-animation/自检] 抓屏模式 → ${res.source === 'auto' ? `自动命中 (${res.x},${res.y}) 置信 ${res.score.toFixed(3)}` : `兜底 (${res.x},${res.y})`}`
   )
 }

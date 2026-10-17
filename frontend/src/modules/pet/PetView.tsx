@@ -91,16 +91,16 @@ export default function PetView({ client }: PetViewProps): ReactElement {
     return () => offs.forEach((off) => off())
   }, [client])
 
-  // ---- ②b 魔法球捕获/释放反应（fx 域：隐藏/显示动画由主进程触发；
+  // ---- ②b 魔法球捕获/释放反应（ball-animation 域：隐藏/显示动画由主进程触发；
   //         参考 voice 的控制器模式，经 pet-bridge 订阅后转发给当前渲染器） ----
   // 注：新增 bridge API 需重启 Electron 主进程才可用；旧 preload 无该方法时静默跳过
   useEffect(() => {
-    const off = getPetBridge().fx?.onPetReaction?.(({ kind }) => {
-      devLog(`fx reaction -> ${kind}`)
+    const off = getPetBridge().ballAnimation?.onPetReaction?.(({ kind }) => {
+      devLog(`ball-animation reaction -> ${kind}`)
       rendererRef.current?.playReaction(kind)
       if (kind === 'captured') {
         // 被魔法球抓走 = 用户交互级打断：中止当前自主行为（walk 等的窗口缓动会与
-        // fx 动画的 setBounds 抢窗口控制权，造成抖动；语义同"用户触摸/抓取"）
+        // ball-animation 动画的 setBounds 抢窗口控制权，造成抖动；语义同"用户触摸/抓取"）
         interruptPetBehavior('被魔法球捕获')
       }
     })
