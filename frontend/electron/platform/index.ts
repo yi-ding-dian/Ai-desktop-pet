@@ -58,6 +58,17 @@ export function linuxOnlyWindowOptions(): LinuxOnlyWindowOptions {
 }
 
 /**
+ * 气泡窗生命周期策略：
+ *  - true（Windows）：隐藏后**复用**同一个窗口/渲染进程。Windows 上「销毁 → 下次重建」
+ *    每次右键菜单都要新建渲染进程 + 重新加载 bubble.html（dev 实测菜单弹出约 300ms；
+ *    生产构建首次约 170ms）。复用它之后第二次起只需 show + 下发内容（~20-30ms）。
+ *  - false（Linux/macOS）：隐藏即销毁、每次唯一 partition 重建——这是 KWin/Chromium
+ *    渲染进程坏状态的既有规避手段（见 electron/bubble/index.ts 的完整排查记录）。
+ * 新增平台时在这一行补它的策略，消费方（bubble 域）零改动。
+ */
+export const REUSE_BUBBLE_WINDOW: boolean = isWindows
+
+/**
  * 后端启动路径名（开发态解释器 / 生产态产物名）。非 Windows 一律取类 Unix 形式
  * （Linux 在跑；macOS 未实现但取 Unix 形式是正确方向，将来落地时不必再改这里）。
  */

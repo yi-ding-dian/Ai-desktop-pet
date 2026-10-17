@@ -192,7 +192,17 @@ export interface BubbleMenuItemPayload {
  * session：弹出会话序号（主进程递增）——主进程在 show 后延迟补发同载荷一次（防 React 订阅前丢首帧），
  * 渲染侧按 session 去重（重复只认不重播动画）。tail 由主进程定位计算给出（防出屏翻向）。
  */
-export type BubbleOpenPayload = { session: number; tail: BubbleTail; motion: BubbleMotion } & (
+export type BubbleOpenPayload = {
+  session: number
+  tail: BubbleTail
+  motion: BubbleMotion
+  /**
+   * 窗口是否复用（Windows 策略）：true = 跳过"尺寸稳定 → 强制重绘重挂载"。
+   * 该重挂载是 Linux/KWin 残屏的补偿；在复用窗口上会在入场动画约 320ms 处再重渲染一次，
+   * 观感像"分两段弹出"（2026-10-17 用户反馈）。
+   */
+  stableWindow?: boolean
+} & (
   | { variant: 'menu'; items: BubbleMenuItemPayload[] }
   | { variant: 'confirm'; message: string; confirmLabel: string; cancelLabel: string }
   | { variant: 'text'; message: string }

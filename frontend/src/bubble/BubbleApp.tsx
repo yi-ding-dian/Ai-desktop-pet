@@ -58,6 +58,8 @@ export default function BubbleApp(): ReactElement {
   const reflowDoneRef = useRef(false)
   /** 尺寸稳定判定定时器（onOpen 重置 / onRequestClose 取消） */
   const reflowTimerRef = useRef(0)
+  /** 当前窗口是否为复用窗口（Windows）：复用窗口跳过"尺寸稳定重挂载"补偿，避免入场动画中途再渲染一次 */
+  const stableWindowRef = useRef(lastPayload?.stableWindow === true)
 
   useEffect(() => {
     const bridge = bubbleBridge()
@@ -70,6 +72,7 @@ export default function BubbleApp(): ReactElement {
       if (p.session === lastSession) return // 补发幂等：同 session 不重播动画
       lastSession = p.session
       lastPayload = p
+      stableWindowRef.current = p.stableWindow === true
       setPayload(p)
       setTail(p.tail)
       setClosing(false)
@@ -131,6 +134,9 @@ export default function BubbleApp(): ReactElement {
   const handleSize = useCallback((size: { width: number; height: number }) => {
     bubbleBridge()?.reportSize(size)
     window.clearTimeout(reflowTimerRef.current)
+    // 复用窗口（Windows）跳过"尺寸稳定 → 强制重绘重挂载"：该补偿只对 Linux/KWin 残屏必要；
+    // 在复用窗口上它会在入场动画进行到约 320ms 时再整树重渲染一次，观感就是"分了两段弹出"
+    if (stableWindowRef.current) return
     reflowTimerRef.current = window.setTimeout(() => {
       if (reflowDoneRef.current) return
       reflowDoneRef.current = true
@@ -145,10 +151,12 @@ export default function BubbleApp(): ReactElement {
     bubbleBridge()?.reportShape?.(rects)
   }, [])
 
-  /** 退场动画播毕 → 主进程隐藏窗口 */
+  /** 退场动画播毕 → 主进程隐藏窗口；复用窗口同时清空内容，避免下次 show 先闪一帧旧菜单 */
   const handleExited = useCallback(() => {
     devLog('退场动画播毕 → 回报主进程')
     bubbleBridge()?.notifyClosed()
+    lastPayload = null
+    setPayload(null)
   }, [])
 
   if (!payload) return <div className="bubble-stage" />

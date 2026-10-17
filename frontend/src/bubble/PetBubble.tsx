@@ -281,18 +281,21 @@ export default function PetBubble({
           height: el.offsetHeight + PAD.top + PAD.bottom
         })
         if (onShape) {
-          const b = el.getBoundingClientRect()
-          const rects: Rect[] = []
-          const t = toolbarRef.current?.getBoundingClientRect()
-          if (t && t.width > 0) {
-            rects.push({ x: t.left - 2, y: t.top - 2, width: t.width + 4, height: t.height + 4 })
-          }
-          rects.push({
-            x: b.left - 4,
-            y: b.top - 4,
-            width: b.width + 8,
-            height: b.height + 8
+          // 用布局坐标（offset*）而不是 getBoundingClientRect()：
+          // 后者会把入场动画的 transform: scale() 计算进去——在动画中途上报的形状
+          // 是"缩小 + 下移"的矩形，动画结束后不会自动重报，Windows 复用窗口（已跳过
+          // 320ms 重挂载补偿）就会把菜单顶部/右侧裁掉（2026-10-17 "菜单残缺"）。
+          // offset* 只看布局，与入场 scale 无关；offsetParent = .bubble-stage（position:relative）。
+          const rectOf = (node: HTMLElement, pad: number): Rect => ({
+            x: node.offsetLeft - pad,
+            y: node.offsetTop - pad,
+            width: node.offsetWidth + pad * 2,
+            height: node.offsetHeight + pad * 2
           })
+          const rects: Rect[] = []
+          const t = toolbarRef.current
+          if (t && t.offsetWidth > 0) rects.push(rectOf(t, 2))
+          rects.push(rectOf(el, 4))
           onShape(rects)
         }
       })

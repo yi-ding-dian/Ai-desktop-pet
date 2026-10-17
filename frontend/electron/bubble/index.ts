@@ -19,7 +19,8 @@
  * 变化时经 SET_TAIL 轻量下发（仅换样式，不重播动画）。
  *
  * 动画分工（照 IPC_BALL_ANIMATION 先例：主进程是指挥、渲染页负责"画"）：入场动画在气泡窗内播
- * （菜单"手来手回"光点飞入 / 说话气泡"轻量展开"弹性绽放；退场同款反向）；收起 = 本域先发
+ * （当前菜单/确认/说话气泡统一"轻量展开"弹性绽放；"手来手回"预设保留但不再用于菜单——
+ * 2026-10-17 用户反馈光点 + 延迟弹出像"分两段"；退场同款反向）；收起 = 本域先发
  * REQUEST_CLOSE → 渲染侧播退场动画 → CLOSED 回报 → 本域 hide（渲染异常时 CLOSE_TIMEOUT_MS
  * 超时兜底强制 hide）。
  *
@@ -45,13 +46,14 @@
  * 确认后向宠物窗发 CHAT_CLEAR_REQUESTED（清空逻辑归后续任务）；说话气泡 expand/close 见上。
  * 动作白名单按当前内容校验。
  *
- * 生命周期：**每次弹出重建**（懒创建；隐藏收尾即 destroy，下次弹出新建）——复用窗口在真机上
- * 画面必残（"hide → 隐藏态 resize → show"路径的 KWin/Chromium 缺陷，排查全程见
- * destroyBubbleWindow 注释）；退出（will-quit）destroy。
+ * 生命周期：懒创建。**Windows 隐藏复用**（避免每次右键菜单新建渲染进程——dev 实测约 300ms
+ * 延迟）；**Linux/macOS 隐藏即销毁、下次唯一 partition 重建**（"hide → 隐藏态 resize → show"
+ * 路径的 KWin/Chromium 残屏缺陷规避，排查全程见 destroyBubbleWindow 注释）；退出（will-quit）destroy。
+ * 策略出口：platform.REUSE_BUBBLE_WINDOW（bubble 域不直接读 process.platform）。
  */
 import { app, BrowserWindow, ipcMain, screen, type WebContents } from 'electron'
 import { join } from 'node:path'
-import { linuxOnlyWindowOptions } from '../platform'
+import { linuxOnlyWindowOptions, REUSE_BUBBLE_WINDOW } from '../platform'
 import {
   IPC,
   IPC_BUBBLE,
@@ -85,7 +87,9 @@ const HEAD_ANCHOR_OFFSET: Point = { x: 255, y: 92 }
  * 高度含顶部悬浮条区 28（PAD.top=40——说话气泡悬浮工具条占位；菜单/确认同布局，见 geometry.ts）。
  */
 const ESTIMATED_SIZE: Record<'menu' | 'confirm' | 'text', Size> = {
-  menu: { width: 216, height: 228 },
+  // 与实际菜单一致（实测 215×206）：首帧 show 后不再因"预估高度 228 → 实际 206"缩一下，
+  // 避免弹出过程出现尺寸跳变（用户反馈菜单"分两段"的另一来源）
+  menu: { width: 216, height: 206 },
   confirm: { width: 236, height: 178 },
   text: { width: 370, height: 218 }
 }
@@ -179,6 +183,8 @@ let speechText = ''
 let followPending = false
 /** 气泡窗交互形状（渲染侧 REPORT_SHAPE 上报；Linux 用 win.setShape 裁输入区——说话气泡悬浮交互 + 其余穿透） */
 let shapeRects: Rect[] = []
+/** Windows 复用策略的预热定时器（will-quit 清理，避免退出过程中又建窗） */
+let warmTimer: NodeJS.Timeout | null = null
 
 // ------------------------------------------------------------------ 工具
 
@@ -304,8 +310,9 @@ function createBubbleWindow(): BrowserWindow {
     show: false,
     webPreferences: {
       /**
-       * **每次唯一 partition（`bubble-序号`）** —— 强制"独立 storage session" ⇒ Chromium 必然
-       * 分配**全新渲染进程**（不同 SiteInstance 不可同进程）。
+       * **每次唯一 partition（`bubble-序号`；Linux/macOS）** —— 强制"独立 storage session" ⇒
+       * Chromium 必然分配**全新渲染进程**（不同 SiteInstance 不可同进程）。
+       * Windows 不复用这条策略：窗口隐藏后复用，partition 固定为 `bubble`（见 destroyBubbleWindow）。
        *
        * 为什么（2026-10-16 真机排查的最终根因）：**坏状态存在于渲染进程内部**（合成器/surface
        * 缓存——复用窗口路径 hide→隐藏态 resize→show 之后"画面残缺"：窗口/布局/上报全对，画出来
@@ -317,7 +324,9 @@ function createBubbleWindow(): BrowserWindow {
        * 附：内存 session（无 `persist:` 前缀）不落盘，随窗口销毁回收；气泡页无持久化需求，
        * 无副作用（仅每次弹出多一次页面加载/进程启动开销——与首弹同量级，实测可接受）。
        */
-      partition: `bubble-${++windowSeq}`,
+      // Windows：隐藏复用同一个窗口，partition 固定即可（不再每次新建渲染进程）；
+      // Linux/macOS：每次唯一 partition（KWin 残屏规避，见上方完整排查）
+      partition: REUSE_BUBBLE_WINDOW ? 'bubble' : `bubble-${++windowSeq}`,
       preload: join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
       nodeIntegration: false
@@ -401,6 +410,10 @@ function waitBubbleReady(timeoutMs: number): Promise<boolean> {
 
 /** 应用退出清理（will-quit；气泡窗直接销毁，不做额外等待——正常退出不播退场动画） */
 export function destroyBubble(): void {
+  if (warmTimer) {
+    clearTimeout(warmTimer)
+    warmTimer = null
+  }
   if (closeTimer) {
     clearTimeout(closeTimer)
     closeTimer = null
@@ -425,11 +438,14 @@ export function destroyBubble(): void {
 }
 
 /**
- * 销毁当前气泡窗（隐藏收尾时调用；下次弹出经 ensureBubbleWindow 重建——**与 createBubbleWindow
- * 的"每次唯一 partition"配套，两者缺一不可**：partition 在建窗时固定，不销毁重建就无法换进程）。
+ * 收尾当前气泡窗（隐藏收尾时调用）：
+ *  - **Windows（REUSE_BUBBLE_WINDOW=true）**：只 hide、保留窗口与渲染进程（下次 show 秒开；
+ *    每次右键菜单销毁重建渲染进程在 dev 下实测约 300ms 延迟）；
+ *  - **Linux/macOS**：销毁，下次经 ensureBubbleWindow 重建——**与 createBubbleWindow 的
+ *    "每次唯一 partition"配套，两者缺一不可**（partition 在建窗时固定，不销毁重建就无法换进程）。
  *
- * **为什么不复用窗口**（2026-10-16 真机排查全程）：复用路径（hide → 隐藏态 setBounds → show）在
- * 真机上画面必然残缺——窗口几何/消息/布局/尺寸上报全部正确，但"画出来"只有内容左上角一块
+ * **Linux 为什么不复用窗口**（2026-10-16 真机排查全程）：复用路径（hide → 隐藏态 setBounds → show）
+ * 在真机上画面必然残缺——窗口几何/消息/布局/尺寸上报全部正确，但"画出来"只有内容左上角一块
  * （右侧 62px 硬切、顶部缺 8px，且顶部阴影仍有残留 = 部分重绘残留而非矩形裁剪）。
  * 已排查排除：`webContents.invalidate()` 无效；外部真实 resize（X 层面 370→440→370 确认生效）
  * 画面纹丝不动；**v1"仅销毁重建"亦无效**——进程监视实证"销毁窗口期间渲染进程 pid 不变"
@@ -438,16 +454,38 @@ export function destroyBubble(): void {
  */
 function destroyBubbleWindow(reason: string): void {
   const win = bubbleWin
+  shapeRects = [] // 旧形状不得套用到下一份内容（渲染侧会重新上报）
+  contentSize = null
+  lastAppliedBounds = null
+
+  if (!win || win.isDestroyed()) {
+    bubbleWin = null
+    bubbleReady = false
+    return
+  }
+
+  // Windows：隐藏复用（2026-10-17）。每次右键菜单销毁再重建渲染进程，dev 下实测要等约
+  // 300ms（生产构建首次约 170ms）——菜单弹出明显滞后。复用后第二次起只需 show + 下发内容。
+  if (REUSE_BUBBLE_WINDOW) {
+    if (win.isVisible()) win.hide()
+    // 旧 region 是上一份内容的裁剪区，新内容尺寸/位置可能不同：先恢复整窗，等渲染侧
+    // REPORT_SHAPE 再收紧（窗口隐藏期间无输入影响；show 后一两帧透明区短暂可点，可接受）
+    try {
+      const b = win.getBounds()
+      win.setShape([{ x: 0, y: 0, width: b.width, height: b.height }])
+    } catch (err) {
+      console.warn('[bubble] 隐藏复用前重置窗口形状失败（忽略）：', err)
+    }
+    console.log(`[bubble] 气泡窗已隐藏复用（${reason}）`)
+    return
+  }
+
+  // Linux/macOS：隐藏即销毁 + 每次唯一 partition 重建（KWin 残屏根治方案的必要一环）
   // 先清模块级引用再 destroy：'closed' 事件处理器据 bubbleWin===win 判重，引用已易主则不重复清
   bubbleWin = null
   bubbleReady = false
-  shapeRects = [] // 旧形状不得套用到新窗口（新窗口维持全窗默认，等渲染侧重新上报）
-  contentSize = null
-  lastAppliedBounds = null
-  if (win && !win.isDestroyed()) {
-    win.destroy()
-    console.log(`[bubble] 气泡窗已销毁（${reason}）——下次弹出重建`)
-  }
+  win.destroy()
+  console.log(`[bubble] 气泡窗已销毁（${reason}）——下次弹出重建`)
 }
 
 // ------------------------------------------------------------------ 定位（锚点 + 防出屏摆放）
@@ -525,7 +563,10 @@ function buildMenuPayload(): BubbleOpenPayload {
     session: ++sessionSeq,
     variant: 'menu',
     tail: 'down',
-    motion: { enter: 'hand', exit: 'hand' },
+    // 2026-10-17 用户反馈：手来手回的"光点飞行 130ms + 气泡延迟弹出"看起来像分两段。
+    // 菜单改用轻量展开（自尾巴处直接弹出，220ms），单段、跟手；确认气泡同理。
+    motion: { enter: 'light', exit: 'light' },
+    stableWindow: REUSE_BUBBLE_WINDOW,
     items
   }
 }
@@ -536,14 +577,15 @@ function buildConfirmPayload(): BubbleOpenPayload {
     session: ++sessionSeq,
     variant: 'confirm',
     tail: 'down',
-    motion: { enter: 'hand', exit: 'hand' },
+    motion: { enter: 'light', exit: 'light' },
+    stableWindow: REUSE_BUBBLE_WINDOW,
     ...CLEAR_CHAT_CONFIRM
   }
 }
 
 /**
  * 组装说话气泡载荷（场景3）：纯展示态；"轻量展开"动画（气泡自尾巴处弹性绽放/收拢，
- * 不飞光点——说话高频，每句都飞光点会闹；右键菜单保持全套"手来手回"）。
+ * 不飞光点——说话高频，每句都飞光点会闹；菜单/确认现也统一用本预设）。
  * message 初始可为空串（reply_start 时）——文本随后经 UPDATE 流式刷新。
  */
 function buildSpeechPayload(message: string): BubbleOpenPayload {
@@ -552,6 +594,7 @@ function buildSpeechPayload(message: string): BubbleOpenPayload {
     variant: 'text',
     tail: 'down',
     motion: { enter: 'light', exit: 'light' },
+    stableWindow: REUSE_BUBBLE_WINDOW,
     message
   }
 }
@@ -591,7 +634,7 @@ function finishClose(reason: string): void {
   maybeRestoreSpeech()
 }
 
-/** 请求收起（blur / 动作执行后）：先让渲染侧播退场动画（手来手回），CLOSED 回报后 hide；超时兜底 */
+/** 请求收起（blur / 动作执行后）：先让渲染侧播退场动画（按载荷 motion，当前轻量收拢），CLOSED 回报后 hide；超时兜底 */
 function closeBubble(reason: string): void {
   const win = bubbleWin
   if (!win || win.isDestroyed() || !win.isVisible() || closing) return
@@ -836,7 +879,7 @@ async function openMenuBubble(): Promise<void> {
 
 /**
  * 菜单"清空聊天" → 换成确认气泡（场景2）：同一气泡窗换内容（不关窗）——
- * 新 session 载荷下发，渲染侧重播一次"手来手回"入场；窗口按确认预估尺寸重定位。
+ * 新 session 载荷下发，渲染侧重播一次入场动画（motion）；窗口按确认预估尺寸重定位。
  */
 function switchToConfirmBubble(): void {
   const win = bubbleWin
@@ -1036,4 +1079,17 @@ export function initBubble(pet: BrowserWindow): void {
   })
 
   console.log('[bubble] IPC 处理器已注册')
+
+  // Windows（复用策略）：延迟预热气泡窗——隐藏创建 + 加载页面，首次右键菜单/回复不必再等
+  // 渲染进程与页面冷启动（dev 冷启动实测首弹约 0.5s；预热后首次也只需 show + 下发内容）。
+  // 延迟 1.5s 避免和启动阶段（后端/宠物窗）抢资源；Linux/macOS 走销毁重建，不预热。
+  if (REUSE_BUBBLE_WINDOW) {
+    warmTimer = setTimeout(() => {
+      warmTimer = null
+      if (!bubbleWin) {
+        console.log('[bubble] 预热气泡窗（Windows 复用策略）')
+        ensureBubbleWindow()
+      }
+    }, 1500)
+  }
 }
