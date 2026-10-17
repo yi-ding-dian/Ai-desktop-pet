@@ -3,7 +3,12 @@
  * 域外（App/其它域）只经本入口通信——域内实现（ChatPanel/speech/history/emotions）不直接暴露路径依赖。
  */
 export { default as ChatPanel } from './ChatPanel'
-export { setupSpeechBubble, dismissSpeechBubble, type SpeechBubbleOptions } from './speech'
+export {
+  setupSpeechBubble,
+  dismissSpeechBubble,
+  speakLocalNotice,
+  type SpeechBubbleOptions
+} from './speech'
 export { setupChatHistory, getChatHistory, clearChatHistory, type ChatRecord } from './history'
 export { emotionEmoji } from './emotions'
 export {

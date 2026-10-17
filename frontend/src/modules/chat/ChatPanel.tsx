@@ -29,9 +29,56 @@ import { subscribeVoiceSpeaking, stopVoiceNow } from '../voice'
 // 统一发送入口（P5 §7.5）：关键词（开始教学/下课）+ WS 发送 + 教学模式镜像/气泡都在此
 import { sendUserMessage } from '../teaching'
 import { clearChatNotice, showChatNotice, subscribeChatNotice, type ChatNotice } from './notice'
+import { speakLocalNotice } from './speech'
 
 /** 单轮最多附件数（与后端 files.max_per_turn 默认值一致；后端仍会二次校验） */
 const MAX_ATTACHMENTS = 3
+
+/**
+ * 前端可快速判定的支持类型（与 electron/files 的筛选、后端 reader 对齐）：
+ * 后端仍会做内容级校验；这里只负责"上传时就别把明显不支持的类型加进列表"。
+ * 修改时同步 electron/files/index.ts 的 TEXT_EXTENSIONS 与后端 reader。
+ */
+const TEXT_EXTENSIONS = new Set([
+  'txt', 'md', 'markdown', 'json', 'jsonl', 'yaml', 'yml', 'toml', 'ini', 'cfg',
+  'conf', 'log', 'csv', 'tsv', 'xml', 'html', 'htm', 'css', 'scss', 'less',
+  'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'py', 'java', 'kt', 'kts', 'c', 'h',
+  'cpp', 'hpp', 'cc', 'cxx', 'cs', 'go', 'rs', 'rb', 'php', 'swift', 'sh',
+  'bash', 'zsh', 'ps1', 'bat', 'cmd', 'sql', 'tex', 'vue', 'svelte'
+])
+const TEXT_BASENAMES = new Set([
+  'dockerfile', 'makefile', 'readme', 'license', '.gitignore', '.env', '.editorconfig'
+])
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
+const WORD_EXTENSIONS = new Set(['docx', 'docm'])
+const EXCEL_EXTENSIONS = new Set(['xlsx', 'xlsm'])
+const SUPPORTED_FILE_HINT =
+  '目前支持：文本/代码、图片（PNG/JPEG/WebP/GIF）、Word（.docx/.docm）、Excel（.xlsx/.xlsm）。'
+
+function fileExtension(name: string): string {
+  const index = name.lastIndexOf('.')
+  return index >= 0 ? name.slice(index + 1).toLowerCase() : ''
+}
+
+/** 返回不支持原因；支持返回 null。只按扩展名/常见无扩展名文件做快速判定。 */
+function unsupportedReason(file: PickedFile): string | null {
+  const ext = fileExtension(file.name)
+  const base = file.name.toLowerCase()
+  if (
+    TEXT_EXTENSIONS.has(ext) ||
+    TEXT_BASENAMES.has(base) ||
+    IMAGE_EXTENSIONS.has(ext) ||
+    WORD_EXTENSIONS.has(ext) ||
+    EXCEL_EXTENSIONS.has(ext)
+  ) {
+    return null
+  }
+  if (ext === 'pdf') return 'PDF 暂时还不支持'
+  if (ext === 'doc' || ext === 'xls') {
+    return '老式 .doc/.xls 暂时不支持，请另存为 .docx/.xlsx'
+  }
+  return '这个类型我暂时看不了'
+}
 
 /** 宽容取 files 段：旧 preload 没有该段时返回 undefined（按钮给出提示，不崩）。 */
 function filesBridge():
@@ -105,6 +152,40 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
     setAttachments((prev) => prev.filter((item) => item.path !== path))
   }, [])
 
+  /** 不支持的类型：上传时就拦住，由宠物短提示（5s）或聊天区 notice（5s）告知。 */
+  const notifyUnsupportedFiles = useCallback((files: PickedFile[]): void => {
+    if (files.length === 0) return
+    const names = files
+      .slice(0, 3)
+      .map((file) => file.name)
+      .join('、')
+    const more = files.length > 3 ? ` 等 ${files.length} 个文件` : ''
+    const detail =
+      files.length === 1
+        ? `「${files[0].name}」：${unsupportedReason(files[0]) ?? '这个类型我暂时看不了'}`
+        : `有 ${files.length} 个文件我暂时看不了（${names}${more}）`
+    const message = `${detail}～${SUPPORTED_FILE_HINT}`
+    // 回复气泡活跃/常驻时不覆盖它，改用聊天区 notice；两者都是 5s 自动消失
+    if (!speakLocalNotice(message, 5_000)) {
+      showChatNotice(message, 'warn', 5_000)
+    }
+  }, [])
+
+  /** 过滤掉不支持的类型，只返回可加入附件的文件。 */
+  const acceptSupported = useCallback(
+    (files: PickedFile[]): PickedFile[] => {
+      const supported: PickedFile[] = []
+      const unsupported: PickedFile[] = []
+      for (const file of files) {
+        if (unsupportedReason(file) === null) supported.push(file)
+        else unsupported.push(file)
+      }
+      if (unsupported.length > 0) notifyUnsupportedFiles(unsupported)
+      return supported
+    },
+    [notifyUnsupportedFiles]
+  )
+
   /** 拖入的 File → 本地路径 → stat 校验 → 加进待发送附件（与回形针/粘贴共用同一列表）。 */
   const addDroppedFiles = useCallback(
     async (files: File[]): Promise<void> => {
@@ -128,17 +209,19 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
         showChatNotice('这些不是可读取的普通文件～', 'warn')
         return
       }
+      const accepted = acceptSupported(picked)
+      if (accepted.length === 0) return
       const room = MAX_ATTACHMENTS - attachments.length
       if (room <= 0) {
         showChatNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件～`, 'warn')
         return
       }
-      if (picked.length > room) {
+      if (accepted.length > room) {
         showChatNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件，先放前 ${room} 个～`, 'warn')
       }
-      addAttachments(picked.slice(0, room))
+      addAttachments(accepted.slice(0, room))
     },
-    [addAttachments, attachments.length]
+    [acceptSupported, addAttachments, attachments.length]
   )
 
   // 文件拖拽：拖到兔子/窗口任意可接收区域 = 拖到输入框（松手后显示附件 chip）。
@@ -182,20 +265,22 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
     try {
       const picked = await bridge.pick()
       if (picked.length === 0) return
+      const accepted = acceptSupported(picked)
+      if (accepted.length === 0) return
       const room = MAX_ATTACHMENTS - attachments.length
       if (room <= 0) {
         showChatNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件～`, 'warn')
         return
       }
-      if (picked.length > room) {
+      if (accepted.length > room) {
         showChatNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件，先放前 ${room} 个～`, 'warn')
       }
-      addAttachments(picked.slice(0, room))
+      addAttachments(accepted.slice(0, room))
     } catch (err) {
       console.error('[chat] 选择文件失败：', err)
       showChatNotice('打开文件选择框失败，请重试～', 'error')
     }
-  }, [addAttachments, attachments.length])
+  }, [acceptSupported, addAttachments, attachments.length])
 
   /** 粘贴绝对路径 → 直接变成附件（是文件才拦截；不是文件则按普通文本粘贴）。 */
   const handlePaste = useCallback(
@@ -207,12 +292,14 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
       try {
         const picked = await bridge.stat(raw)
         if (picked) {
+          const accepted = acceptSupported([picked])
+          if (accepted.length === 0) return
           if (attachments.length >= MAX_ATTACHMENTS) {
             showChatNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件～`, 'warn')
             return
           }
-          addAttachments([picked])
-          showChatNotice(`已添加「${picked.name}」`, 'info', 4_000)
+          addAttachments(accepted)
+          showChatNotice(`已添加「${accepted[0].name}」`, 'info', 4_000)
         } else {
           // 不是文件（目录/不存在）：按普通文本补回输入框
           setInput((prev) => (prev ? `${prev}${raw}` : raw))
@@ -221,7 +308,7 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
         setInput((prev) => (prev ? `${prev}${raw}` : raw))
       }
     },
-    [addAttachments, attachments.length]
+    [acceptSupported, addAttachments, attachments.length]
   )
 
   // 服务端事件订阅（chat 域只关心自己的事件，设计文档 §5.5 分发模式）

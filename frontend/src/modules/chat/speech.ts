@@ -40,6 +40,52 @@ export interface SpeechBubbleOptions {
   shouldSuppress: () => boolean
 }
 
+/** 本轮回复是否流式中（reply_start → reply_end） */
+let speechActive = false
+/** 最近一次真实回复的正文（回复气泡是常驻的——非空时本地短提示不要覆盖它） */
+let speechLatest = ''
+/** 本地短提示的自动收起定时器（5s 后 sayEnd(true)） */
+let transientTimer: number | null = null
+
+function clearTransientTimer(): void {
+  if (transientTimer !== null) {
+    window.clearTimeout(transientTimer)
+    transientTimer = null
+  }
+}
+
+/**
+ * 宠物说一句**本地短提示**（如"不支持这个文件类型"），ttlMs 后自动收起。
+ *
+ * 为什么不直接复用回复气泡：
+ * - 回复气泡是常驻的（用户定稿"回复的消息不要消失"），本地提示不能把常驻回复覆盖掉；
+ * - 有回复流式/常驻时返回 false，调用方改用聊天区 notice（同样 5s 消失）。
+ * 本地提示显示期间若真实回复开始，``begin()`` 会清掉这里的定时器，避免把新回复误收。
+ */
+export function speakLocalNotice(text: string, ttlMs = 5_000): boolean {
+  const bridge = bubbleBridge()
+  if (!bridge || typeof bridge.sayBegin !== 'function') return false
+  if (speechActive || speechLatest) return false
+  clearTransientTimer()
+  // 新主进程：5s 计时交给气泡域（同样受悬浮/选区/右键菜单暂停，复制/阅读时不会被 5s 硬收）
+  if (typeof bridge.setNextSpeechTtl === 'function') {
+    bridge.setNextSpeechTtl(ttlMs)
+    bridge.sayBegin()
+    bridge.sayText(text)
+    bridge.sayEnd(false)
+    return true
+  }
+  // 旧主进程兜底：渲染侧硬计时 5s 后强制收
+  bridge.sayBegin()
+  bridge.sayText(text)
+  bridge.sayEnd(false)
+  transientTimer = window.setTimeout(() => {
+    transientTimer = null
+    bridge.sayEnd(true)
+  }, ttlMs)
+  return true
+}
+
 /**
  * 接线说话气泡驱动（App 在挂载时调用一次）。返回取消订阅函数。
  */
@@ -51,10 +97,6 @@ export function setupSpeechBubble(client: WsClient, options: SpeechBubbleOptions
     return () => {}
   }
 
-  /** 本会话活跃中（begin 已发、end 未发）——被抑制/菜单吞掉的轮次不置位，token 自然跳过 */
-  let active = false
-  /** 最新全文快照（token 累积） */
-  let latest = ''
   let flushTimer: number | null = null
 
   const clearFlush = (): void => {
@@ -65,20 +107,23 @@ export function setupSpeechBubble(client: WsClient, options: SpeechBubbleOptions
   }
 
   const begin = (): void => {
-    active = true
-    latest = ''
+    speechActive = true
+    speechLatest = ''
+    clearTransientTimer() // 真实回复接管：别让本地短提示的 5s 定时器把新回复收掉
     clearFlush()
     bridge.sayBegin()
   }
 
   /** 结束本轮说话：finalText（reply_end 的权威终稿，可为空串）直发绕过节流；immediate = 被打断 */
   const end = (finalText: string, immediate: boolean): void => {
-    if (!active) return
-    active = false
+    if (!speechActive) return
+    speechActive = false
     clearFlush()
-    const text = finalText || latest
+    const text = finalText || speechLatest
     if (text) bridge.sayText(text)
     bridge.sayEnd(immediate)
+    // immediate 气泡会收起；非 immediate 气泡常驻（本地短提示不要覆盖）
+    speechLatest = immediate ? '' : text
   }
 
   const offs = [
@@ -87,14 +132,14 @@ export function setupSpeechBubble(client: WsClient, options: SpeechBubbleOptions
       begin()
     }),
     client.on('token', ({ text }) => {
-      if (!active) return
-      latest += text
+      if (!speechActive) return
+      speechLatest += text
       if (flushTimer === null) {
         // 定时窗口合并：首 token 立即发一次（气泡不空等），窗口内后续合并到下一次
-        bridge.sayText(latest)
+        bridge.sayText(speechLatest)
         flushTimer = window.setTimeout(() => {
           flushTimer = null
-          if (active) bridge.sayText(latest)
+          if (speechActive) bridge.sayText(speechLatest)
         }, TEXT_THROTTLE_MS)
       }
     }),
@@ -104,17 +149,21 @@ export function setupSpeechBubble(client: WsClient, options: SpeechBubbleOptions
     client.on('error', ({ code, message }) => {
       // 错误提示走气泡（错误发生时无活跃回复——后端错误即本轮失败，reply_end 未必到达）：
       // begin + text + end 连着发；主进程侧气泡弹出就绪期已能承接"先文本后结束"的时序
-      if (active || options.shouldSuppress()) return
+      if (speechActive || options.shouldSuppress()) return
+      clearTransientTimer()
       devLog(`错误气泡：${code} ${message}`)
+      speechLatest = `⚠ ${code}: ${message}`
       bridge.sayBegin()
-      bridge.sayText(`⚠ ${code}: ${message}`)
+      bridge.sayText(speechLatest)
       bridge.sayEnd(false)
     })
   ]
   return () => {
     offs.forEach((off) => off())
     clearFlush()
-    active = false
+    clearTransientTimer()
+    speechActive = false
+    speechLatest = ''
   }
 }
 
@@ -124,5 +173,8 @@ export function setupSpeechBubble(client: WsClient, options: SpeechBubbleOptions
  * 只要窗里是说话气泡就立即收（主进程 endSpeechBubble(immediate) 承担判定）。
  */
 export function dismissSpeechBubble(): void {
+  clearTransientTimer()
+  speechActive = false
+  speechLatest = ''
   bubbleBridge()?.sayEnd(true)
 }
