@@ -20,6 +20,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 MODE="${1:-run}"
+case "$MODE" in
+  run|deps) ;;
+  *) echo "未知参数：$MODE（用法：./run.sh [deps]；不带参数=启动）" >&2; exit 2 ;;
+esac
 
 echo "== 1/3 检查 Node =="
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then

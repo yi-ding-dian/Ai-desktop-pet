@@ -13,6 +13,11 @@ rem  用法：双击运行；或命令行  run.bat deps  只准备依赖、不启动
 rem ============================================
 
 set "MODE=%~1"
+rem 参数只接受空（启动）或 deps；拼错时不要悄悄启动应用
+if not "%MODE%"=="" if /i not "%MODE%"=="deps" (
+  echo [错误] 未知参数：%MODE%（用法：run.bat [deps]；不带参数=启动）
+  goto :fail
+)
 
 echo == 1/3 检查 Node ==
 where node >nul 2>nul
