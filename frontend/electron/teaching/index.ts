@@ -5,6 +5,8 @@
  *  - 状态机：normal / teaching-expanded / teaching-folded（folded = 黑板卷成右缘小角标）；
  *  - 黑板窗口生命周期：创建 → 滑入 → 展开 ⇄ 折叠 → 滑出 → 销毁（几何纯函数见 geometry.ts）；
  *  - 消息路由：宠物面镜像事件 → 黑板收件箱；黑板输入条 → 宠物面（由宠物面走既有 WS 链路发送）；
+ *  - 下课回位：进入教学前记录宠物原位，退出（含黑板异常降级）后 relocate 回原位
+ *    （2026-10-17 用户定稿"关闭白板要回到原来的位置，像关闭设置一样"；与设置域同一回位语义）；
  *  - 首批数据缓存：黑板渲染就绪（TEACHING_READY）前到达的收件箱条目按序缓存（上限 200），
  *    就绪后按序回放（覆盖"黑板窗口创建中/页面加载中"的镜像事件空窗）；
  *  - 异常兜底：黑板 did-fail-load / render-process-gone / 意外关闭 → 重建一次；再失败 → 降级退出；
@@ -74,6 +76,12 @@ let boardWidthOverride: number | null = null
 let opSeq = 0
 /** 本次教学会话内的黑板重建计数（enter 时清零） */
 let rebuildCount = 0
+/**
+ * 进入教学前宠物原位（下课回位目标；null = 本次会话没有可回的原位）。
+ * 只记坐标，尺寸用 PET_WINDOW_SIZE——fractional DPI 下 getBounds 的宽高是舍入值，
+ * 回喂 relocate 会让宠物窗每次开合长大 1px（同 window/index.ts 的约定）。
+ */
+let petHomeRect: Rect | null = null
 /** 窗口动画序列号：新动画抢占旧动画（旧动画提前 resolve、不写终点） */
 let animSeq = 0
 /** ipcMain 监听是否已注册（只能注册一次，重复注册会叠加处理器） */
@@ -144,6 +152,21 @@ function glidePetToPodium(boardRect: Rect): void {
     { x: p.x, y: p.y, width: PODIUM_PET_SIZE, height: PODIUM_PET_SIZE },
     { forceGlide: true }
   )
+}
+
+/**
+ * 下课回位（2026-10-17 用户定稿）：把宠物送回**进入教学前**的位置。
+ * 与设置域 returnPetHome 同语义——回位完成由调用方（exitTeaching）决定广播时机，
+ * 让宠物面"面板恢复"与宠物落位同步；宠物隐藏时 relocate 内部只静默改坐标（不强行显示）。
+ */
+async function returnPetHome(): Promise<void> {
+  const pet = petWin
+  const home = petHomeRect
+  petHomeRect = null
+  if (!pet || pet.isDestroyed() || !home) return
+  const from = pet.getBounds()
+  console.log(`[teaching] 下课回位：宠物 ${from.x},${from.y} → ${home.x},${home.y}`)
+  await runRelocateAnimation(pet, home)
 }
 
 // ------------------------------------------------------------------ 状态广播 / 收件箱
@@ -430,6 +453,17 @@ export async function enterTeaching(reason: TeachingEnterReason): Promise<void> 
     return
   }
 
+  // 记录进入教学前的位置（退出时回位；只取坐标，尺寸用设计常量——见 petHomeRect 注释）。
+  // 只在 normal → expanded 跃迁记录：折叠态重复 enter 走上面的 unfoldBoard 分支，
+  // 期间宠物可能被用户拖过，但"原位"始终指开课前的那个位置。
+  const homeBounds = win.getBounds()
+  petHomeRect = {
+    x: homeBounds.x,
+    y: homeBounds.y,
+    width: PET_WINDOW_SIZE.width,
+    height: PET_WINDOW_SIZE.height
+  }
+
   const seq = ++opSeq
   mode = 'expanded'
   rebuildCount = 0
@@ -451,6 +485,8 @@ export async function enterTeaching(reason: TeachingEnterReason): Promise<void> 
     if (seq === opSeq) {
       mode = 'normal'
       destroyBoardWindow()
+      // 失败前滑步可能已发出（glide 是 void 异步）：能回就回原位；宠物没动时这是一次原地 relocate
+      void returnPetHome()
       broadcastState('enter-failed')
     }
   }
@@ -488,8 +524,9 @@ function unfoldBoard(reason: string): Promise<void> {
 }
 
 /**
- * 退出教学模式（下课）：黑板滑出（260ms）→ 销毁 → 广播 normal。
- * 黑板已不存在（异常路径）时直接广播 normal——结果语义"一定退出"不可被窗口状态阻塞。
+ * 退出教学模式（下课）：黑板滑出（260ms）→ 销毁 → **回原位** → 广播 normal。
+ * 黑板已不存在（异常路径）时跳过滑出，同样回位后广播——结果语义"一定退出"不可被窗口状态阻塞。
+ * 回位完成后再广播：宠物面"面板恢复"与宠物落位同步（与设置窗关闭的回位语义一致，2026-10-17 定稿）。
  */
 export async function exitTeaching(reason: string): Promise<void> {
   if (mode === 'normal') {
@@ -503,14 +540,18 @@ export async function exitTeaching(reason: string): Promise<void> {
   const board = boardWin
   if (!board || board.isDestroyed()) {
     destroyBoardWindow()
+    await returnPetHome()
+    if (seq !== opSeq) return // 回位期间被新 enter 接管：不广播陈旧 normal
     broadcastState(reason)
     return
   }
   sendInbox({ type: 'visibility', action: 'exit' })
   await animateBoard(offscreenRight(boardWorkArea(), board.getBounds()), SLIDE_MS)
-  // 滑出期间被新 enter 接管：让新操作独占黑板，不做销毁、不广播陈旧 normal
+  // 滑出期间被新 enter 接管：让新操作独占黑板，不做销毁、不回位、不广播陈旧 normal
   if (seq !== opSeq) return
   destroyBoardWindow()
+  await returnPetHome()
+  if (seq !== opSeq) return // 回位期间被新 enter 接管：新操作已广播 teaching，这里不再发 normal
   broadcastState(reason)
 }
 
@@ -628,6 +669,7 @@ export function destroyTeaching(): void {
   ++opSeq
   mode = 'normal'
   rebuildCount = 0
+  petHomeRect = null // 退出应用：不做回位动画（宠物窗随后销毁）
   destroyBoardWindow()
   petWin = null
 }
