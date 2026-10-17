@@ -27,7 +27,7 @@ from backend.shared.config import AppConfig, save_config
 from backend.shared.secrets import get_llm_key, mask_secret, set_llm_key
 
 #: patch 允许出现的配置域（与设置面板分区一致，§7.6.1）
-_ALLOWED_SECTIONS = ("llm", "pet", "voice", "behavior", "memory")
+_ALLOWED_SECTIONS = ("llm", "pet", "voice", "behavior", "memory", "files")
 #: patch 顶层 key 专用字段（设置 LLM API key；空/未提供 = 不修改）
 _KEY_FIELD = "key"
 #: patch 内 key 专用字段（设置面板约定放 ``llm.api_key``；与顶层 key 等价）

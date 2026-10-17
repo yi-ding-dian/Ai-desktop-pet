@@ -95,6 +95,37 @@ def test_empty_base_url_is_valid_unconfigured_state() -> None:
     assert 'base_url    = ""' in DEFAULT_CONFIG_TEMPLATE
 
 
+def test_file_and_context_limits_defaults_and_bounds() -> None:
+    """文件分析限额：默认 20k 字 / 100k tokens；边界与越界校验。"""
+    cfg = AppConfig()
+    assert cfg.files.max_chars == 20_000
+    assert cfg.files.max_bytes == 20 * 1024 * 1024
+    assert cfg.files.max_per_turn == 3
+    assert cfg.files.allow_images is True
+    assert cfg.files.max_image_bytes == 8 * 1024 * 1024
+    assert cfg.llm.context_tokens == 100_000
+
+    assert AppConfig.model_validate({"files": {"max_chars": 1_000}}).files.max_chars == 1_000
+    assert AppConfig.model_validate({"files": {"max_chars": 100_000}}).files.max_chars == 100_000
+    assert AppConfig.model_validate({"llm": {"context_tokens": 8_000}}).llm.context_tokens == 8_000
+    assert (
+        AppConfig.model_validate({"llm": {"context_tokens": 200_000}}).llm.context_tokens
+        == 200_000
+    )
+
+    bad_values = [
+        {"files": {"max_chars": 999}},
+        {"files": {"max_chars": 100_001}},
+        {"files": {"max_bytes": 1023}},
+        {"files": {"max_per_turn": 0}},
+        {"llm": {"context_tokens": 7_999}},
+        {"llm": {"context_tokens": 200_001}},
+    ]
+    for raw in bad_values:
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate(raw)
+
+
 # ---------------------------------------------------------------- save_config（设置面板写回）
 
 

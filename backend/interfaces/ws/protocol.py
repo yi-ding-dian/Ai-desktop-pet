@@ -58,11 +58,23 @@ class HelloData(EventData):
     app_version: str = ""
 
 
+class AttachmentRefData(EventData):
+    """附件引用（文件分析 P1）：用户在本机显式选择的文件。
+
+    只传路径与显示名，**不传文件正文**——正文由本机后端读取，避免大文件走 WS。
+    路径只在后端本地使用，不进入提示词、不写日志；模型只看到文件名。
+    """
+
+    path: str
+    name: str = ""
+
+
 class UserMessageData(EventData):
-    """用户文字输入。"""
+    """用户文字输入；可携带本轮附件（文件分析 P1）。"""
 
     text: str
     session_id: str | None = None
+    attachments: list[AttachmentRefData] = Field(default_factory=list)
 
 
 class PingData(EventData):
@@ -222,6 +234,18 @@ class ProactiveData(EventData):
     emotion: str = "neutral"
 
 
+class NoticeData(EventData):
+    """一次性提示（不进入对话历史、不参与 TTS）。
+
+    文件分析 P1：``context_reset`` —— 为装下当前文件，本轮已丢弃之前的上下文
+    （数据库/界面历史仍在）。前端以聊天面板上方的轻提示展示。
+    """
+
+    code: str
+    message: str
+    level: Literal["info", "warn", "error"] = "info"
+
+
 class HistoryData(EventData):
     """历史回填。"""
 
@@ -289,6 +313,7 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "reply_end": ReplyEndData,
     "tool_call": ToolCallData,
     "proactive": ProactiveData,
+    "notice": NoticeData,
     "history": HistoryData,
     "config": ConfigData,
     "llm_test_result": LlmTestResultData,

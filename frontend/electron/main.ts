@@ -18,6 +18,7 @@ import { runAnchorSelfTest } from './ball-animation/anchor'
 import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
 import { destroySettings, initSettings } from './settings'
 import { destroyBubble, initBubble } from './bubble'
+import { destroyFileSelection, initFileSelection } from './files'
 import { applyWindowsAppIdentity } from './platform'
 import { PET_WINDOW_SIZE, type PlatformWindow } from './window'
 
@@ -206,6 +207,8 @@ if (!app.requestSingleInstanceLock()) {
     // ready/report-size/action/closed → 定位/调窗/动作分发）——气泡窗懒创建（首次弹出时建立，
     // hide 复用；右键重复弹不重窗）
     initBubble(petWin)
+    // 文件分析（P1）：原生选择框 + 粘贴路径校验（只 stat 元信息，正文由后端读取限额）
+    initFileSelection()
     // 后端子进程与窗口并行启动（design §3.4）；就绪后经 IPC 下发 port/token
     backendManager.start()
 
@@ -250,6 +253,8 @@ if (!app.requestSingleInstanceLock()) {
     destroySettings()
     // 气泡窗（若存在）直接销毁（退场动画不等待——正常退出不播动画）
     destroyBubble()
+    // 文件选择 IPC（幂等清理）
+    destroyFileSelection()
     // 自绘托盘菜单窗（若存在）直接销毁
     destroyTrayMenu()
     // 空气让路状态机：停定时器/解绑窗口事件 + 移除 IPC 监听

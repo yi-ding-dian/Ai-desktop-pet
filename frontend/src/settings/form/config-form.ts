@@ -31,6 +31,12 @@ export interface FormValues {
   /** 免打扰时段文本（"23:00-07:00"，多条逗号分隔；空 = 关闭） */
   quietHoursText: string
   memoryEnabled: boolean
+  /** 文件分析：单轮合计字数上限（字符串保存用户输入；保存时校验 1,000–100,000） */
+  fileMaxChars: string
+  /** 文件分析：上下文预算 tokens（字符串保存用户输入；保存时校验 8,000–200,000） */
+  contextTokens: string
+  /** 文件分析：是否允许发送图片（需多模态模型；关闭时后端本地拒绝图片） */
+  allowImages: boolean
 }
 
 /** 空表单（等待 config 或字段缺失时的底座；布尔默认与 backend config.py 默认一致） */
@@ -45,7 +51,10 @@ export const EMPTY_FORM: FormValues = {
   behaviorEnabled: true,
   behaviorProactiveEnabled: true,
   quietHoursText: '',
-  memoryEnabled: true
+  memoryEnabled: true,
+  fileMaxChars: '20000',
+  contextTokens: '100000',
+  allowImages: true
 }
 
 // ------------------------------------------------------------------ 宽松读取工具
@@ -71,6 +80,21 @@ function asQuietHours(v: unknown): string | undefined {
   return undefined
 }
 
+/** 数字字段宽容取值：number（后端主形态）/ 数字字符串都能回显；其它返回 undefined。 */
+function asNumberText(v: unknown): string | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) return String(Math.trunc(v))
+  if (typeof v === 'string' && v.trim()) return v.trim()
+  return undefined
+}
+
+/** 严格解析非负整数（用户输入）：空串/小数/负号/科学计数法 → null。 */
+export function parseIntegerText(text: string): number | null {
+  const trimmed = text.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+  const value = Number(trimmed)
+  return Number.isSafeInteger(value) ? value : null
+}
+
 /** 读 key 掩码：`llm.api_key`（约定）→ `llm.api_key_masked`（兼容）→ 顶层同名（兜底） */
 function readKeyMask(config: ConfigData, llm: Record<string, unknown> | undefined): string {
   for (const candidate of [llm?.api_key, llm?.api_key_masked, config.llm_api_key]) {
@@ -89,6 +113,7 @@ export function snapshotToForm(config: ConfigData): FormValues {
   const voice = asObject(config.voice)
   const behavior = asObject(config.behavior)
   const memory = asObject(config.memory)
+  const files = asObject(config.files)
 
   return {
     llmBaseUrl: asString(llm?.base_url) ?? '',
@@ -101,7 +126,10 @@ export function snapshotToForm(config: ConfigData): FormValues {
     behaviorEnabled: asBool(behavior?.enabled) ?? true,
     behaviorProactiveEnabled: asBool(behavior?.proactive_enabled) ?? true,
     quietHoursText: asQuietHours(behavior?.quiet_hours) ?? '',
-    memoryEnabled: asBool(memory?.enabled) ?? true
+    memoryEnabled: asBool(memory?.enabled) ?? true,
+    fileMaxChars: asNumberText(files?.max_chars) ?? '20000',
+    contextTokens: asNumberText(llm?.context_tokens) ?? '100000',
+    allowImages: asBool(files?.allow_images) ?? true
   }
 }
 
@@ -151,6 +179,23 @@ export function buildPatch(
     patch.memory = { enabled: form.memoryEnabled }
   }
 
+  // 文件分析：只提交有变化且语法合法的整数；范围校验在保存入口
+  // （useSettingsController.save 的 fileMaxCharsError/contextTokensError）完成。
+  const filesPatch: Record<string, unknown> = {}
+  const maxChars = parseIntegerText(form.fileMaxChars)
+  if (maxChars !== null && maxChars !== parseIntegerText(baseline.fileMaxChars)) {
+    filesPatch.max_chars = maxChars
+  }
+  if (form.allowImages !== baseline.allowImages) {
+    filesPatch.allow_images = form.allowImages
+  }
+  if (Object.keys(filesPatch).length > 0) patch.files = filesPatch
+  const contextTokens = parseIntegerText(form.contextTokens)
+  if (contextTokens !== null && contextTokens !== parseIntegerText(baseline.contextTokens)) {
+    llm.context_tokens = contextTokens
+    patch.llm = llm
+  }
+
   return Object.keys(patch).length > 0 ? patch : null
 }
 
@@ -158,5 +203,8 @@ export function buildPatch(
 export function hasChanges(form: FormValues, baseline: FormValues): boolean {
   const quiet = parseQuietHours(form.quietHoursText)
   if (!quiet.ok) return true
+  // 数字字段语法非法时也算"有改动"：否则保存按钮禁用，用户无法触发字段校验提示。
+  if (parseIntegerText(form.fileMaxChars) === null) return true
+  if (parseIntegerText(form.contextTokens) === null) return true
   return buildPatch(form, baseline, quiet.list) !== null
 }

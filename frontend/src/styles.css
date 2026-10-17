@@ -99,6 +99,92 @@ body,
   gap: 6px;
 }
 
+/* 文件分析（P1）：待发送附件 chip 行（面板 bottom 锚定，向上生长） */
+.chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+
+.chat-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 1px 2px 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--chat-input-fg) 12%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--chat-input-bg) 72%, transparent);
+  color: var(--chat-input-fg);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.chat-attachment-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-attachment-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.chat-attachment-remove:hover {
+  opacity: 1;
+}
+
+/* 文件拖入提示（松手后转为附件 chip） */
+.chat-drop-hint {
+  align-self: center;
+  padding: 4px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ui-accent) 88%, transparent);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.4;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+}
+
+/* 一次性提示（文件分析丢历史等）：轻量、自动消失，不挡输入行 */
+.chat-notice {
+  align-self: center;
+  max-width: 260px;
+  padding: 4px 9px;
+  border-radius: 9px;
+  background: var(--ui-overlay);
+  color: var(--ui-overlay-fg);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.chat-notice-warn {
+  color: var(--ui-warm, #e6a23c);
+}
+
+.chat-notice-error {
+  color: var(--ui-danger);
+}
+
 /* 输入行 = 一颗紧凑胶囊：默认半透明（只让底色淡，文字保持实色可读），
    悬浮或聚焦时恢复不透明（2026-10-17 用户定稿）。pointer-events 保持默认——
    半透明仍然要能点、能悬浮；形状/命中区随 ResizeObserver 自动上报。 */
@@ -135,6 +221,34 @@ body,
   background: var(--chat-input-bg);
   border-color: color-mix(in srgb, var(--ui-accent) 42%, transparent);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+/* 附件按钮：常驻左侧但低调（不挤压输入框太多）；hover/focus 提亮 */
+.chat-attach {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--chat-input-fg);
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity 160ms ease-out;
+}
+
+.chat-panel:hover .chat-attach:not(:disabled),
+.chat-panel:focus-within .chat-attach:not(:disabled) {
+  opacity: 0.9;
+}
+
+.chat-attach:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 .chat-input {

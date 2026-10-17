@@ -34,6 +34,9 @@ model       = "deepseek-flash"
 temperature = 0.8
 # 最大回复长度：推理型模型（如 deepseek-flash）的思考过程也消耗 token，需给足
 max_tokens  = 768
+# 上下文预算（tokens）：历史 + 记忆 + 文件 + 问题超过此值时先丢历史；文件仍超则拒绝。
+# 注意不要超过所用模型的实际上下文窗口（8,000–200,000）。
+context_tokens = 100000
 
 [embedding]
 mode  = "follow"   # follow=复用对话服务商 / custom=单独配置
@@ -63,6 +66,17 @@ idle_max_seconds   = 40.0
 enabled                = true
 idle_seconds           = 300   # 会话空闲多久后触发记忆提取（秒）
 check_interval_seconds = 15    # 空闲扫描周期（秒）
+
+[files]            # 文件分析：本地文本/代码文件的读取限额
+# 本轮所有附件正文合计上限（字）。超过直接拒绝、不调用模型（1,000–100,000）
+max_chars    = 20000
+# 单个文件字节上限（超过则不读入；默认 20MB）
+max_bytes    = 20971520
+# 图片（需要多模态模型）：PNG/JPEG/WebP/GIF，单张上限 8MB
+allow_images    = true
+max_image_bytes = 8388608
+# 单轮最多几个文件/图片
+max_per_turn = 3
 """
 
 
@@ -82,6 +96,17 @@ class LlmConfig(BaseModel):
     temperature: float = 0.8
     # 推理型模型思考也占 token，默认给足 768，避免思考吃光导致空回复
     max_tokens: int = 768
+    # 上下文预算（tokens，含输入 + 输出预留）：超预算先丢历史、文件仍超则拒绝。
+    # 100k 是产品默认上限；实际使用须 ≤ 模型上下文窗口（由用户在设置里调整）。
+    context_tokens: int = 100_000
+
+    @field_validator("context_tokens")
+    @classmethod
+    def _check_context_tokens(cls, value: int) -> int:
+        """夹在 8,000–200,000：太小连文件都放不下，太大容易超过模型窗口。"""
+        if value < 8_000 or value > 200_000:
+            raise ValueError("llm.context_tokens 必须在 8,000–200,000 之间")
+        return value
 
     @field_validator("base_url")
     @classmethod
@@ -180,6 +205,50 @@ class MemoryConfig(BaseModel):
     check_interval_seconds: int = 15
 
 
+class FileConfig(BaseModel):
+    """文件分析限额（P1：本地文本/代码文件）。
+
+    ``max_chars`` 是**本轮合计**（不是单文件各自）——两个 9k 字文件合计 18k，
+    默认 20k 尚可；超过就直接拒绝整轮，避免"单看都没超、合起来爆预算"。
+    """
+
+    max_chars: int = 20_000
+    max_bytes: int = 20 * 1024 * 1024
+    max_per_turn: int = 3
+    #: 是否允许发送图片（需多模态模型；关闭时图片在本地被拒绝，不发 API 请求）
+    allow_images: bool = True
+    #: 单张图片字节上限（base64 后约 +33%，默认 8MB）
+    max_image_bytes: int = 8 * 1024 * 1024
+
+    @field_validator("max_chars")
+    @classmethod
+    def _check_max_chars(cls, value: int) -> int:
+        if value < 1_000 or value > 100_000:
+            raise ValueError("files.max_chars 必须在 1,000–100,000 之间")
+        return value
+
+    @field_validator("max_bytes")
+    @classmethod
+    def _check_max_bytes(cls, value: int) -> int:
+        if value < 1024 * 1024 or value > 100 * 1024 * 1024:
+            raise ValueError("files.max_bytes 必须在 1MB–100MB 之间")
+        return value
+
+    @field_validator("max_per_turn")
+    @classmethod
+    def _check_max_per_turn(cls, value: int) -> int:
+        if value < 1 or value > 10:
+            raise ValueError("files.max_per_turn 必须在 1–10 之间")
+        return value
+
+    @field_validator("max_image_bytes")
+    @classmethod
+    def _check_max_image_bytes(cls, value: int) -> int:
+        if value < 1024 * 1024 or value > 20 * 1024 * 1024:
+            raise ValueError("files.max_image_bytes 必须在 1MB–20MB 之间")
+        return value
+
+
 class AppConfig(BaseModel):
     """完整配置（缺省字段自动取默认值，容忍用户手改 TOML 的遗漏）。"""
 
@@ -189,6 +258,7 @@ class AppConfig(BaseModel):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     behavior: BehaviorConfig = Field(default_factory=BehaviorConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    files: FileConfig = Field(default_factory=FileConfig)
 
 
 def load_config(path: Path | None = None) -> AppConfig:

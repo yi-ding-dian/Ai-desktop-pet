@@ -22,6 +22,7 @@ import {
   buildPatch,
   EMPTY_FORM,
   hasChanges,
+  parseIntegerText,
   snapshotToForm,
   type FormValues
 } from '../form/config-form'
@@ -55,6 +56,10 @@ export interface SettingsController {
   appVersion: string
   /** 免打扰时段字段的校验错误（提交前校验，定位到字段下方展示） */
   quietHoursError: string | null
+  /** 文件字数上限字段的校验错误（提交前校验） */
+  fileMaxCharsError: string | null
+  /** 上下文预算字段的校验错误（提交前校验） */
+  contextTokensError: string | null
   /** 配置快照版本号（每应用一次服务端 config 事件 +1；面板据此收起瞬态编辑态，如 Key 更新框） */
   revision: number
   /** 引导模式（首启引导 §7.6.5：首次加载时 llm.base_url 为空 → 显示欢迎条 + 自动切 LLM 分区） */
@@ -90,6 +95,8 @@ export function useSettingsController(): SettingsController {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [appVersion, setAppVersion] = useState('')
   const [quietHoursError, setQuietHoursError] = useState<string | null>(null)
+  const [fileMaxCharsError, setFileMaxCharsError] = useState<string | null>(null)
+  const [contextTokensError, setContextTokensError] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
   const [guideMode, setGuideMode] = useState(false)
   const [guideDone, setGuideDone] = useState(false)
@@ -162,6 +169,8 @@ export function useSettingsController(): SettingsController {
       setForm(next)
       setSaving(false)
       setQuietHoursError(null)
+      setFileMaxCharsError(null)
+      setContextTokensError(null)
       setGuideMode(false) // 保存成功 → 欢迎条消失（首启引导 §7.6.5）
       setNotice({ kind: 'success', text: '已保存生效' })
       // 设置向导（§7.6.6）：保存成功上报主进程 → 宠物萌语气泡收起、飞回原位
@@ -307,6 +316,8 @@ export function useSettingsController(): SettingsController {
     <K extends keyof FormValues>(key: K, value: FormValues[K]): void => {
       setForm((prev) => ({ ...prev, [key]: value }))
       if (key === 'quietHoursText') setQuietHoursError(null)
+      if (key === 'fileMaxChars') setFileMaxCharsError(null)
+      if (key === 'contextTokens') setContextTokensError(null)
     },
     []
   )
@@ -321,6 +332,24 @@ export function useSettingsController(): SettingsController {
       return
     }
     setQuietHoursError(null)
+
+    // 文件分析数字字段：范围与后端 FileConfig / LlmConfig 校验保持一致
+    const maxChars = parseIntegerText(current.fileMaxChars)
+    if (maxChars === null || maxChars < 1_000 || maxChars > 100_000) {
+      setFileMaxCharsError('请输入 1,000–100,000 的整数')
+      setContextTokensError(null)
+      setNotice({ kind: 'error', text: '文件字数上限不合法，请修正后再保存' })
+      return
+    }
+    const contextTokens = parseIntegerText(current.contextTokens)
+    if (contextTokens === null || contextTokens < 8_000 || contextTokens > 200_000) {
+      setContextTokensError('请输入 8,000–200,000 的整数')
+      setFileMaxCharsError(null)
+      setNotice({ kind: 'error', text: '上下文预算不合法，请修正后再保存' })
+      return
+    }
+    setFileMaxCharsError(null)
+    setContextTokensError(null)
 
     const patch = buildPatch(current, baselineRef.current, quiet.list)
     if (!patch) return
@@ -399,6 +428,8 @@ export function useSettingsController(): SettingsController {
     notice,
     appVersion,
     quietHoursError,
+    fileMaxCharsError,
+    contextTokensError,
     revision,
     guideMode,
     guideDone,

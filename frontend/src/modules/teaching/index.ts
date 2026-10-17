@@ -34,6 +34,12 @@ export interface TeachingBubbleItem {
   text: string
 }
 
+/** 发送时附带的本地文件（只传路径/显示名；正文由后端读取，见文件分析 P1） */
+export interface UserAttachment {
+  path: string
+  name: string
+}
+
 /**
  * user_message 镜像（契约类型 + 运行时附加 localId）。
  *
@@ -179,7 +185,11 @@ const ENTER_KEYWORDS = /开始教学|教学模式/
  * 注："打开设置"类关键词动作已迁至后端（§4.7 工具机制：后端走快通道/模型 tools 协议推
  * `tool_call` 事件，前端 tools 域执行开窗）——本入口对这类消息只照常发往后端。
  */
-export function sendUserMessage(client: WsClient, text: string): boolean {
+export function sendUserMessage(
+  client: WsClient,
+  text: string,
+  attachments?: readonly UserAttachment[]
+): boolean {
   // ① 关键词：必须在发送/镜像之前——"开始教学"之后的消息才进入镜像链路
   if (EXIT_KEYWORDS.test(text)) {
     exitTeaching()
@@ -187,18 +197,24 @@ export function sendUserMessage(client: WsClient, text: string): boolean {
     enterTeaching('keyword')
   }
 
-  // ② 照常发往后端（消息本身不受教学模式影响）
-  if (!client.send('user_message', { text })) return false
+  // ② 照常发往后端（消息本身不受教学模式影响）；附件只传路径/显示名
+  const refs = attachments?.map((item) => ({ path: item.path, name: item.name }))
+  const payload = refs && refs.length > 0 ? { text, attachments: refs } : { text }
+  if (!client.send('user_message', payload)) return false
+
+  // 展示文本：顶部气泡/黑板要让人看到"这次带了什么文件"，但后端拿到的是原问题
+  const names = refs?.map((item) => item.name).join('、') ?? ''
+  const displayText = names ? `📎 ${names}${text ? `\n${text}` : ''}` : text
 
   // ②b 已发送广播（chat 域会话记录——"展开进教学"预填黑板的数据源）
-  emitSent(text)
+  emitSent(displayText)
 
   // ③ 教学模式中：推入头顶气泡 + 镜像给黑板（localId 一并带上，黑板据此建立问题→段落映射）
   if (isTeachingMode()) {
-    const localId = pushBubble(text)
-    const event: UserMessageMirrorEvent = { kind: 'user_message', text, localId }
+    const localId = pushBubble(displayText)
+    const event: UserMessageMirrorEvent = { kind: 'user_message', text: displayText, localId }
     reportMirror(event)
-    devLog(`镜像 user_message（localId=${localId}）：${text.slice(0, 24)}`)
+    devLog(`镜像 user_message（localId=${localId}）：${displayText.slice(0, 24)}`)
   }
   return true
 }

@@ -36,6 +36,22 @@ PROBE_TIMEOUT = 10.0
 NOT_CONFIGURED_MESSAGE = "还没有配置 AI 服务，打开设置里选一个服务商即可"
 
 
+def _message_payload(message: ChatMessage) -> dict[str, Any]:
+    """ChatMessage → OpenAI chat.completions messages 项。
+
+    无图片：``content`` 仍是字符串（与旧版逐字段一致，兼容所有纯文本网关）；
+    有图片：content 改为多模态数组 ``[{type:text}, {type:image_url}...]``
+    （OpenAI 兼容视觉协议；data URL 由后端读取本地图片生成）。
+    """
+    if not message.images:
+        return {"role": message.role, "content": message.content}
+    content: list[dict[str, Any]] = [{"type": "text", "text": message.content}]
+    content.extend(
+        {"type": "image_url", "image_url": {"url": url}} for url in message.images
+    )
+    return {"role": message.role, "content": content}
+
+
 def _extract_content(chunk: Any) -> str:
     """从流式 chunk 中取出正文增量。
 
@@ -170,7 +186,7 @@ class OpenAICompatProvider:
         tools = opts.pop("tools", None)
         request: dict[str, Any] = {
             "model": opts.pop("model", self._model),
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": [_message_payload(m) for m in messages],
             "stream": True,
             "temperature": opts.pop("temperature", self._temperature),
             "max_tokens": opts.pop("max_tokens", self._max_tokens),

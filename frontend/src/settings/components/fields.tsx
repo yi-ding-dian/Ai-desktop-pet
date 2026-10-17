@@ -29,13 +29,26 @@ interface TextFieldProps {
   value: string
   onValueChange: (value: string) => void
   placeholder?: string
-  /** 'text'（默认）/ 'password' 等 */
+  /** 'text'（默认）/ 'password' / 'number' 等 */
   type?: string
   disabled?: boolean
+  /** 数值输入框的约束（type='number' 时透传；仍由保存入口做业务校验） */
+  min?: number
+  max?: number
+  step?: number
 }
 
 /** 单行文本框（受控） */
-export function TextField({ value, onValueChange, placeholder, type = 'text', disabled }: TextFieldProps): ReactElement {
+export function TextField({
+  value,
+  onValueChange,
+  placeholder,
+  type = 'text',
+  disabled,
+  min,
+  max,
+  step
+}: TextFieldProps): ReactElement {
   return (
     <input
       className="set-input"
@@ -43,6 +56,9 @@ export function TextField({ value, onValueChange, placeholder, type = 'text', di
       value={value}
       placeholder={placeholder}
       disabled={disabled}
+      min={min}
+      max={max}
+      step={step}
       spellCheck={false}
       autoComplete="off"
       onChange={(e) => onValueChange(e.target.value)}

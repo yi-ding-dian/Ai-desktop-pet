@@ -173,6 +173,33 @@ def test_request_params_passed_to_sdk() -> None:
     assert req["max_tokens"] == 128
 
 
+def test_image_message_becomes_multimodal_content() -> None:
+    """有 images 时 content 变 OpenAI 多模态数组；纯文本消息保持字符串（兼容）。"""
+    client = FakeClient([make_chunk(content="ok")])
+    provider = make_provider(client)
+    url = "data:image/png;base64,xx"
+
+    async def _run() -> list[Any]:
+        return [
+            c
+            async for c in provider.stream_chat(
+                [ChatMessage("user", "看看这张图", images=(url,))]
+            )
+        ]
+
+    asyncio.run(_run())
+
+    assert client.requests[0]["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "看看这张图"},
+                {"type": "image_url", "image_url": {"url": url}},
+            ],
+        }
+    ]
+
+
 def test_opts_override_sampling_params() -> None:
     client = FakeClient([make_chunk(content="ok")])
 

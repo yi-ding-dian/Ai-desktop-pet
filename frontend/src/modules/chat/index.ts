@@ -6,3 +6,9 @@ export { default as ChatPanel } from './ChatPanel'
 export { setupSpeechBubble, dismissSpeechBubble, type SpeechBubbleOptions } from './speech'
 export { setupChatHistory, getChatHistory, clearChatHistory, type ChatRecord } from './history'
 export { emotionEmoji } from './emotions'
+export {
+  showChatNotice,
+  clearChatNotice,
+  subscribeChatNotice,
+  type ChatNotice
+} from './notice'

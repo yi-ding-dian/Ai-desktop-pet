@@ -2,7 +2,7 @@
  * preload：contextBridge 安全桥（只暴露白名单 API，设计文档 §2.2）。
  * 渲染进程只能访问 window.pet，无法触达 Node / Electron 原生能力。
  */
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   IPC,
   IPC_BUBBLE,
@@ -18,6 +18,7 @@ import {
   type BallAnimationCommand,
   type BallAnimationPetReactionPayload,
   type PetBridgeApi,
+  type PickedFile,
   type SettingsVisibilityPayload,
   type TeachingBoardInbox,
   type TeachingEnterReason,
@@ -114,6 +115,22 @@ const api: PetBridgeApi = {
   system: {
     getIdleSeconds(): Promise<number> {
       return ipcRenderer.invoke(IPC.SYSTEM_GET_IDLE_SECONDS)
+    }
+  },
+
+  files: {
+    pick(): Promise<PickedFile[]> {
+      return ipcRenderer.invoke(IPC.FILES_PICK)
+    },
+    stat(path: string): Promise<PickedFile | null> {
+      return ipcRenderer.invoke(IPC.FILES_STAT, path)
+    },
+    pathFor(file: File): string {
+      try {
+        return webUtils.getPathForFile(file)
+      } catch {
+        return ''
+      }
     }
   },
 

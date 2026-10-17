@@ -57,6 +57,10 @@ export const IPC = {
   APP_RESTART: 'app:restart',
   /** 设置窗口：保存成功上报（设置面 → 主；主进程据此触发宠物向导飞回原位） */
   SETTINGS_SAVED: 'settings:saved',
+  /** 文件分析：打开原生文件选择框（invoke → PickedFile[]；取消返回空数组） */
+  FILES_PICK: 'files:pick',
+  /** 文件分析：粘贴路径时校验（invoke(path) → PickedFile | null；只 stat，不读正文） */
+  FILES_STAT: 'files:stat',
   /** 自绘托盘菜单：菜单项动作（菜单窗 → 主；payload: TrayMenuAction，执行后主进程收起菜单） */
   TRAY_MENU_ACTION: 'tray-menu:action',
   /** 气泡系统：请求弹出气泡（payload: BubbleRequest；宠物窗右键 = 'menu' 菜单；主进程定位+防出屏后弹出气泡窗） */
@@ -310,6 +314,19 @@ export interface WindowDebugState {
 }
 
 /**
+ * 用户选中的文件（文件分析 P1）。
+ * 只在主进程 stat 元信息，不读正文；正文由本地后端按路径读取并执行限额。
+ */
+export interface PickedFile {
+  /** 绝对路径（仅本地使用：不进提示词、不写日志） */
+  path: string
+  /** basename（展示/落库用） */
+  name: string
+  /** 字节数（展示用；后端仍会重新校验） */
+  size: number
+}
+
+/**
  * preload 通过 contextBridge 暴露给渲染进程的白名单 API（window.pet）。
  * 渲染进程只能看到本接口，不得感知底层通道名与平台实现（设计文档 §1.1 核心原则 1）。
  */
@@ -400,6 +417,18 @@ export interface PetBridgeApi {
     ready(): void
     /** 黑板面：订阅收件箱（镜像 / 跳转 / 显隐命令）；返回取消订阅函数 */
     onBoardInbox(cb: (item: TeachingBoardInbox) => void): () => void
+  }
+  /** 文件分析（P1）：原生选择框 + 粘贴路径/拖拽校验（都不读正文） */
+  files: {
+    /** 打开原生文件选择框（多选；取消返回空数组） */
+    pick(): Promise<PickedFile[]>
+    /** 校验一个路径是否是普通文件（粘贴路径/拖拽用；只 stat，不读正文） */
+    stat(path: string): Promise<PickedFile | null>
+    /**
+     * 拖入的 File → 本地绝对路径（Electron 32+ 的 webUtils.getPathForFile；
+     * 浏览器内生成的文件/无路径对象返回空串）。
+     */
+    pathFor(file: File): string
   }
   /** 设置窗口（P4 前置）：宠物面请求打开独立设置窗口 */
   settings: {

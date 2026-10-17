@@ -83,6 +83,16 @@ class Session:
         """取最近 N 轮消息（时间顺序，注入 LLM 上下文用）。"""
         return list(self.history)
 
+    def drop_context(self) -> int:
+        """丢弃**内存上下文**（文件分析超预算时用）：返回清掉的消息条数。
+
+        只清 ``history`` 这个"注入 LLM 的窗口"：数据库里的消息不删（load_history
+        仍可回看），当前轮随后会 append 进来，后续轮只从当前文件这一轮往后继续。
+        """
+        dropped = len(self.history)
+        self.history.clear()
+        return dropped
+
 
 class SessionManager:
     """会话表：创建 / 恢复 / 查询。"""

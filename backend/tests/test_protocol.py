@@ -131,7 +131,7 @@ def test_null_data_tolerated() -> None:
 
 CLIENT_MIN_DATA: dict[str, dict] = {
     "hello": {"token": "t", "protocol_version": 1},
-    "user_message": {"text": "hi"},
+    "user_message": {"text": "hi", "attachments": [{"path": "/tmp/a.txt", "name": "a.txt"}]},
     "ping": {},
     "interrupt": {},
     "pet_event": {"kind": "tap_head"},
@@ -156,6 +156,7 @@ SERVER_MIN_DATA: dict[str, dict] = {
     "reply_end": {"message_id": "m1", "full_text": "a"},
     "tool_call": {"id": "call_1", "name": "open_settings", "args": {}},
     "proactive": {"message_id": "m1", "text": "hi"},
+    "notice": {"code": "context_reset", "message": "为了装下文件，先不带之前的聊天了"},
     "history": {"session_id": "s1"},
     "config": {},
     "llm_test_result": {"ok": True, "message": "连接成功"},

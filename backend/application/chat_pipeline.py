@@ -43,7 +43,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, Sequence
 
 from loguru import logger
 
@@ -54,6 +54,15 @@ from backend.modules.chat.emotion import (
     EmotionTagParser,
     Part,
     TextPart,
+)
+from backend.modules.files import (
+    FileLimits,
+    FileRejected,
+    FileRef,
+    build_attachment_block,
+    build_attachment_user_content,
+    estimate_messages_tokens,
+    read_attachments,
 )
 from backend.modules.llm.prompts import build_system_prompt
 from backend.modules.llm.provider import ChatMessage, LLMProvider
@@ -66,6 +75,7 @@ if TYPE_CHECKING:  # 仅类型注解；运行时经 Protocol/鸭子类型协作�
     from backend.application.voice import ReplyVoice, VoiceOut
     from backend.modules.memory.profile import ProfileStore
     from backend.modules.memory.store import MemoryStore
+    from backend.shared.config import AppConfig
 
 
 class ReplySink(Protocol):
@@ -96,10 +106,22 @@ class ReplySink(Protocol):
 
     async def send_binary(self, frame: bytes) -> None: ...
 
+    async def notice(self, code: str, message: str, level: str = "info") -> None:
+        """一次性提示（文件分析丢弃旧上下文等）；不进入回复正文/历史/TTS。"""
+        ...
+
 
 #: 句子是否"可发音"（含字母/数字/汉字才值得合成）——纯标点、空白、emoji 跳过
 def _is_speakable(text: str) -> bool:
     return any(ch.isalnum() for ch in text)
+
+
+def _stored_user_text(user_text: str, refs: Sequence[FileRef]) -> str:
+    """历史/落库用的脱敏用户消息：``📎 文件名`` + 问题，不含文件正文与绝对路径。"""
+    names = "、".join(ref.display_name for ref in refs)
+    label = f"📎 {names}"
+    text = user_text.strip()
+    return f"{label}\n{text}" if text else label
 
 
 #: 工具 ack 为空时的通用兜底文案（§4.7）——快通道工具未配 ack、或模型只调工具
@@ -147,12 +169,16 @@ class ChatPipeline:
         profile: ProfileStore | None = None,
         pet_name: Callable[[], str | None] | None = None,
         tools: ToolRegistry | None = None,
+        config: Callable[[], AppConfig] | None = None,
     ) -> None:
         self._provider = provider
         self._memories = memories
         self._profile = profile
         self._pet_name = pet_name
         self._tools = tools
+        # 配置活引用（文件限额 / 上下文预算每轮动态读，设置保存后下一轮即生效）；
+        # None = 测试/未装配场景，使用保守默认值。
+        self._config = config
 
     async def run_turn(
         self,
@@ -161,6 +187,7 @@ class ChatPipeline:
         session: Session,
         user_text: str,
         voice: VoiceOut | None = None,
+        attachments: Sequence[FileRef] | None = None,
     ) -> None:
         """执行一轮对话；被取消（interrupt / 新消息抢占）时按 §7.2 收尾。
 
@@ -171,6 +198,10 @@ class ChatPipeline:
         工具机制（§4.7，仅装配 ``tools`` 时）：命中内置指令词表走快通道（不调
         LLM，本地 ack 走正常事件流）；否则正常 LLM 流（携带 tools，除非进程级
         降级标记已置位），流末解析工具分片、``reply_end`` 之后派发 ``tool_call``。
+
+        文件分析（P1，``attachments`` 非空时）：先本地读取并校验字数/大小，
+        超限直接本地拒绝（不调 LLM）；上下文超预算先丢历史（notice 提示），
+        仍超则拒绝。文件正文只注入本轮，历史里只存"📎 文件名 + 问题"。
         """
         message_id = f"m_{uuid.uuid4().hex}"
         parser = EmotionTagParser()
@@ -212,15 +243,95 @@ class ChatPipeline:
             if splitter is not None:
                 await emit_sentences(splitter.feed(text))
 
+        # ---- 文件分析（P1）：附件在调 LLM 前读取/限额；正文只注入本轮、不落库 ----
+        file_refs = list(attachments or [])
+        # 历史里只存文件名（不含正文）：下一轮不会重复把整个文件送给模型
+        stored_user_text = (
+            _stored_user_text(user_text, file_refs) if file_refs else user_text
+        )
+        llm_messages: list[ChatMessage] | None = None
+
+        async def reject_with(text: str) -> None:
+            """本地拒绝（不调 LLM）：用户消息照常落库，回复走气泡事件流。"""
+            nonlocal reply_started, emotion_seen, last_emotion
+            session.append_message("user", stored_user_text)
+            await sink.reply_start(message_id)
+            reply_started = True
+            clean_parts.append(text)
+            await sink.token(message_id, text)
+            emotion_seen = True
+            last_emotion = "sad"
+            await sink.emotion(message_id, "sad", 1.0)
+            session.append_message("assistant", text, emotion="sad")
+            await sink.reply_end(message_id, text)
+            await sink.state("idle")
+
         # 快通道判定（§4.7，仅装配注册表时）："打开设置"这类高频指令命中词表 →
         # 不调 LLM（模型的不确定性 / 网关不支持 tools 都不拖累必达语义）。
+        # 带附件时不走快通道：用户显然是要分析文件，不能被词表命中截胡。
         directive_spec: ToolSpec | None = None
-        if self._tools is not None:
+        if self._tools is not None and not file_refs:
             directive_spec = self._match_directive(user_text)
 
         try:
             await sink.state("thinking")  # 必须在发起请求前（见模块 docstring）
-            session.append_message("user", user_text)
+
+            if file_refs:
+                limits = self._file_limits()
+                try:
+                    prepared = await asyncio.to_thread(read_attachments, file_refs, limits)
+                except FileRejected as exc:
+                    await reject_with(exc.message)
+                    return
+
+                text_files = [item for item in prepared if not item.is_image]
+                image_files = [item for item in prepared if item.is_image]
+                block = build_attachment_block(text_files)
+                content = build_attachment_user_content(
+                    user_text, block, image_names=[item.name for item in image_files]
+                )
+                images = tuple(
+                    item.image_url for item in image_files if item.image_url is not None
+                )
+                memory_block = await self._build_memory_block(user_text)
+                history = session.recent_messages()  # 当前用户消息尚未 append
+                candidate = self._compose_messages(
+                    memory_block, history, content, images=images
+                )
+                budget = self._context_budget()
+                if estimate_messages_tokens(candidate) > budget:
+                    without_history = self._compose_messages(
+                        memory_block, [], content, images=images
+                    )
+                    required = estimate_messages_tokens(without_history)
+                    if required > budget:
+                        # 丢历史也放不下：拒绝整轮（不丢历史——本轮没有被处理）
+                        await reject_with(
+                            f"这批附件加问题约需 {required:,} tokens，"
+                            f"超过本轮可用上下文预算 {budget:,} tokens～"
+                            "可以换个小文件/图片，或在设置 → 文件里调高上下文预算。"
+                        )
+                        return
+                    dropped = session.drop_context()
+                    if dropped:
+                        await self._send_notice(
+                            sink,
+                            "context_reset",
+                            "为了装下这批附件，本轮先不带之前的聊天记录；"
+                            "历史消息还在，随时可以回看。",
+                        )
+                    candidate = without_history
+                llm_messages = candidate
+                logger.info(
+                    "文件分析：{} 个附件（图片 {} 张）/ 文本 {} 字（估算 {} tokens，预算 {}）",
+                    len(prepared),
+                    len(image_files),
+                    sum(a.chars for a in text_files),
+                    estimate_messages_tokens(candidate),
+                    budget,
+                )
+
+            session.append_message("user", stored_user_text)
             await sink.reply_start(message_id)
             reply_started = True
 
@@ -240,7 +351,11 @@ class ChatPipeline:
                 )
             else:
                 # —— 正常 LLM 流（携带 tools，除非进程级降级标记已置位）——
-                messages = await self._build_messages(session, user_text=user_text)
+                messages = (
+                    llm_messages
+                    if llm_messages is not None
+                    else await self._build_messages(session, user_text=user_text)
+                )
                 use_tools = self._tools is not None and not _tools_unsupported
                 request_opts: dict[str, Any] = {}
                 if use_tools:
@@ -491,6 +606,71 @@ class ChatPipeline:
             except Exception:
                 logger.exception("记忆 last_used_at 更新失败（不影响本轮对话）")
         return block
+
+    # ---------- 文件分析（P1）内部实现 ----------
+
+    def _compose_messages(
+        self,
+        memory_block: str | None,
+        history: Sequence[ChatMessage],
+        current_content: str,
+        *,
+        images: Sequence[str] = (),
+    ) -> list[ChatMessage]:
+        """文件轮的消息组装：system(人格) + [system(记忆)] + 历史 + 本轮（文本 + 图片）。
+
+        与 ``_build_messages`` 的区别：当前用户消息由调用方给出富内容（文本块 +
+        问题 + 图片 data URL），而不是从 session 里取（session 只存了脱敏的
+        "📎 文件名 + 问题"）。图片只挂在当前 user 消息上，历史不带图片。
+        """
+        pet_name = self._pet_name() if self._pet_name is not None else None
+        messages = [
+            ChatMessage(role="system", content=build_system_prompt(pet_name=pet_name))
+        ]
+        if memory_block is not None:
+            messages.append(ChatMessage(role="system", content=memory_block))
+        messages.extend(history)
+        messages.append(
+            ChatMessage(role="user", content=current_content, images=tuple(images))
+        )
+        return messages
+
+    def _file_limits(self) -> FileLimits:
+        """当前文件限额（热配置；未装配配置的测试场景用 FileLimits 默认值）。"""
+        config = self._config() if self._config is not None else None
+        if config is None:
+            return FileLimits()
+        return FileLimits(
+            max_chars=config.files.max_chars,
+            max_bytes=config.files.max_bytes,
+            max_per_turn=config.files.max_per_turn,
+            max_image_bytes=config.files.max_image_bytes,
+            allow_images=config.files.allow_images,
+        )
+
+    def _context_budget(self) -> int:
+        """本轮可用**输入** token 预算 = 上下文预算 - 输出预留 - 安全余量。
+
+        输出预留用配置的 ``llm.max_tokens``（推理模型思考也在这部分），再留 512
+        给协议/估算误差；下限 1,000，避免配置异常把预算压成负数。
+        """
+        config = self._config() if self._config is not None else None
+        context = config.llm.context_tokens if config is not None else 100_000
+        output = config.llm.max_tokens if config is not None else 768
+        return max(1_000, context - output - 512)
+
+    @staticmethod
+    async def _send_notice(
+        sink: ReplySink, code: str, message: str, level: str = "info"
+    ) -> None:
+        """发一次性提示；旧 sink / 测试替身没有 notice 时静默跳过（不阻断对话）。"""
+        notice = getattr(sink, "notice", None)
+        if notice is None:
+            return
+        try:
+            await notice(code, message, level)
+        except Exception:  # 提示是旁路信息，失败不应影响本轮
+            logger.debug("notice 发送失败（忽略）：code={}", code)
 
     @staticmethod
     async def _emit(

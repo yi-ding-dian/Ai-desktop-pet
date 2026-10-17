@@ -149,24 +149,30 @@ def test_apply_patch_saves_files_and_updates_runtime(tmp_path: Path) -> None:
 
         snapshot = await service.apply_patch(
             {
-                "llm": {"model": "kimi", "temperature": 0.5},
+                "llm": {"model": "kimi", "temperature": 0.5, "context_tokens": 120_000},
                 "pet": {"name": "毛毛"},
                 "behavior": {"quiet_hours": ["23:00-07:00"], "proactive_enabled": False},
                 "memory": {"enabled": False},
+                "files": {"max_chars": 30_000, "allow_images": False},
             }
         )
 
         # 回执是"保存后的新快照"
         assert snapshot["llm"]["model"] == "kimi"
         assert snapshot["pet"]["name"] == "毛毛"
+        assert snapshot["files"]["max_chars"] == 30_000
+        assert snapshot["files"]["allow_images"] is False
         # 写回 config.toml（可被 load_config 读回，字段完整）
         saved = load_config(tmp_path / "config.toml")
         assert saved.llm.model == "kimi"
         assert saved.llm.temperature == 0.5
+        assert saved.llm.context_tokens == 120_000
         assert saved.pet.name == "毛毛"
         assert saved.behavior.quiet_hours == ["23:00-07:00"]
         assert saved.behavior.proactive_enabled is False
         assert saved.memory.enabled is False
+        assert saved.files.max_chars == 30_000
+        assert saved.files.allow_images is False
         # 运行时配置同步换新（热重装配的基础）
         assert runtime.config.pet.name == "毛毛"
         # LLM provider 已按新配置重建

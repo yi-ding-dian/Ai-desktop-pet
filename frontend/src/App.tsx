@@ -32,7 +32,8 @@ import {
   dismissSpeechBubble,
   setupChatHistory,
   getChatHistory,
-  emotionEmoji
+  emotionEmoji,
+  showChatNotice
 } from './modules/chat'
 import {
   PetView,
@@ -341,6 +342,10 @@ export default function App(): ReactElement {
       wsClient.onStateChange(setWsState),
       wsClient.on('state', (d) => setPetState(d.state)),
       wsClient.on('emotion', (d) => setEmotion(d.emotion)),
+      // 文件分析等一次性提示：聊天面板上方轻提示（不进历史、不弹气泡）
+      wsClient.on('notice', (d) =>
+        showChatNotice(d.message, d.level === 'warn' ? 'warn' : d.level === 'error' ? 'error' : 'info')
+      ),
       wsClient.on('error', (d) => setLastError(`${d.code}: ${d.message}`))
     ]
     return () => offs.forEach((off) => off())

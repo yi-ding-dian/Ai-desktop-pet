@@ -1,12 +1,13 @@
 /**
  * 设置页主组件（settings 域）：左侧分区导航 + 右侧分区视图 + 底部保存条。
  *
- * 七个分区（设计文档 §7.6.1）：LLM / 宠物 / 声音 / 行为 / 记忆 / 主题 / 关于。
+ * 八个分区（设计文档 §7.6.1）：LLM / 文件 / 宠物 / 声音 / 行为 / 记忆 / 主题 / 关于。
  * 数据流与全部状态在 useSettingsController（唯一控制器）；本文件只做布局、分区切换与状态文案。
  */
 import { useEffect, useState, type ReactElement } from 'react'
 import { useSettingsController, type SettingsController } from './hooks/useSettingsController'
 import LlmPanel from './panels/LlmPanel'
+import FilePanel from './panels/FilePanel'
 import PetPanel from './panels/PetPanel'
 import VoicePanel from './panels/VoicePanel'
 import BehaviorPanel from './panels/BehaviorPanel'
@@ -14,10 +15,11 @@ import MemoryPanel from './panels/MemoryPanel'
 import ThemePanel from './panels/ThemePanel'
 import AboutPanel from './panels/AboutPanel'
 
-type PanelId = 'llm' | 'pet' | 'voice' | 'behavior' | 'memory' | 'theme' | 'about'
+type PanelId = 'llm' | 'files' | 'pet' | 'voice' | 'behavior' | 'memory' | 'theme' | 'about'
 
 const PANELS: ReadonlyArray<{ id: PanelId; label: string }> = [
   { id: 'llm', label: 'LLM' },
+  { id: 'files', label: '文件' },
   { id: 'pet', label: '宠物' },
   { id: 'voice', label: '声音' },
   { id: 'behavior', label: '行为' },
@@ -71,6 +73,15 @@ export default function SettingsApp(): ReactElement {
             onTest={ctrl.testConnection}
             revision={ctrl.revision}
             guide={ctrl.guideMode}
+          />
+        )
+      case 'files':
+        return (
+          <FilePanel
+            form={ctrl.form}
+            setField={ctrl.setField}
+            fileMaxCharsError={ctrl.fileMaxCharsError}
+            contextTokensError={ctrl.contextTokensError}
           />
         )
       case 'pet':

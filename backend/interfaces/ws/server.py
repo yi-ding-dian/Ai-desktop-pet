@@ -86,6 +86,13 @@ class ConnectionContext:
         """
         await self.send_event("tool_call", {"id": tool_id, "name": name, "args": args})
 
+    async def notice(self, code: str, message: str, level: str = "info") -> None:
+        """ReplySink 端口：一次性提示（如文件分析丢弃了旧上下文）。
+
+        不进入回复正文、不进历史、不参与 TTS；前端在聊天面板上方短暂展示。
+        """
+        await self.send_event("notice", {"code": code, "message": message, "level": level})
+
     async def error(self, code: str, message: str) -> None:
         """ReplySink 端口：把流水线的业务错误（如 LlmError / TTS_FAILED）推给前端。"""
         await self.send_error(code, message)

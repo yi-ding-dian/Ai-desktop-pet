@@ -30,10 +30,20 @@ export interface HelloData {
   app_version: string
 }
 
-/** 用户文字输入 */
+/**
+ * 附件引用（文件分析 P1）：用户在本机显式选择的文件。
+ * 只传路径 + 显示名，不传正文（正文由本地后端读取、限额、注入本轮）。
+ */
+export interface AttachmentRef {
+  path: string
+  name?: string
+}
+
+/** 用户文字输入（可携带本轮附件） */
 export interface UserMessageData {
   text: string
   session_id?: string | null
+  attachments?: AttachmentRef[]
 }
 
 /** 心跳（§3.6：前端每 30s 发 ping，服务端回 pong） */
@@ -199,6 +209,16 @@ export interface ProactiveData {
   emotion: string
 }
 
+/**
+ * 一次性提示（文件分析 P1）：不进历史、不参与 TTS。
+ * 例：context_reset = 为装下当前文件，本轮已丢弃旧上下文（界面历史仍在）。
+ */
+export interface NoticeData {
+  code: string
+  message: string
+  level?: 'info' | 'warn' | 'error'
+}
+
 /** 历史回填 */
 export interface HistoryData {
   session_id: string
@@ -280,6 +300,8 @@ export interface ServerEventMap {
   /** 工具调用（§4.7 工具机制）：reply_end 之后推送，前端按 name 执行（如 open_settings 开设置窗） */
   tool_call: ToolCallData
   proactive: ProactiveData
+  /** 一次性提示（文件分析丢历史等）；前端顶部/输入框上方轻提示 */
+  notice: NoticeData
   history: HistoryData
   config: ConfigData
   llm_test_result: LlmTestResultData

@@ -28,6 +28,7 @@ from backend.interfaces.ws.protocol import (
     TestLlmData,
     UserMessageData,
 )
+from backend.modules.files import FileRef
 from backend.shared.errors import ErrorCode, ProtocolError
 
 if TYPE_CHECKING:  # 避免与 server 运行时循环 import（类型注解专用）
@@ -179,7 +180,11 @@ def build_dispatcher(
         """用户消息：以后台任务运行对话流水线，消息循环保持可用（可即时处理 interrupt）。"""
         data = cast(UserMessageData, msg.data)
         text = data.text.strip()
-        if not text:
+        attachments = [
+            FileRef(path=a.path, name=a.name) for a in data.attachments
+        ]
+        # 纯附件（选了文件没打字）是合法输入；文字和附件都为空才报错。
+        if not text and not attachments:
             await ctx.send_error(
                 ErrorCode.BAD_MESSAGE, "user_message.text 不能为空", reply_to=msg.envelope.id
             )
@@ -189,7 +194,13 @@ def build_dispatcher(
         session = sessions.start(data.session_id or ctx.session_id)
         ctx.session_id = session.id
         await ctx.spawn_reply(
-            pipeline.run_turn(ctx, session=session, user_text=text, voice=ctx.voice)
+            pipeline.run_turn(
+                ctx,
+                session=session,
+                user_text=text,
+                voice=ctx.voice,
+                attachments=attachments,
+            )
         )
 
     async def on_interrupt(ctx: ConnectionContext, msg: ClientMessage) -> None:

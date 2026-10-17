@@ -10,13 +10,49 @@
  * - "停止"按钮（P2 §7.2 打断）：思考中/说话中显示 → 发 interrupt + 本地立即停播（voice 域）；
  * - 输入行是紧凑胶囊（250×32，居中贴兔子脚）：默认半透明、hover/focus 不透明；
  *   发送/停止共用右侧圆钮槽位（忙碌切换不抖宽度），发送改为图标（2026-10-17 用户定稿）。
+ * - 文件分析（P1）：回形针选择 / 粘贴绝对路径 / 直接拖到兔子或窗口上 → 输入框上方
+ *   并排显示附件 chip（× 可移除）；文件正文由后端读取，渲染进程只拿路径。
  */
-import { useCallback, useEffect, useState, type ReactElement, type RefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type ClipboardEvent,
+  type ReactElement,
+  type RefObject
+} from 'react'
+import { getPetBridge } from '../../shared/pet-bridge'
+import type { PickedFile } from '../../../electron/ipc/channels'
 import type { WsClient } from '../../shared/ws-client'
 import type { PetState } from '../../shared/protocol'
 import { subscribeVoiceSpeaking, stopVoiceNow } from '../voice'
 // 统一发送入口（P5 §7.5）：关键词（开始教学/下课）+ WS 发送 + 教学模式镜像/气泡都在此
 import { sendUserMessage } from '../teaching'
+import { clearChatNotice, showChatNotice, subscribeChatNotice, type ChatNotice } from './notice'
+
+/** 单轮最多附件数（与后端 files.max_per_turn 默认值一致；后端仍会二次校验） */
+const MAX_ATTACHMENTS = 3
+
+/** 宽容取 files 段：旧 preload 没有该段时返回 undefined（按钮给出提示，不崩）。 */
+function filesBridge():
+  | {
+      pick?: () => Promise<PickedFile[]>
+      stat?: (path: string) => Promise<PickedFile | null>
+      pathFor?: (file: File) => string
+    }
+  | undefined {
+  try {
+    return getPetBridge().files
+  } catch {
+    return undefined
+  }
+}
+
+/** 像绝对路径的粘贴内容（Windows 盘符 / UNC / POSIX 绝对路径）；不猜相对路径。 */
+function looksLikeAbsolutePath(text: string): boolean {
+  if (!text || text.length > 4096 || text.includes('\n')) return false
+  return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(text)
+}
 
 interface ChatPanelProps {
   client: WsClient
@@ -38,12 +74,155 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
   const [voiceSpeaking, setVoiceSpeaking] = useState(false)
   /** 本轮回复流式接收中（reply_start → reply_end；"停止"按钮兜底显示用） */
   const [streaming, setStreaming] = useState(false)
+  /** 本轮待发送附件（只存路径/文件名；正文由后端读取） */
+  const [attachments, setAttachments] = useState<PickedFile[]>([])
+  /** 聊天区一次性提示（文件分析丢历史等） */
+  const [notice, setNotice] = useState<ChatNotice | null>(null)
+  /** 正有文件拖到窗口上（显示"松开添加"提示；透明区可能收不到事件，属平台限制） */
+  const [dragActive, setDragActive] = useState(false)
 
   // 连接状态（决定输入是否可用）
   useEffect(() => client.onStateChange((s) => setConnected(s === 'connected')), [client])
 
   // 本地语音播放状态（voice 域独立订阅，不经 WS）
   useEffect(() => subscribeVoiceSpeaking(setVoiceSpeaking), [])
+
+  // 一次性提示（notice 模块级单例：App 收到 WS notice 后写入，这里只负责展示）
+  useEffect(() => subscribeChatNotice(setNotice), [])
+
+  const addAttachments = useCallback((files: PickedFile[]): void => {
+    setAttachments((prev) => {
+      const next = [...prev]
+      for (const file of files) {
+        if (next.length >= MAX_ATTACHMENTS) break
+        if (!next.some((item) => item.path === file.path)) next.push(file)
+      }
+      return next
+    })
+  }, [])
+
+  const removeAttachment = useCallback((path: string): void => {
+    setAttachments((prev) => prev.filter((item) => item.path !== path))
+  }, [])
+
+  /** 拖入的 File → 本地路径 → stat 校验 → 加进待发送附件（与回形针/粘贴共用同一列表）。 */
+  const addDroppedFiles = useCallback(
+    async (files: File[]): Promise<void> => {
+      const bridge = filesBridge()
+      if (!bridge?.pathFor || !bridge.stat) {
+        showChatNotice('当前版本不支持拖入文件，请用回形针选择～', 'warn')
+        return
+      }
+      // 一拖可能带进来几十个文件：先截断候选，避免一次触发大量 stat IPC
+      const candidates = files.slice(0, MAX_ATTACHMENTS * 4)
+      const paths = candidates
+        .map((file) => bridge.pathFor?.(file) ?? '')
+        .filter((path) => path.length > 0)
+      if (paths.length === 0) {
+        showChatNotice('没有识别到本地文件（网页里的图片/文件请先保存到本地）～', 'warn')
+        return
+      }
+      const checked = await Promise.all(paths.map((path) => bridge.stat?.(path)))
+      const picked = checked.filter((item): item is PickedFile => item !== null && item !== undefined)
+      if (picked.length === 0) {
+        showChatNotice('这些不是可读取的普通文件～', 'warn')
+        return
+      }
+      const room = MAX_ATTACHMENTS - attachments.length
+      if (room <= 0) {
+        showChatNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件～`, 'warn')
+        return
+      }
+      if (picked.length > room) {
+        showChatNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件，先放前 ${room} 个～`, 'warn')
+      }
+      addAttachments(picked.slice(0, room))
+    },
+    [addAttachments, attachments.length]
+  )
+
+  // 文件拖拽：拖到兔子/窗口任意可接收区域 = 拖到输入框（松手后显示附件 chip）。
+  // 透明穿透区由平台决定是否送事件；兔子实体区域是可接收的（与点击同一套命中逻辑）。
+  useEffect(() => {
+    if (hidden) return
+    const hasFiles = (event: DragEvent): boolean =>
+      Boolean(event.dataTransfer && Array.from(event.dataTransfer.types).includes('Files'))
+    const onDragOver = (event: DragEvent): void => {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+      setDragActive(true)
+    }
+    const onDragLeave = (event: DragEvent): void => {
+      if (event.relatedTarget === null) setDragActive(false)
+    }
+    const onDrop = (event: DragEvent): void => {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      setDragActive(false)
+      const files = Array.from(event.dataTransfer?.files ?? [])
+      if (files.length > 0) void addDroppedFiles(files)
+    }
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('dragleave', onDragLeave)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('dragleave', onDragLeave)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [addDroppedFiles, hidden])
+
+  const handlePick = useCallback(async (): Promise<void> => {
+    const bridge = filesBridge()
+    if (!bridge?.pick) {
+      showChatNotice('当前版本不支持选择文件，请重启应用后再试～', 'warn')
+      return
+    }
+    try {
+      const picked = await bridge.pick()
+      if (picked.length === 0) return
+      const room = MAX_ATTACHMENTS - attachments.length
+      if (room <= 0) {
+        showChatNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件～`, 'warn')
+        return
+      }
+      if (picked.length > room) {
+        showChatNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件，先放前 ${room} 个～`, 'warn')
+      }
+      addAttachments(picked.slice(0, room))
+    } catch (err) {
+      console.error('[chat] 选择文件失败：', err)
+      showChatNotice('打开文件选择框失败，请重试～', 'error')
+    }
+  }, [addAttachments, attachments.length])
+
+  /** 粘贴绝对路径 → 直接变成附件（是文件才拦截；不是文件则按普通文本粘贴）。 */
+  const handlePaste = useCallback(
+    async (event: ClipboardEvent<HTMLInputElement>): Promise<void> => {
+      const raw = event.clipboardData.getData('text').trim()
+      const bridge = filesBridge()
+      if (!bridge?.stat || !looksLikeAbsolutePath(raw)) return
+      event.preventDefault()
+      try {
+        const picked = await bridge.stat(raw)
+        if (picked) {
+          if (attachments.length >= MAX_ATTACHMENTS) {
+            showChatNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件～`, 'warn')
+            return
+          }
+          addAttachments([picked])
+          showChatNotice(`已添加「${picked.name}」`, 'info', 4_000)
+        } else {
+          // 不是文件（目录/不存在）：按普通文本补回输入框
+          setInput((prev) => (prev ? `${prev}${raw}` : raw))
+        }
+      } catch {
+        setInput((prev) => (prev ? `${prev}${raw}` : raw))
+      }
+    },
+    [addAttachments, attachments.length]
+  )
 
   // 服务端事件订阅（chat 域只关心自己的事件，设计文档 §5.5 分发模式）
   useEffect(() => {
@@ -68,11 +247,15 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
 
   const handleSend = useCallback((): void => {
     const text = input.trim()
-    if (!text) return
+    if (!text && attachments.length === 0) return
+    // 只选文件没打字：给一个默认分析请求（后端也允许空问题，这里保证气泡/黑板有可读文本）
+    const question = text || '帮我看看这个文件'
     // 统一发送入口（teaching 域）：关键词（开始教学/下课）→ WS 发送 → 教学模式镜像 + 头顶气泡
-    if (!sendUserMessage(client, text)) return
+    if (!sendUserMessage(client, question, attachments)) return
     setInput('')
-  }, [client, input])
+    setAttachments([])
+    clearChatNotice()
+  }, [attachments, client, input])
 
   /**
    * 打断（§7.2）：发 interrupt 通知后端取消 LLM 流 + TTS 队列；
@@ -95,12 +278,57 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
       ref={containerRef}
       data-testid="chat-panel"
     >
+      {/* 拖拽提示：文件拖到兔子/窗口上时出现，松手后变成附件 chip */}
+      {dragActive ? (
+        <div className="chat-drop-hint" data-testid="chat-drop-hint">
+          松开鼠标，把文件加到聊天
+        </div>
+      ) : null}
+
+      {/* 一次性提示（文件分析丢历史等）：显示在附件/输入行上方，自动消失 */}
+      {notice ? (
+        <div className={`chat-notice chat-notice-${notice.kind}`} role="status" data-testid="chat-notice">
+          {notice.text}
+        </div>
+      ) : null}
+
+      {/* 待发送附件：文件名 + 移除按钮（正文不经过渲染进程） */}
+      {attachments.length > 0 ? (
+        <div className="chat-attachments" data-testid="chat-attachments">
+          {attachments.map((file) => (
+            <span className="chat-attachment-chip" key={file.path} title={file.path}>
+              <span className="chat-attachment-name">{file.name}</span>
+              <button
+                className="chat-attachment-remove"
+                type="button"
+                aria-label={`移除 ${file.name}`}
+                onClick={() => removeAttachment(file.path)}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
       <div className="chat-input-row">
+        <button
+          className="chat-attach"
+          data-testid="chat-attach"
+          type="button"
+          onClick={handlePick}
+          disabled={!connected || attachments.length >= MAX_ATTACHMENTS}
+          title={connected ? '发送文件 / 图片' : '等待后端连接…'}
+          aria-label="发送文件"
+        >
+          <PaperclipIcon />
+        </button>
         <input
           className="chat-input"
           data-testid="chat-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onPaste={handlePaste}
           onKeyDown={(e) => {
             // IME 组合期间的 Enter 属于候选词确认，不触发发送
             if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
@@ -108,8 +336,10 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
               handleSend()
             }
           }}
-          placeholder={connected ? '说点什么…' : '等待后端连接…'}
-          title={connected ? '按 Enter 发送' : undefined}
+          placeholder={
+            !connected ? '等待后端连接…' : attachments.length > 0 ? '说说想让我看什么…' : '说点什么…'
+          }
+          title={connected ? '按 Enter 发送；可粘贴文件路径' : undefined}
           aria-label="聊天输入"
           disabled={!connected}
         />
@@ -132,7 +362,7 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
             data-testid="chat-send"
             type="button"
             onClick={handleSend}
-            disabled={!connected || input.trim().length === 0}
+            disabled={!connected || (input.trim().length === 0 && attachments.length === 0)}
             title="发送（Enter）"
             aria-label="发送"
           >
@@ -145,6 +375,25 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
 }
 
 // ------------------------------------------------------------------ 图标（线稿，currentColor）
+
+/** 附件：回形针 */
+function PaperclipIcon(): ReactElement {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  )
+}
 
 /** 发送：纸飞机 */
 function SendIcon(): ReactElement {
