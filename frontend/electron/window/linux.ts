@@ -4,7 +4,7 @@
  * 会话适配：X11（当前环境实测）走全能力路径；Wayland 降级为不透明窗口（合成器不保证透明/穿透），
  * 引导用户以 XWayland 运行（--ozone-platform=x11）。
  *
- * X11 穿透与拖拽的实现说明（本项目实测结论，详见 docs/报告/前端/verify-report.md）：
+ * X11 穿透与拖拽的实现说明（本项目实测结论，详见 docs/reports/frontend/2026-10-14-frontend-window-verification.md）：
  *  1. setIgnoreMouseEvents(true, { forward: true }) 在 X11 上不会把 mousemove 转发给渲染进程
  *     → 「穿透默认开 + 渲染侧检测悬停」的原方案无法闭环，改用窗口形状 setShape 承担穿透：
  *     输入形状 = 宠物可交互矩形（hitbox），形状外的点击自然放行给桌面；

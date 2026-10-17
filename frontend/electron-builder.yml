@@ -42,7 +42,7 @@ extraResources:
   # 托盘锚点定位模板（ball-animation 域：抓屏+像素匹配找兔头图标的模板）→ resources/tray-anchor-template.png
   # 运行期由 electron/ball-animation/anchor.ts 以 process.resourcesPath/tray-anchor-template.png 定位；
   # 素材是从实测截图裁出的真实渲染托盘图标（24×24，中心=图标中心）。
-  # ⚠ 托盘图标外观更新后此模板会失配（自动定位回退到托盘图标素材/兜底坐标），需重新裁制（见 docs/报告/前端/fx-report.md）
+  # ⚠ 托盘图标外观更新后此模板会失配（自动定位回退到托盘图标素材/兜底坐标），需重新裁制（见 docs/reports/frontend/2026-10-15-ball-animation.md）
   - from: resources/tray-anchor-template.png
     to: tray-anchor-template.png
 win:

@@ -88,7 +88,7 @@ export const BALL_ANIMATION_CONFIG = {
  * 实测环境：主屏 1920×1080（Deepin DDE，Dock 在底部；兔头图标位于 Dock 托盘区
  * 微信/云兔头/QQ 一组内，图标本体约 20px，取中心）。⚠ 托盘图标增删/布局变化会让它漂移——
  * 正常情况下**不依赖这个值**（自动定位每次实时找兔头）；换环境后如需更新兜底值：
- * 全屏截图 → 裁托盘区放大 → 读图标像素中心（方法见 docs/报告/前端/fx-report.md）。
+ * 全屏截图 → 裁托盘区放大 → 读图标像素中心（方法见 docs/reports/frontend/2026-10-15-ball-animation.md）。
  * 覆盖方式（可不改代码）：环境变量 `PET_TRAY_ANCHOR="x,y"`（启动应用前设置，启动时读取）。
  */
 export const TRAY_ANCHOR: { x: number; y: number } = resolveTrayAnchor()

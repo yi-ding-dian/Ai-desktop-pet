@@ -287,42 +287,43 @@ Ai-desktop-pet/
 │   ├── backend.spec                       ← PyInstaller 规格：onedir + 隐藏导入 + 提示词资产
 │   ├── prepare-pack-venv.sh               ← 打包专用 Python 环境准备（幂等）
 │   ├── README.md                          ← 打包说明（环境要求、产物落位、注意事项）
-│   └── 打包报告.md                         ← Linux 打包报告（AppImage + deb 实测）
+│   └── packaging-report.md            ← Linux 打包报告（AppImage + deb 实测）
 ├── docs/                                  ← 文档归档（非代码）
-│   └── 报告/                               ← 各阶段实施报告：实测结论与踩坑（先读索引）
-│       ├── README.md                      ← 报告索引：每份的一句话说明与状态标注
-│       ├── 前端/                           ← 前端侧报告（14 份）+ 调试栏改造截图
-│       │   ├── verify-report.md           ← 前端窗口能力验证报告（P1 步骤 1+2）
-│       │   ├── p1-connect-report.md       ← 前后端打通报告（P1 步骤 4）
-│       │   ├── p2-voice-front-report.md   ← P2 前端语音实施报告
-│       │   ├── p3-behavior-report.md      ← P3 自主行为前端报告（执行器/窗口移动/环境上报）
-│       │   ├── pet-prototype-report.md    ← 宠物形象原型报告（部件动画「小豆」）
-│       │   ├── three-d-report.md          ← Three.js 程序化 3D 渲染器报告（企鹅 3D 版）
-│       │   ├── three-d-rabbit-report.md   ← Three.js 3D 兔子模型报告 v3
-│       │   ├── glb-rabbit-report.md       ← GLB 模型接入报告（Meshy 兔子）
-│       │   ├── svg-face-report.md         ← SVG 表情层（glb-model）实现报告
-│       │   ├── ears-v1-report.md          ← 耳朵形变层 v1（"活体微动"）实现报告
-│       │   ├── fx-report.md               ← 魔法球捕获动画域实施与验证报告
-│       │   ├── tray-report.md             ← 系统托盘 + Dock 隐藏实施与验证报告
-│       │   ├── icon-report.md             ← 应用图标制作报告（兔子头像）
-│       │   ├── hide-debug-bar-report.md   ← 隐藏调试状态栏实施报告
-│       │   └── hide-debug-bar-shots/      ← 调试栏改造前后对比截图（3 张）
-│       └── 后端/                           ← 后端侧报告（4 份）
-│           ├── p1-llm-report.md           ← P1 步骤 5：后端 LLM 接入报告
-│           ├── p2-voice-report.md         ← P2 步骤 1：后端语音链路报告
-│           ├── p3-memory-report.md        ← P3：记忆与持久化交付报告
-│           └── p3-behavior-report.md      ← P3 步骤 2：自主行为引擎（后端）报告
+│   └── reports/                           ← 各阶段实施报告：实测结论与踩坑（先读索引）
+│       ├── README.md                  ← 报告索引：每份的一句话说明与状态标注
+│       ├── frontend/                      ← 前端侧报告（14 份）+ 调试栏改造截图
+│       │   ├── 2026-10-14-frontend-window-verification.md  ← 前端窗口能力验证报告（P1 步骤 1+2）
+│       │   ├── 2026-10-14-frontend-backend-connect.md      ← 前后端打通报告（P1 步骤 4）
+│       │   ├── 2026-10-14-frontend-voice.md                ← P2 前端语音实施报告
+│       │   ├── 2026-10-14-frontend-behavior.md             ← P3 自主行为前端报告（执行器/窗口移动/环境上报）
+│       │   ├── 2026-10-14-pet-prototype.md                 ← 宠物形象原型报告（部件动画「小豆」）
+│       │   ├── 2026-10-14-procedural-3d-renderer.md        ← Three.js 程序化 3D 渲染器报告（企鹅 3D 版）
+│       │   ├── 2026-10-14-three-d-rabbit.md                ← Three.js 3D 兔子模型报告 v3
+│       │   ├── 2026-10-15-glb-rabbit.md                    ← GLB 模型接入报告（Meshy 兔子）
+│       │   ├── 2026-10-15-svg-face.md                      ← SVG 表情层（glb-model）实现报告
+│       │   ├── 2026-10-15-ears-v1.md                       ← 耳朵形变层 v1（"活体微动"）实现报告
+│       │   ├── 2026-10-15-ball-animation.md                ← 魔法球捕获动画域实施与验证报告
+│       │   ├── 2026-10-15-tray.md                          ← 系统托盘 + Dock 隐藏实施与验证报告
+│       │   ├── 2026-10-15-app-icon.md                      ← 应用图标制作报告（兔子头像）
+│       │   ├── 2026-10-15-hide-debug-bar.md                ← 隐藏调试状态栏实施报告
+│       │   └── hide-debug-bar-shots/                       ← 调试栏改造前后对比截图（3 张）
+│       └── backend/                       ← 后端侧报告（4 份）
+│           ├── 2026-10-14-backend-llm.md       ← P1 步骤 5：后端 LLM 接入报告
+│           ├── 2026-10-14-backend-voice.md     ← P2 步骤 1：后端语音链路报告
+│           ├── 2026-10-14-backend-behavior.md  ← P3 步骤 2：自主行为引擎（后端）报告
+│           └── 2026-10-15-backend-memory.md    ← P3：记忆与持久化交付报告
 ├── 代码设计文档/                           ← 设计文档（开发依据）
 │   ├── 项目详细设计.md                     ← 总体蓝图：架构/协议/模块/数据模型/路线图/决策记录
 │   ├── 前端架构设计规范.md                 ← 前端组织原则：业务域垂直切分、域内水平分层
 │   ├── 后端架构设计规范.md                 ← 后端组织原则：域内分层 + 数据所有权 + 模块通信
 │   ├── 提交注释规范.md                     ← 提交信息格式（五类前缀 + 正文写法）
+│   ├── 命名规范.md                         ← 文件/目录命名规范（本轮整改依据）
 │   └── 目录树状图生成提示词.md             ← 本文档的生成提示词与格式约束
 ├── 兔子原型/                               ← 形象素材原型
 │   ├── 兔子.glb                           ← 兔子 3D 模型原型文件
 │   └── 兔子.png                           ← 兔子形象参考图
 ├── run.bat                                ← Windows 一键源码运行（自举依赖 + 启动 dev）
 ├── run.sh                                 ← Linux/Git Bash 一键源码运行（与 run.bat 等价）
-├── 模块说明.md                             ← 本文档：全仓库目录树与文件职责索引
+├── module-guide.md                     ← 本文档：全仓库目录树与文件职责索引
 └── .gitignore                             ← 忽略 node_modules / 虚拟环境 / 打包产物
 ```

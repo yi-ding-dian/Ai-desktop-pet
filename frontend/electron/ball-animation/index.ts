@@ -1,7 +1,7 @@
 /**
  * 魔法球捕获动画域（fx）：**球窗**（透明小窗，"球"本体）+ 隐藏/显示/移动三个动画流程的时序编排。
  *
- * 设计（详见 docs/报告/前端/fx-report.md；方案沿革：全屏透明层已弃用——避免遮挡用户其它操作）：
+ * 设计（详见 docs/reports/frontend/2026-10-15-ball-animation.md；方案沿革：全屏透明层已弃用——避免遮挡用户其它操作）：
  * - **球窗**：一个 ballWindowSize×ballWindowSize 的透明小窗（与宠物窗同源的窗口技术：
  *   transparent + frame:false + alwaysOnTop(层级 screen-saver) + skipTaskbar + type:'toolbar'
  *   （DDE Dock 不出现窗口格，照 linux.ts 先例）+ focusable:false（不抢焦点）+
