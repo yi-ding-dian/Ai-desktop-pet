@@ -430,6 +430,7 @@ async function releasePetAt(
   )
   win.setBounds(start)
   win.showInactive()
+  console.log(`[ball-animation] 释放：宠物窗可见（visible=${win.isVisible()}）`)
   sendCommand(ball, { type: 'release-burst' })
   sendPetReaction(win, 'released')
   await animateWindowBounds(
@@ -600,24 +601,34 @@ async function relocateMagicFlow(
 
   // ③ 球拎着缩小态宠物沿拱线飞向目标位（终点 = 目标矩形中心，释放点与目标同中心）
   const petShrunk = win.getBounds()
-  sendCommand(ball, { type: 'flight', cargo: true })
-  await flyBothArc(
-    ball,
-    win,
-    petCenter,
-    toCenter,
-    wa,
-    { width: petShrunk.width, height: petShrunk.height },
-    BALL_ANIMATION_CONFIG.returnMs,
-    ctx
-  )
-  assertLive(ctx)
-  stamp(`到达目标位（fly ${BALL_ANIMATION_CONFIG.returnMs}ms）`)
+  // 与 hide/show 同法：飞行期间隐藏宠物窗，只让球载着 cargo 剪影飞——否则缩小窗的
+  // 裁剪（兔头/耳朵）会露在球旁（2026-10-17 用户反馈打开/关闭设置时同样出现）。
+  const wasVisible = win.isVisible()
+  win.hide()
+  console.log(`[ball-animation] 移动动画：飞行期间宠物窗隐藏（visible=${win.isVisible()}）`)
+  try {
+    sendCommand(ball, { type: 'flight', cargo: true })
+    await flyBothArc(
+      ball,
+      win,
+      petCenter,
+      toCenter,
+      wa,
+      { width: petShrunk.width, height: petShrunk.height },
+      BALL_ANIMATION_CONFIG.returnMs,
+      ctx
+    )
+    assertLive(ctx)
+    stamp(`到达目标位（fly ${BALL_ANIMATION_CONFIG.returnMs}ms）`)
 
-  // ④ 释放爆闪 + 宠物在目标位放大归位
-  await releasePetAt(win, ball, target, ctx)
-  assertLive(ctx)
-  stamp(`放大归位完成（${rectStr(win.getBounds())}）`)
+    // ④ 释放爆闪 + 宠物在目标位放大归位
+    await releasePetAt(win, ball, target, ctx)
+    assertLive(ctx)
+    stamp(`放大归位完成（${rectStr(win.getBounds())}）`)
+  } finally {
+    // 异常/超时路径兜底：原本可见的宠物必须重新出现（坐标由 runFlow 的 catch 落到 target）
+    if (wasVisible && !win.isDestroyed() && !win.isVisible()) win.showInactive()
+  }
 
   // ⑤ 球淡出收窗
   await fadeBallOut(ball, ctx)
