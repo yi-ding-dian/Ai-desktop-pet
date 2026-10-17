@@ -19,11 +19,7 @@ import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
 import { destroySettings, initSettings } from './settings'
 import { destroyBubble, initBubble } from './bubble'
 import { applyWindowsAppIdentity } from './platform'
-import type { PlatformWindow } from './window'
-
-/** 宠物窗口尺寸（逻辑基准 400x400；渲染侧按 100vw/100vh 自适应） */
-const PET_WINDOW_WIDTH = 400
-const PET_WINDOW_HEIGHT = 400
+import { PET_WINDOW_SIZE, type PlatformWindow } from './window'
 
 /** 调试快捷键（避开常见组合，选用 F9–F11 + Ctrl+Shift） */
 const SHORTCUTS = {
@@ -51,8 +47,8 @@ let hitReportListener: ((event: Electron.IpcMainEvent, payload: { solid: boolean
 /** 创建宠物窗口并完成 IPC 注册 */
 function createPetWindow(): PlatformWindow {
   const platformWindow = resolveWindowImpl()({
-    width: PET_WINDOW_WIDTH,
-    height: PET_WINDOW_HEIGHT,
+    width: PET_WINDOW_SIZE.width,
+    height: PET_WINDOW_SIZE.height,
     preload: join(__dirname, '../preload/preload.js')
   })
   const { window } = platformWindow

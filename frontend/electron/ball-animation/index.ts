@@ -33,6 +33,7 @@ import { IPC_EVENTS, IPC_BALL_ANIMATION, type BallAnimationCommand, type BallAni
 import { BALL_ANIMATION_CONFIG } from './config'
 import { locateTrayAnchor } from './anchor'
 import { setWindowMoveLock } from '../window/move-lock'
+import { PET_WINDOW_SIZE } from '../window'
 import type { Point, Rect, Size } from '../window'
 
 const isDev = !app.isPackaged
@@ -146,6 +147,16 @@ function makeArcPath(from: Point, to: Point, wa: Rect): (u: number) => Point {
 }
 
 const centerOf = (r: Rect): Point => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 })
+
+/**
+ * 取坐标、把尺寸归一到宠物窗设计尺寸（DIP）。
+ * `getBounds()` 在 Windows fractional DPI 下回吐的是舍入值（400→401）；如果把它记为
+ * "家"并原样 setBounds 回去，每次隐藏/显示都会再 +1px，宠物窗越撑越高（输入框下沉）。
+ * 见 window/index.ts 的 PET_WINDOW_SIZE。
+ */
+function atDesignSize(r: Rect): Rect {
+  return { x: r.x, y: r.y, width: PET_WINDOW_SIZE.width, height: PET_WINDOW_SIZE.height }
+}
 
 /** 以 center 为中心的球窗（或缩形态窗口）矩形（整数） */
 function boundsAround(center: Point, width: number, height: number): Rect {
@@ -465,7 +476,7 @@ async function hideFlow(
   const t0 = Date.now()
   const stamp = (msg: string): void => console.log(`[ball-animation] t=${Date.now() - t0}ms ${msg}`)
 
-  const stash = win.getBounds()
+  const stash = atDesignSize(win.getBounds())
   stashedBounds = stash
   const petCenter = centerOf(stash)
   stamp(`隐藏动画开始：宠物 ${rectStr(stash)}，锚点 ${ptStr(anchor)}`)
@@ -524,7 +535,7 @@ async function showFlow(
   const stamp = (msg: string): void => console.log(`[ball-animation] t=${Date.now() - t0}ms ${msg}`)
 
   // 原位：优先用隐藏时记录的家；缺失（异常路径）时退回当前 bounds
-  const home = stashedBounds ?? win.getBounds()
+  const home = stashedBounds ?? atDesignSize(win.getBounds())
   const homeCenter = centerOf(home)
   stamp(`显示动画开始：原位 ${rectStr(home)}，锚点 ${ptStr(anchor)}`)
 

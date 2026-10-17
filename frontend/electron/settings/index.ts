@@ -31,6 +31,7 @@ import { runRelocateAnimation } from '../ball-animation'
 import { wizardPetRect } from './geometry'
 import { getTeachingMode } from '../teaching'
 import { probeXWindowAlive, type XWindowAlive } from './window-health'
+import { PET_WINDOW_SIZE } from '../window'
 import type { Rect } from '../window'
 
 const isDev = !app.isPackaged
@@ -358,13 +359,21 @@ async function beginWizard(): Promise<void> {
     return
   }
 
-  petHomeRect = pet.getBounds()
+  // 原位只取坐标；尺寸用设计常量（getBounds 在 fractional DPI 下是舍入值，
+  // 回喂 relocate 会让宠物窗每次开关设置长大 1px——见 window/index.ts PET_WINDOW_SIZE）
+  const homeBounds = pet.getBounds()
+  petHomeRect = {
+    x: homeBounds.x,
+    y: homeBounds.y,
+    width: PET_WINDOW_SIZE.width,
+    height: PET_WINDOW_SIZE.height
+  }
   wizardActive = true
   broadcastVisibility('opened')
 
   const sBounds = sw.getBounds()
   const wa = screen.getDisplayMatching(sBounds).workArea
-  const target = wizardPetRect(sBounds, { width: petHomeRect.width, height: petHomeRect.height }, wa)
+  const target = wizardPetRect(sBounds, PET_WINDOW_SIZE, wa)
   console.log(
     `[settings] 向导入位：宠物 ${rectStr(petHomeRect)} → ${rectStr(target)}（设置窗 ${rectStr(sBounds)}）`
   )

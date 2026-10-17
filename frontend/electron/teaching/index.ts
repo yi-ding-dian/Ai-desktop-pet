@@ -37,6 +37,7 @@ import {
   podiumPoint
 } from './geometry'
 import { runRelocateAnimation } from '../ball-animation'
+import { PET_WINDOW_SIZE } from '../window'
 import type { Rect } from '../window'
 
 const isDev = !app.isPackaged
@@ -587,8 +588,14 @@ export function initTeaching(pet: BrowserWindow): void {
     const pet = petWin
     if (pet && !pet.isDestroyed() && pet.isVisible()) {
       const p = podiumPoint(next)
-      const pb = pet.getBounds()
-      pet.setBounds({ x: p.x, y: p.y, width: pb.width, height: pb.height })
+      // 尺寸用设计常量（黑板拖动改宽会高频触发；回喂 getBounds 的舍入宽高会让宠物窗
+      // 每次 +1px，见 window/index.ts PET_WINDOW_SIZE）
+      pet.setBounds({
+        x: p.x,
+        y: p.y,
+        width: PET_WINDOW_SIZE.width,
+        height: PET_WINDOW_SIZE.height
+      })
     }
   })
 

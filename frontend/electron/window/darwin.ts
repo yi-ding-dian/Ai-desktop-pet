@@ -10,6 +10,7 @@
  *  ③ 分发必须 Apple 开发者账号签名 + 公证。
  */
 import { BrowserWindow, screen } from 'electron'
+import { PET_WINDOW_SIZE } from './index'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
 import { createEasedMover, readGeometry } from './move'
 import { isWindowMoveLocked } from './move-lock'
@@ -43,7 +44,7 @@ export function createDarwinWindow(opts: PetWindowOptions): PlatformWindow {
 
   let dragOrigin: { start: Point; bounds: Rect } | null = null
   /** 缓动移动器（P3 行为引擎：walk 的窗口移动） */
-  const mover = createEasedMover(win)
+  const mover = createEasedMover(win, PET_WINDOW_SIZE)
 
   const capability: WindowCapability = {
     // 降级：无穿透（恒不拦截，即恒接收事件；此处语义为"关"）
@@ -71,11 +72,13 @@ export function createDarwinWindow(opts: PetWindowOptions): PlatformWindow {
       if (isWindowMoveLocked()) return
       if (!dragOrigin) return
       const { start, bounds } = dragOrigin
+      // 尺寸用设计常量、不回喂 getBounds()（fractional DPI 下每次 +1px；
+      // 见 window/index.ts 的 PET_WINDOW_SIZE 说明）
       win.setBounds({
         x: Math.round(bounds.x + (cursor.x - start.x)),
         y: Math.round(bounds.y + (cursor.y - start.y)),
-        width: bounds.width,
-        height: bounds.height
+        width: PET_WINDOW_SIZE.width,
+        height: PET_WINDOW_SIZE.height
       })
     },
 

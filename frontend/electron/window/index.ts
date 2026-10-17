@@ -30,6 +30,18 @@ export interface Size {
   height: number
 }
 
+/**
+ * 宠物窗设计尺寸（DIP）：固定尺寸窗口，创建、拖拽、自主移动与走位都必须使用这一组常量。
+ *
+ * **禁止把 `getBounds()` 的宽高回喂 `setBounds()`**：Windows fractional DPI（本机 175%）下
+ * `setBounds(400×400)` 之后 `getBounds()` 会回吐 401×401，再拿 401 去 set 又变 402……
+ * 每次交互/移动累积 +1px。宠物窗是 top 锚定兔子、bottom 锚定聊天输入框，窗口越撑越高
+ * 会让输入框逐次下沉且回不去（2026-10-17 用户反馈"点兔头输入框越来越下面"）。
+ * 与气泡窗的 `followSize` 契约同源（见 electron/bubble/geometry.ts）。
+ * 魔法球动画的 `setScale` 是唯一允许临时改尺寸的路径（动画期间移动锁已挡住拖拽/moveTo）。
+ */
+export const PET_WINDOW_SIZE: Size = { width: 400, height: 400 }
+
 /** 窗口几何快照（屏幕坐标，DIP）：位置 + 尺寸 + 所在显示器工作区 */
 export interface WindowGeometry {
   pos: Point

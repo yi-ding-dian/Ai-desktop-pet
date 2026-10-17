@@ -12,6 +12,7 @@
  * 3. alwaysOnTop 可指定层级（'screen-saver' 可压住全屏应用），需要时在 setAlwaysOnTop 内升级。
  */
 import { BrowserWindow, screen } from 'electron'
+import { PET_WINDOW_SIZE } from './index'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
 import { createEasedMover, readGeometry } from './move'
 import { isWindowMoveLocked } from './move-lock'
@@ -47,7 +48,7 @@ export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
   let clickThrough = false
   let dragOrigin: { start: Point; bounds: Rect } | null = null
   /** 缓动移动器（P3 行为引擎：walk 的窗口移动） */
-  const mover = createEasedMover(win)
+  const mover = createEasedMover(win, PET_WINDOW_SIZE)
 
   const capability: WindowCapability = {
     setClickThrough(on: boolean) {
@@ -79,11 +80,14 @@ export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
       if (isWindowMoveLocked()) return
       if (!dragOrigin) return
       const { start, bounds } = dragOrigin
+      // 只取快照的 x/y；尺寸必须用设计常量——getBounds() 在 fractional DPI 下回吐的是
+      // 舍入后的值（400→401→402…），回喂 setBounds 会让每次点击/拖动把窗口撑大 1px。
+      // 宠物窗 top 锚定兔子、bottom 锚定聊天输入框，窗口变高看起来就是输入框逐次下沉。
       win.setBounds({
         x: Math.round(bounds.x + (cursor.x - start.x)),
         y: Math.round(bounds.y + (cursor.y - start.y)),
-        width: bounds.width,
-        height: bounds.height
+        width: PET_WINDOW_SIZE.width,
+        height: PET_WINDOW_SIZE.height
       })
     },
 
