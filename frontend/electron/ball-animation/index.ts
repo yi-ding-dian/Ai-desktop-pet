@@ -481,6 +481,10 @@ async function hideFlow(
 
   // ③ 球拎着缩小态的宠物沿同一条拱线一起飞回托盘（球窗盖在宠物上=吸进球里）
   const petShrunk = win.getBounds()
+  // 回程只让球载着剪影飞：宠物窗必须隐藏——否则缩小的宠物窗会在球旁露出兔头/身体残片
+  // （2026-10-17 用户反馈"返回的飞星里还有兔头"）。显示方向本来就在飞行期间隐藏宠物
+  // （releasePetAt 才 show），回程与它对称；球自身有 cargo 剪影，视觉不断档。
+  win.hide()
   sendCommand(ball, { type: 'flight', cargo: true })
   await flyBothArc(
     ball,
