@@ -3,7 +3,8 @@
 把项目打成「目标机免装 Node / Python」的分发包（Linux 的 AppImage/deb、Windows 的 NSIS 安装包 + portable 单文件）。
 打包脚本会先回到项目根目录（脚本自己 `cd`，不用手动切目录），再依次：PyInstaller 打后端 → electron-vite 打前端 → electron-builder 出安装包。
 
-> **只想把应用跑起来看看**（源码运行、开发调试）：用 `frontend` 里的 `npm run dev`——那是另一件事，不在这个目录里。
+> **只想把应用跑起来看看**（源码运行、开发调试）：用项目根的 `run.bat`（Windows）/ `run.sh`（Linux）——一键自举依赖并启动 dev（改代码即时生效），那是另一件事，不在这个目录里。
+> 那句等价于手动 `cd frontend && npm run dev`，前提是 `frontend/node_modules` 与 `backend/.venv` 都已就绪——run 脚本就是替你准备这两处的。
 
 | 脚本 | 平台 | 用途 |
 |---|---|---|
