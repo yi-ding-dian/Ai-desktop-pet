@@ -268,10 +268,10 @@ export const LID = {
 /** 眼皮闭合度阻尼时间常数（秒）：情绪切换时眼皮平滑归位 */
 export const TAU_LID = 0.12
 
-/** 睡着（state='sleeping'）时的表情覆盖：闭大半眼 + Zzz + 停眨 */
+/** 睡着（state='sleeping'）时的表情覆盖：全闭眼 + Zzz + 停眨 */
 export const SLEEP_OVERRIDE = {
-  /** 上眼皮闭合度下限 */
-  lidTop: 0.72,
+  /** 上眼皮闭合度下限（1 = 全闭，盖住虹膜并显出闭眼线） */
+  lidTop: 1.0,
   /** 是否还有 Zzz 符号（与情绪 symbol 取或） */
   symbolZzz: true
 }
