@@ -96,7 +96,7 @@ def test_default_registry_contains_open_settings() -> None:
     assert spec.executor == "frontend"  # 前端执行（打开设置窗）
     assert spec.parameters == {"type": "object", "properties": {}}  # 无参工具
     assert spec.ack  # 模型没说话时的确认话兜底
-    assert [s.name for s in registry.all()] == ["open_settings"]
+    assert [s.name for s in registry.all()] == ["open_settings", "open_work"]
     # 模型可见的描述：明确"什么场景用"
     assert "设置" in spec.description
 
@@ -131,6 +131,7 @@ def test_default_registry_registers_backend_reminder_tools() -> None:
     registry = build_default_registry(FakeReminderServiceTools())
     assert [s.name for s in registry.all()] == [
         "open_settings",
+        "open_work",
         "create_reminder",
         "list_reminders",
         "cancel_reminder",
@@ -146,7 +147,10 @@ def test_default_registry_registers_backend_reminder_tools() -> None:
 
 def test_default_registry_without_service_keeps_old_tools() -> None:
     """未注入提醒服务（旧装配/单测）：注册表与旧版逐字一致。"""
-    assert [s.name for s in build_default_registry().all()] == ["open_settings"]
+    assert [s.name for s in build_default_registry().all()] == [
+        "open_settings",
+        "open_work",
+    ]
 
 
 # ---------------------------------------------------------------- 记忆本工具（2026-10-18）
@@ -178,6 +182,7 @@ def test_default_registry_registers_notebook_tools() -> None:
     registry = build_default_registry(notebook=FakeNotebookServiceTools())
     assert [s.name for s in registry.all()] == [
         "open_settings",
+        "open_work",
         "save_item",
         "list_items",
         "rename_item",
@@ -251,6 +256,7 @@ def test_default_registry_registers_search_tools() -> None:
     registry = build_default_registry(search=FakeSearchServiceTools())
     assert [s.name for s in registry.all()] == [
         "open_settings",
+        "open_work",
         "web_search",
         "web_fetch",
     ]
@@ -289,6 +295,17 @@ def test_match_directive_hits(text: str) -> None:
 )
 def test_match_directive_misses(text: str) -> None:
     """只提"设置"不构成指令（问内容/闲聊）——与能力清单的调用边界一致。"""
+    assert match_directive(text) is None
+
+
+@pytest.mark.parametrize("text", ["打开工作模式", "帮我打开工作台", "进入工作模式。"])
+def test_match_directive_open_work(text: str) -> None:
+    """工作模式入口：必须带“打开/进入”动词，避免提问被误判成开窗。"""
+    assert match_directive(text) == "open_work"
+
+
+@pytest.mark.parametrize("text", ["什么是工作模式？", "工作模式有什么用", "工作台"])
+def test_match_directive_work_question_misses(text: str) -> None:
     assert match_directive(text) is None
 
 

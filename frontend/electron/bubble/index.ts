@@ -80,6 +80,7 @@ import {
 import { runHideAnimation } from '../ball-animation'
 import { openSettings } from '../settings'
 import { enterTeaching, exitTeaching, getTeachingMode } from '../teaching'
+import { openWork } from '../work'
 import { computeBubblePlacement, followSize } from './geometry'
 import type { Point, Rect, Size } from '../window'
 
@@ -120,7 +121,13 @@ const OPEN_REPOST_MS = 150
 const CLOSE_TIMEOUT_MS = 700
 
 /** 菜单动作 id 白名单（防渲染面误发/脏数据） */
-const MENU_ACTION_IDS: readonly string[] = ['teaching', 'settings', 'clear-chat', 'hide-pet']
+const MENU_ACTION_IDS: readonly string[] = [
+  'teaching',
+  'work',
+  'settings',
+  'clear-chat',
+  'hide-pet'
+]
 /** 确认气泡动作 id 白名单（PetBubble 组件的通用语义 id：确认/取消） */
 const CONFIRM_ACTION_IDS: readonly string[] = ['confirm', 'cancel']
 /** 说话气泡动作 id 白名单（悬浮工具条：expand=带记录进教学；close=收气泡；reminder-ack=提醒已读） */
@@ -775,6 +782,7 @@ function buildMenuPayload(): BubbleOpenPayload {
   const teaching = getTeachingMode() === 'teaching'
   const items: BubbleMenuItemPayload[] = [
     { id: 'teaching', label: teaching ? '结束' : '开始教学', icon: 'teaching' },
+    { id: 'work', label: '工作模式', icon: 'work' },
     { id: 'settings', label: '打开设置', icon: 'settings' },
     { id: 'clear-chat', label: '清空聊天', icon: 'broom' },
     { id: 'hide-pet', label: '隐藏', icon: 'sleep' }
@@ -1302,6 +1310,11 @@ function dispatchAction(id: string): void {
       if (getTeachingMode() === 'teaching') void exitTeaching('menu')
       else void enterTeaching('menu')
       closeBubble('动作：教学')
+      break
+    case 'work':
+      // 工作模式：只是打开一个额外的聊天窗，说话气泡照常恢复（不抑制）
+      openWork()
+      closeBubble('动作：工作模式')
       break
     case 'settings':
       suppressSpeechRestore = true // 进设置向导：同理不恢复（向导有自己的萌语气泡）

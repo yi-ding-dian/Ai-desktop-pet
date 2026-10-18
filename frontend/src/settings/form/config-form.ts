@@ -19,6 +19,8 @@ import { formatQuietHours, parseQuietHours } from './quiet-hours'
 export interface FormValues {
   llmBaseUrl: string
   llmModel: string
+  /** 深度思考模型（工作模式；空 = 自动：DeepSeek 端点用 deepseek-reasoner） */
+  llmThinkModel: string
   /** 新 API key 输入框（空 = 不修改；不预填掩码） */
   llmKeyInput: string
   /** 服务端给出的 key 掩码（只读展示，如 sk-****f3a9 / (未配置)） */
@@ -51,6 +53,7 @@ export interface FormValues {
 export const EMPTY_FORM: FormValues = {
   llmBaseUrl: '',
   llmModel: '',
+  llmThinkModel: '',
   llmKeyInput: '',
   llmKeyMasked: '',
   petName: '',
@@ -131,6 +134,7 @@ export function snapshotToForm(config: ConfigData): FormValues {
   return {
     llmBaseUrl: asString(llm?.base_url) ?? '',
     llmModel: asString(llm?.model) ?? '',
+    llmThinkModel: asString(llm?.think_model) ?? '',
     llmKeyInput: '', // 永远不回填明文/掩码到输入框（掩码单独字段展示）
     llmKeyMasked: readKeyMask(config, llm),
     petName: asString(pet?.name) ?? '',
@@ -169,6 +173,9 @@ export function buildPatch(
   const llm: Record<string, unknown> = {}
   if (form.llmBaseUrl.trim() !== baseline.llmBaseUrl.trim()) llm.base_url = form.llmBaseUrl.trim()
   if (form.llmModel.trim() !== baseline.llmModel.trim()) llm.model = form.llmModel.trim()
+  if (form.llmThinkModel.trim() !== baseline.llmThinkModel.trim()) {
+    llm.think_model = form.llmThinkModel.trim()
+  }
   const newKey = form.llmKeyInput.trim()
   if (newKey) llm.api_key = newKey // key 专用字段：空 = 不修改
   if (Object.keys(llm).length > 0) patch.llm = llm

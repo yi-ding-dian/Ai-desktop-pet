@@ -61,6 +61,42 @@ export function IconTeaching({ size = 16, className }: PetIconProps): ReactEleme
 }
 
 /**
+ * 工作模式（聊天窗）：青绿窗框 + 三行对话 + 右下角强调圆点。菜单"工作模式"用。
+ */
+export function IconWork({ size = 16, className }: PetIconProps): ReactElement {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+    >
+      {/* 窗框 */}
+      <rect
+        x="3.2"
+        y="4.4"
+        width="17.6"
+        height="14"
+        rx="3.4"
+        fill="#2dd4bf"
+        stroke="#2dd4bf"
+        strokeWidth="1.2"
+      />
+      {/* 对话行 */}
+      <g stroke="#ecfeff" strokeWidth="1.6" strokeLinecap="round">
+        <line x1="7" y1="9" x2="17" y2="9" />
+        <line x1="7" y1="12.2" x2="14.4" y2="12.2" />
+        <line x1="7" y1="15.4" x2="11.8" y2="15.4" />
+      </g>
+      {/* 右下强调点 */}
+      <circle cx="17.6" cy="15.4" r="1.5" fill="#fbbf24" />
+    </svg>
+  )
+}
+
+/**
  * 设置（齿轮）：天蓝齿轮体 + 圆头齿 + 浅色轴心。菜单"打开设置"用。
  */
 export function IconSettings({ size = 16, className }: PetIconProps): ReactElement {

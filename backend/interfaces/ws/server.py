@@ -56,6 +56,10 @@ class ConnectionContext:
     async def reply_start(self, message_id: str) -> None:
         await self.send_event("reply_start", {"message_id": message_id})
 
+    async def reasoning(self, message_id: str, text: str) -> None:
+        """ReplySink 端口：推理模型思考过程增量（工作模式折叠展示）。"""
+        await self.send_event("reasoning", {"message_id": message_id, "text": text})
+
     async def token(self, message_id: str, text: str) -> None:
         await self.send_event("token", {"message_id": message_id, "text": text})
 

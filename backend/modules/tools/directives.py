@@ -19,6 +19,8 @@ import re
 #: 指令词表：每项为 (匹配正则, 目标工具名)。顺序即优先级。
 _DIRECTIVES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"打开设置|设置面板"), "open_settings"),
+    # 动词锚定：避免“什么是工作模式”这类提问被误判成开窗指令
+    (re.compile(r"打开工作模式|打开工作台|进入工作模式"), "open_work"),
 )
 
 #: 提醒意图里的“动作”：明确在让宠物提醒/叫醒自己。

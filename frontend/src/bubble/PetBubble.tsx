@@ -36,6 +36,7 @@ import {
   IconSettings,
   IconSleep,
   IconTeaching,
+  IconWork,
   type PetIconProps
 } from '../shared/icons'
 import { getPetBridge } from '../shared/pet-bridge'
@@ -70,6 +71,7 @@ const PAD = { top: 40, right: 16, bottom: 12, left: 32 } as const
 /** 菜单图标注册表（icon 名 → 组件；未知名渲染为无图标——宽容降级）。加图标见 shared/icons 注释 */
 const ICONS: Record<string, (p: PetIconProps) => ReactElement> = {
   teaching: IconTeaching,
+  work: IconWork,
   settings: IconSettings,
   broom: IconBroom,
   sleep: IconSleep

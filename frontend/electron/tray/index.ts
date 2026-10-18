@@ -45,6 +45,7 @@ import { isLinux, isWindows, linuxOnlyWindowOptions } from '../platform'
 import { IPC, IPC_EVENTS, type TrayMenuAction } from '../ipc/channels'
 import { runHideAnimation, runShowAnimation, setTrayAnchorProvider } from '../ball-animation'
 import { enterTeaching } from '../teaching'
+import { openWork } from '../work'
 import { openSettings } from '../settings'
 
 const isDev = !app.isPackaged
@@ -63,7 +64,9 @@ const TRAY_ICON_MAX_SCALE = 2
  * 内容在窗口内垂直居中（CSS justify-content:center），略富余无碍。
  */
 const TRAY_MENU_WIDTH = 180
-const TRAY_MENU_HEIGHT = 164
+// 5 项菜单（显示/隐藏、教学模式、工作模式、设置、退出）+ 1 条分隔线
+// 34px/项 × 5 + 1px 分隔 + 2px×4 间距 + 上下内边距 12 ≈ 200
+const TRAY_MENU_HEIGHT = 200
 /** 菜单与托盘图标（/鼠标点）之间的纵向间隙（px） */
 const TRAY_MENU_GAP = 8
 /** 菜单与工作区边缘的最小边距（px） */
@@ -342,7 +345,13 @@ function isMenuSender(sender: WebContents): boolean {
 }
 
 /** 菜单项动作白名单校验（渲染面误发/脏数据一律忽略） */
-const TRAY_MENU_ACTIONS: readonly TrayMenuAction[] = ['toggle-pet', 'teaching', 'settings', 'quit']
+const TRAY_MENU_ACTIONS: readonly TrayMenuAction[] = [
+  'toggle-pet',
+  'teaching',
+  'work',
+  'settings',
+  'quit'
+]
 function normalizeMenuAction(a: unknown): TrayMenuAction | null {
   return typeof a === 'string' && (TRAY_MENU_ACTIONS as readonly string[]).includes(a)
     ? (a as TrayMenuAction)
@@ -448,6 +457,14 @@ export function createTray(
       }
     },
     {
+      label: '工作模式',
+      // 打开独立聊天窗（2026-10-18）：完整记录 + 历史导航 + 单轮开关
+      click: () => {
+        console.log('[tray] 菜单：打开工作模式窗口')
+        openWork()
+      }
+    },
+    {
       label: '设置',
       // 打开独立设置窗口（P4 前置，§7.6.1）：单例——已打开则聚焦（窗口生命周期归 settings 域）
       click: () => {
@@ -491,6 +508,9 @@ export function createTray(
           break
         case 'teaching':
           void enterTeaching('menu')
+          break
+        case 'work':
+          openWork()
           break
         case 'settings':
           openSettings()

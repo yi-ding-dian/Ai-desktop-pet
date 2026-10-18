@@ -59,6 +59,8 @@ import {
   type TeachingBubbleItem
 } from './modules/teaching'
 import { setupToolExecutor } from './modules/tools'
+import { setupWorkPetSide } from './modules/work'
+import { isWorkModeActive, subscribeWorkActive } from './modules/work/state'
 import { setupReminders } from './modules/reminders'
 import {
   setupSettingsGuidePetSide,
@@ -139,6 +141,8 @@ export default function App(): ReactElement {
   const [teachingBubbles, setTeachingBubbles] = useState<TeachingBubbleItem[]>([])
   /** 设置向导进行中（§7.6.6：设置窗打开 → 聊天面板收起 + 右眼右上方萌语气泡显隐） */
   const [guideActive, setGuideActive] = useState(false)
+  /** 工作模式进行中（2026-10-18：工作窗可见 → 宠物输入框收起 + 回复气泡不显示） */
+  const [workActive, setWorkActive] = useState(isWorkModeActive)
   const hitboxRef = useRef<HTMLDivElement | null>(null)
   const statusBarRef = useRef<HTMLDivElement | null>(null)
   const chatPanelRef = useRef<HTMLDivElement | null>(null)
@@ -179,6 +183,9 @@ export default function App(): ReactElement {
   // 注：新增 bridge API 需重启 Electron 主进程才可用；旧 preload 无 teaching 段时静默跳过
   useEffect(() => setupTeachingPetSide(wsClient), [wsClient])
 
+  // ---- 工作模式接线（2026-10-18）：工作窗发送/历史/打断 ↔ 宠物窗 WS 与对话镜像 ----
+  useEffect(() => setupWorkPetSide(wsClient), [wsClient])
+
   // ---- 工具执行器接线（§4.7 工具机制）：后端 tool_call 事件 → 前端按 name 执行（如 open_settings 开设置窗） ----
   useEffect(() => setupToolExecutor(wsClient), [wsClient])
 
@@ -186,12 +193,22 @@ export default function App(): ReactElement {
   // 抑制判定经 ref 现读（setup 只跑一次，闭包捕获的状态会过期）：教学（内容在黑板）/向导（有萌语气泡）
   // 中不弹；进入抑制态时立即收起正在显示的说话气泡（让位）
   const speechSuppressedRef = useRef(false)
+  // 工作模式只抑制"对话回复气泡"（输入框已在工作窗里）；提醒/称呼引导仍走原判定，不被工作窗静音
+  const workActiveRef = useRef(false)
+  useEffect(() => subscribeWorkActive(setWorkActive), [])
+  useEffect(() => {
+    workActiveRef.current = workActive
+    if (workActive) dismissSpeechBubble()
+  }, [workActive])
   useEffect(() => {
     speechSuppressedRef.current = teachingState.mode === 'teaching' || guideActive
     if (speechSuppressedRef.current) dismissSpeechBubble()
   }, [teachingState.mode, guideActive])
   useEffect(
-    () => setupSpeechBubble(wsClient, { shouldSuppress: () => speechSuppressedRef.current }),
+    () =>
+      setupSpeechBubble(wsClient, {
+        shouldSuppress: () => speechSuppressedRef.current || workActiveRef.current
+      }),
     [wsClient]
   )
 
@@ -620,7 +637,7 @@ export default function App(): ReactElement {
       observers.forEach((ro) => ro.disconnect())
       window.removeEventListener('resize', report)
     }
-  }, [debugBarVisible, teachingExpanded, teachingState.mode, guideActive])
+  }, [debugBarVisible, teachingExpanded, teachingState.mode, guideActive, workActive])
 
   return (
     <div className="app-root">
@@ -653,7 +670,7 @@ export default function App(): ReactElement {
       <ChatPanel
         client={wsClient}
         containerRef={chatPanelRef}
-        hidden={teachingState.mode === 'teaching' || guideActive}
+        hidden={teachingState.mode === 'teaching' || guideActive || workActive}
       />
 
       {/* 教学模式：头顶问题气泡（课堂目录，最多 4 条 + "+N"；点击 → 黑板跳段）。

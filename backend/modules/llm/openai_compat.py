@@ -7,7 +7,8 @@
 - 超时 / 重试 / 错误码翻译在本层完成，对上层只抛业务化的 LlmError（已脱敏）。
 
 关键约定：
-- 只取流式 delta.content，天然跳过推理型模型的 delta.reasoning_content（思考过程）；
+- 正文取流式 ``delta.content``；推理型模型的 ``delta.reasoning_content`` 以
+  ``Chunk.reasoning`` 透传（工作模式折叠展示），不混入正文/TTS；
 - 请求带 ``tools`` 时（由调用方经 opts 传入，本域不依赖 tools 域），
   ``delta.tool_calls`` 分片原样搬运为 ``Chunk.tool_delta``（不做归组 / 拼接，
   那是调用方的职责；见 ``_extract_tool_deltas``）；
@@ -71,20 +72,34 @@ def _message_payload(message: ChatMessage) -> dict[str, Any]:
     return payload
 
 
-def _extract_content(chunk: Any) -> str:
-    """从流式 chunk 中取出正文增量。
-
-    推理型模型（如 deepseek-flash）的思考过程在 ``delta.reasoning_content``，
-    这里只读 ``delta.content``，天然跳过思考、不产生任何标签外的噪音。
-    """
+def _delta_of(chunk: Any) -> Any:
+    """取流式 chunk 的 ``choices[0].delta``；缺省返回 None。"""
     choices = getattr(chunk, "choices", None)
     if not choices:
-        return ""
-    delta = getattr(choices[0], "delta", None)
+        return None
+    return getattr(choices[0], "delta", None)
+
+
+def _extract_content(chunk: Any) -> str:
+    """从流式 chunk 中取出正文增量（``delta.content``）。"""
+    delta = _delta_of(chunk)
     if delta is None:
         return ""
     content = getattr(delta, "content", None)
     return content or ""
+
+
+def _extract_reasoning(chunk: Any) -> str:
+    """从流式 chunk 中取出推理增量（``delta.reasoning_content``）。
+
+    推理型模型（如 deepseek-reasoner）把思考过程放在该字段；非推理模型
+    恒为空。由调用方决定是否展示（工作模式折叠块），不影响正文/TTS。
+    """
+    delta = _delta_of(chunk)
+    if delta is None:
+        return ""
+    reasoning = getattr(delta, "reasoning_content", None)
+    return reasoning or ""
 
 
 def _extract_tool_deltas(raw: Any) -> list[ToolCallDelta]:
@@ -206,13 +221,16 @@ class OpenAICompatProvider:
         key = self._resolve_key()
         tools = opts.pop("tools", None)
         tool_choice = opts.pop("tool_choice", None)
+        # temperature=None 显式表示“不发该参数”（推理型模型不接受 temperature）。
+        temperature = opts.pop("temperature", self._temperature)
         request: dict[str, Any] = {
             "model": opts.pop("model", self._model),
             "messages": [_message_payload(m) for m in messages],
             "stream": True,
-            "temperature": opts.pop("temperature", self._temperature),
             "max_tokens": opts.pop("max_tokens", self._max_tokens),
         }
+        if temperature is not None:
+            request["temperature"] = temperature
         if tools:
             request["tools"] = tools
             if tool_choice is not None:
@@ -223,15 +241,19 @@ class OpenAICompatProvider:
                 stream = await client.chat.completions.create(**request)
                 async for raw in stream:
                     text = _extract_content(raw)
+                    reasoning = _extract_reasoning(raw)
                     tool_deltas = _extract_tool_deltas(raw)
-                    if not text and not tool_deltas:
-                        continue  # 心跳帧 / 纯 reasoning 帧：不出帧（与既往行为一致）
+                    if not text and not reasoning and not tool_deltas:
+                        continue  # 心跳帧
+                    # 推理语义上先于正文：同一帧两者都有时先出 reasoning、再出正文
+                    if reasoning:
+                        yield Chunk(reasoning=reasoning)
                     if tool_deltas:
                         # 首片工具分片与正文同帧携带；同一 chunk 的其余调用各出一帧
                         yield Chunk(text=text, tool_delta=tool_deltas[0])
                         for extra in tool_deltas[1:]:
                             yield Chunk(text="", tool_delta=extra)
-                    else:
+                    elif text:
                         yield Chunk(text=text)
         except openai.OpenAIError as exc:
             raise _translate(exc, timeout=self._timeout) from exc

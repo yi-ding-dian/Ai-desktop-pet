@@ -9,6 +9,7 @@ import {
   IPC_EVENTS,
   IPC_BALL_ANIMATION,
   IPC_REMINDER_LIST,
+  IPC_WORK,
   type BackendReadyPayload,
   type BackendSnapshot,
   type BackendStatusPayload,
@@ -37,7 +38,13 @@ import {
   type TeachingMirrorEvent,
   type TeachingStatePayload,
   type TrayMenuAction,
-  type WindowDebugState
+  type WindowDebugState,
+  type WorkHistoryPayload,
+  type WorkHistoryRequestPayload,
+  type WorkMirrorEvent,
+  type WorkPresencePayload,
+  type WorkSendRequestPayload,
+  type WorkSendResultPayload
 } from './ipc/channels'
 import { PLATFORM } from './platform'
 import type { MoveResult, Point, Rect, WindowGeometry } from './window'
@@ -477,6 +484,111 @@ const api: PetBridgeApi = {
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.REMINDER_LIST_ACTION, listener)
       }
+    }
+  },
+
+  /** 工作模式（独立聊天窗，2026-10-18）：发送/历史/镜像经主进程中继 */
+  work: {
+    open(): void {
+      ipcRenderer.send(IPC_WORK.OPEN)
+    },
+
+    hide(): void {
+      ipcRenderer.send(IPC_WORK.HIDE)
+    },
+
+    minimize(): void {
+      ipcRenderer.send(IPC_WORK.MINIMIZE)
+    },
+
+    ready(): void {
+      ipcRenderer.send(IPC_WORK.READY)
+    },
+
+    requestSend(payload: WorkSendRequestPayload): Promise<WorkSendResultPayload> {
+      return ipcRenderer.invoke(IPC_WORK.REQUEST_SEND, payload)
+    },
+
+    requestHistory(payload: WorkHistoryRequestPayload): Promise<WorkHistoryPayload> {
+      return ipcRenderer.invoke(IPC_WORK.REQUEST_HISTORY, payload)
+    },
+
+    interrupt(): void {
+      ipcRenderer.send(IPC_WORK.INTERRUPT)
+    },
+
+    onEvent(cb: (event: WorkMirrorEvent) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, payload: WorkMirrorEvent): void =>
+        cb(payload)
+      ipcRenderer.on(IPC_WORK.EVENT, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.EVENT, listener)
+      }
+    },
+
+    onPetReady(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on(IPC_WORK.PET_READY, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.PET_READY, listener)
+      }
+    },
+
+    reportEvent(event: WorkMirrorEvent): void {
+      ipcRenderer.send(IPC_WORK.REPORT_EVENT, event)
+    },
+
+    onSendRequest(cb: (payload: WorkSendRequestPayload) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: WorkSendRequestPayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_WORK.SEND_REQUEST, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.SEND_REQUEST, listener)
+      }
+    },
+
+    sendResult(payload: WorkSendResultPayload): void {
+      ipcRenderer.send(IPC_WORK.SEND_RESULT, payload)
+    },
+
+    onHistoryRequest(cb: (payload: WorkHistoryRequestPayload) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: WorkHistoryRequestPayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_WORK.HISTORY_REQUEST, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.HISTORY_REQUEST, listener)
+      }
+    },
+
+    reportHistory(payload: WorkHistoryPayload): void {
+      ipcRenderer.send(IPC_WORK.HISTORY, payload)
+    },
+
+    onInterrupt(cb: () => void): () => void {
+      const listener = (): void => cb()
+      ipcRenderer.on(IPC_WORK.INTERRUPT, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.INTERRUPT, listener)
+      }
+    },
+
+    onPresence(cb: (payload: WorkPresencePayload) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: WorkPresencePayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_WORK.PRESENCE, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.PRESENCE, listener)
+      }
+    },
+
+    getPresence(): Promise<WorkPresencePayload> {
+      return ipcRenderer.invoke(IPC_WORK.GET_PRESENCE)
     }
   },
 

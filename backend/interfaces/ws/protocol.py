@@ -75,12 +75,26 @@ class AttachmentRefData(EventData):
     name: str = ""
 
 
+class UserMessageOptions(EventData):
+    """单轮对话选项（工作模式，2026-10-18）。
+
+    - ``think``：本轮切到「深度思考模型」并展示推理流；
+    - ``search``：本轮是否提供联网工具（False 时移除 web_search / web_fetch，
+      其余工具不受影响）。
+    旧客户端不传 = None，行为与之前完全一致（允许搜索、不切模型）。
+    """
+
+    think: bool = False
+    search: bool = True
+
+
 class UserMessageData(EventData):
-    """用户文字输入；可携带本轮附件（文件分析 P1）。"""
+    """用户文字输入；可携带本轮附件（文件分析 P1）与单轮选项（工作模式）。"""
 
     text: str
     session_id: str | None = None
     attachments: list[AttachmentRefData] = Field(default_factory=list)
+    options: UserMessageOptions | None = None
 
 
 class PingData(EventData):
@@ -254,6 +268,17 @@ class ReplyStartData(EventData):
     """一轮回复开始。"""
 
     message_id: str
+
+
+class ReasoningData(EventData):
+    """推理模型（如 deepseek-reasoner）的思考过程增量。
+
+    在工作模式窗口折叠展示（「已思考」）；教学黑板/宠物气泡不消费。
+    只有网关返回 ``delta.reasoning_content`` 时才有该事件。
+    """
+
+    message_id: str
+    text: str
 
 
 class TokenData(EventData):
@@ -503,6 +528,7 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "state": StateData,
     "behavior": BehaviorData,
     "reply_start": ReplyStartData,
+    "reasoning": ReasoningData,
     "token": TokenData,
     "sentence": SentenceData,
     "emotion": EmotionData,

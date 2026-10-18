@@ -77,6 +77,15 @@ export default function TrayMenu(): ReactElement {
         type="button"
         role="menuitem"
         className="tray-menu-item"
+        data-testid="tray-menu-work"
+        onClick={() => fire('work')}
+      >
+        工作模式
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="tray-menu-item"
         data-testid="tray-menu-settings"
         onClick={() => fire('settings')}
       >

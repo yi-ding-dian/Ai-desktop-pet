@@ -20,6 +20,8 @@ import type { WsClient } from '../../../shared/ws-client'
 import { playPetReaction, setPetState } from '../controller'
 // 教学模式本地镜像（P5 §7.5；放在零依赖的 state.ts，避免 pet ↔ teaching 循环依赖）
 import { isTeachingMode } from '../../teaching/state'
+// 工作模式本地镜像（2026-10-18；同样零依赖，避免 pet ↔ work 循环依赖）
+import { isWorkModeActive } from '../../work/state'
 
 /** 行为执行状态（供状态栏展示：名称 + 参数摘要） */
 export interface BehaviorStatus {
@@ -102,13 +104,19 @@ export class BehaviorExecutor {
 
   /** 收到 behavior 指令（新指令抢占进行中的旧行为——防御性） */
   handle(data: BehaviorData): void {
-    // 教学模式防御（P5 §7.5.4）：本轮后端尚未接 set_mode——若仍收到自主行为指令，
-    // 不动窗口不播动作、不进入执行流程，立即按"被打断"回报（引擎照常记账/冷却，讲课期间不打扰）。
-    // 本地标记由主进程 onState 广播镜像维护（教学域 state.ts）；非教学模式恒为 false，走既有路径。
-    if (isTeachingMode()) {
+    // 教学模式/工作模式防御（P5 §7.5.4、2026-10-18）：后端尚未接 set_mode——若仍收到
+    // 自主行为指令，不动窗口不播动作、不进入执行流程，立即按"被打断"回报（引擎照常记账/
+    // 冷却，讲课/工作时宠物要待在依附位不打扰）。本地标记由主进程广播镜像维护
+    // （teaching/state.ts、work/state.ts）；两种模式外恒为 false，走既有路径。
+    const quietMode = isTeachingMode()
+      ? '教学模式'
+      : isWorkModeActive()
+        ? '工作模式'
+        : null
+    if (quietMode !== null) {
       const sent = this.client.send('behavior_done', { id: data.id, interrupted: true })
       devLog(
-        `教学模式中收到行为 ${data.name}（${data.id}）：跳过执行，behavior_done{interrupted} 上报=${sent}`
+        `${quietMode}中收到行为 ${data.name}（${data.id}）：跳过执行，behavior_done{interrupted} 上报=${sent}`
       )
       return
     }

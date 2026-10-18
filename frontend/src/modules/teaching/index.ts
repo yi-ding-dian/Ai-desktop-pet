@@ -13,6 +13,7 @@
  */
 import { getPetBridge } from '../../shared/pet-bridge'
 import type { WsClient } from '../../shared/ws-client'
+import type { UserMessageOptions } from '../../shared/protocol'
 import type {
   TeachingEnterReason,
   TeachingMirrorEvent,
@@ -188,7 +189,8 @@ const ENTER_KEYWORDS = /开始教学|教学模式/
 export function sendUserMessage(
   client: WsClient,
   text: string,
-  attachments?: readonly UserAttachment[]
+  attachments?: readonly UserAttachment[],
+  options?: UserMessageOptions | null
 ): boolean {
   // ① 关键词：必须在发送/镜像之前——"开始教学"之后的消息才进入镜像链路
   if (EXIT_KEYWORDS.test(text)) {
@@ -199,7 +201,12 @@ export function sendUserMessage(
 
   // ② 照常发往后端（消息本身不受教学模式影响）；附件只传路径/显示名
   const refs = attachments?.map((item) => ({ path: item.path, name: item.name }))
-  const payload = refs && refs.length > 0 ? { text, attachments: refs } : { text }
+  const payload = {
+    text,
+    ...(refs && refs.length > 0 ? { attachments: refs } : {}),
+    // 工作模式的单轮开关；宠物胶囊/黑板路径不传 = 旧行为
+    ...(options ? { options } : {})
+  }
   if (!client.send('user_message', payload)) return false
 
   // 回复气泡空闲计时重置：旧气泡保留到新回复替换，30s 从"发送新消息"重新算起

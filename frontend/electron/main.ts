@@ -26,6 +26,7 @@ import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
 import { destroySettings, initSettings } from './settings'
 import { destroyBubble, initBubble } from './bubble'
 import { destroyReminderList, initReminderList } from './reminder-list'
+import { destroyWork, initWork } from './work'
 import { destroyFileSelection, initFileSelection } from './files'
 import { applyWindowsAppIdentity } from './platform'
 import { PET_WINDOW_SIZE, type PlatformWindow } from './window'
@@ -221,6 +222,8 @@ if (!app.requestSingleInstanceLock()) {
     // 打开设置时宠物 relocate 到设置窗下沿、保存/关闭回位——需要宠物窗引用，同 teaching 域）；
     // 设置窗口本身懒创建（首次打开时建立，单例）
     initSettings(petWin)
+    // 工作模式（2026-10-18）：独立聊天窗——窗口懒创建；发送/历史/镜像经本域中继到宠物窗
+    initWork(petWin)
     // 气泡窗域（气泡系统第一步）：注册 IPC（宠物窗右键 → BUBBLE_REQUEST_OPEN；气泡窗
     // ready/report-size/action/closed → 定位/调窗/动作分发）——气泡窗懒创建（首次弹出时建立，
     // hide 复用；右键重复弹不重窗）
@@ -304,6 +307,8 @@ if (!app.requestSingleInstanceLock()) {
     destroyTeaching()
     // 设置窗口（若存在）直接销毁并清引用
     destroySettings()
+    // 工作模式窗（若存在）直接销毁并清引用
+    destroyWork()
     // 气泡窗（若存在）直接销毁（退场动画不等待——正常退出不播动画）
     destroyBubble()
     // 提醒列表窗（若存在）直接销毁

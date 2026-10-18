@@ -43,6 +43,18 @@ def build_default_registry(
             ack="好嘞，设置给你开好啦~ 改完记得保存哦",
         )
     )
+    registry.register(
+        ToolSpec(
+            name="open_work",
+            description=(
+                "打开工作模式聊天窗（完整对话记录、历史导航、深度思考/联网搜索开关；"
+                "用户想展开长对话、回看历史或认真处理一件事时使用）"
+            ),
+            parameters={"type": "object", "properties": {}},
+            executor="frontend",
+            ack="好，工作台给你打开啦~",
+        )
+    )
     if reminders is not None:
         _register_reminder_tools(registry, reminders)
     if notebook is not None:

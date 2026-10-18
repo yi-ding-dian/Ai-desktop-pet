@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
 from loguru import logger
 from starlette.websockets import WebSocketState
 
-from backend.application.chat_pipeline import ChatPipeline
+from backend.application.chat_pipeline import ChatPipeline, TurnOptions
 from backend.application.session import SessionManager
 from backend.application.settings_service import ConfigInvalid, SettingsService
 from backend.interfaces.ws.auth import verify_token
@@ -297,6 +297,13 @@ def build_dispatcher(
                 user_text=text,
                 voice=ctx.voice,
                 attachments=attachments,
+                options=(
+                    TurnOptions(
+                        think=data.options.think, search=data.options.search
+                    )
+                    if data.options is not None
+                    else None
+                ),
             )
         )
 

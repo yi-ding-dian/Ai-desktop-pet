@@ -64,6 +64,13 @@ const TOOL_EXECUTORS = new Map<string, ToolExecutor>([
     }
   ],
   [
+    'open_work',
+    () => {
+      devLog('open_work → 请求打开工作模式窗口')
+      getPetBridge().work?.open?.()
+    }
+  ],
+  [
     'open_item',
     async (args) => {
       const kind = str(args, 'kind')

@@ -52,11 +52,15 @@ class Chunk:
 
     ``tool_delta``：工具调用分片（provider 收到时携带，与 ``text`` 可同帧共存；
     未携带工具调用能力的 provider / 请求不带 tools 时恒为 None）。
+    ``reasoning``：推理模型的思考过程增量（如 ``delta.reasoning_content``）；
+    非推理模型恒为空串。与 ``text`` 可同帧共存——provider 会先产出 reasoning
+    chunk，再产出正文 chunk。
     """
 
-    text: str
+    text: str = ""
     finished: bool = False
     tool_delta: ToolCallDelta | None = None
+    reasoning: str = ""
 
 
 @dataclass(frozen=True)

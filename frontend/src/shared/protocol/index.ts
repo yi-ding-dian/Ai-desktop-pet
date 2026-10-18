@@ -47,11 +47,23 @@ export interface AttachmentRef {
   name?: string
 }
 
-/** 用户文字输入（可携带本轮附件） */
+/**
+ * 单轮对话选项（工作模式，2026-10-18）。
+ * 缺省 = 旧行为（允许联网、不切思考模型）。
+ */
+export interface UserMessageOptions {
+  /** 本轮切到「深度思考模型」并展示推理流 */
+  think?: boolean
+  /** 本轮是否向模型提供联网工具（false = 移除 web_search / web_fetch） */
+  search?: boolean
+}
+
+/** 用户文字输入（可携带本轮附件与单轮选项） */
 export interface UserMessageData {
   text: string
   session_id?: string | null
   attachments?: AttachmentRef[]
+  options?: UserMessageOptions | null
 }
 
 /** 心跳（§3.6：前端每 30s 发 ping，服务端回 pong） */
@@ -97,10 +109,10 @@ export interface TestLlmData {
   key?: string | null
 }
 
-/** 拉取历史消息（气泡回填） */
+/** 拉取历史消息（气泡回填）；session_id 缺省 = 当前连接会话 */
 export interface LoadHistoryData {
-  session_id: string
-  limit: number
+  session_id?: string
+  limit?: number
 }
 
 /** 行为执行完成/被中断回报（Phase 3） */
@@ -275,6 +287,15 @@ export interface BehaviorData {
 /** 一轮回复开始 */
 export interface ReplyStartData {
   message_id: string
+}
+
+/**
+ * 推理模型思考过程增量（工作模式折叠展示）。
+ * 只有网关返回 `delta.reasoning_content` 时才有；不进入正文/TTS。
+ */
+export interface ReasoningData {
+  message_id: string
+  text: string
 }
 
 /** 流式增量文本 */
@@ -452,6 +473,8 @@ export interface ServerEventMap {
   state: StateData
   behavior: BehaviorData
   reply_start: ReplyStartData
+  /** 推理模型思考增量（工作模式「已思考」折叠块） */
+  reasoning: ReasoningData
   token: TokenData
   sentence: SentenceData
   emotion: EmotionData

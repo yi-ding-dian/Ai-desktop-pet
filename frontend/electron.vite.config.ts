@@ -42,7 +42,9 @@ export default defineConfig({
           // 第六渲染入口：气泡窗（bubble 域；用户定稿"气泡系统"第一步——右键菜单/清空确认/说话气泡）
           bubble: resolve(__dirname, 'bubble.html'),
           // 第七渲染入口：提醒列表窗（reminder-list 域；未读提醒面板，2026-10-18）
-          'reminder-list': resolve(__dirname, 'reminder-list.html')
+          'reminder-list': resolve(__dirname, 'reminder-list.html'),
+          // 第八渲染入口：工作模式聊天窗（work 域；完整对话记录 + 历史导航 + 单轮开关，2026-10-18）
+          work: resolve(__dirname, 'work.html')
         }
       }
     }

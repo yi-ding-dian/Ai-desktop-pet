@@ -132,7 +132,10 @@ def test_runtime_apply_llm_swaps_provider() -> None:
 def test_runtime_assembles_default_tool_registry() -> None:
     """Runtime 装配内置工具注册表（§4.7）：main 构造 ChatPipeline 时注入。"""
     runtime = Runtime(AppConfig())
-    assert [spec.name for spec in runtime.tools.all()] == ["open_settings"]
+    assert [spec.name for spec in runtime.tools.all()] == [
+        "open_settings",
+        "open_work",
+    ]
 
 
 def test_runtime_apply_voice_matrix() -> None:

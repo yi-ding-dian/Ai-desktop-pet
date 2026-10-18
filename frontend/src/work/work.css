@@ -1,0 +1,573 @@
+/* ============================================================================
+ * 工作模式窗口（work 域，2026-10-18）
+ *  - 窗口本体透明 + 无边框；圆角/底色/细边框由 .work-root 画（套件 solid 变体）；
+ *  - 布局：标题栏 / 消息滚动区 + 右侧导航 / 底部输入条；
+ *  - Markdown 正文复用 shared/markdown/markdown.css。
+ * ========================================================================= */
+
+@import '../shared/theme/theme.css';
+@import '../shared/ui/ui.css';
+@import '../shared/markdown/markdown.css';
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+.work-root {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  overflow: hidden;
+}
+
+.work-root .pui-titlebar {
+  flex: none;
+}
+
+/* ---------------------------------------------------------------- 主体 */
+
+.work-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.work-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 16px 30px 18px 26px;
+  scroll-behavior: auto;
+}
+
+.work-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+/* ---------------------------------------------------------------- 消息 */
+
+.work-msg {
+  min-width: 0;
+  user-select: text;
+}
+
+.work-msg-user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 用户气泡：淡强调底，右侧；保留换行 */
+.work-user-bubble {
+  max-width: 82%;
+  padding: 9px 14px;
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 22%, transparent);
+  border-radius: 16px 16px 4px 16px;
+  background: color-mix(in srgb, var(--ui-accent) 13%, var(--ui-bg));
+  color: var(--ui-fg);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.work-msg-assistant {
+  position: relative;
+  font-size: 14.5px;
+  line-height: 1.78;
+}
+
+.work-markdown {
+  font-size: 14.5px;
+  line-height: 1.78;
+}
+
+.work-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ui-fg-faint);
+}
+
+/* 流式光标与等待点 */
+.work-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 2px;
+  border-radius: 2px;
+  background: var(--ui-accent);
+  vertical-align: -2px;
+  animation: work-cursor 1s steps(2, start) infinite;
+}
+
+@keyframes work-cursor {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.work-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 2px;
+}
+
+.work-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-fg-faint);
+  animation: work-dot 1.2s ease-in-out infinite;
+}
+
+.work-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.work-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes work-dot {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+/* 点击导航后的闪烁高亮 */
+@keyframes work-flash {
+  0% {
+    background-color: color-mix(in srgb, var(--ui-link) 18%, transparent);
+  }
+  100% {
+    background-color: color-mix(in srgb, var(--ui-link) 0%, transparent);
+  }
+}
+
+.work-flash {
+  border-radius: 10px;
+  animation: work-flash 0.7s ease-out 1;
+}
+
+/* ---------------------------------------------------------------- 思考块 */
+
+.work-thinking {
+  margin-bottom: 8px;
+}
+
+.work-thinking-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ui-fg-dim);
+  font-family: var(--ui-font-sans);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.work-thinking-toggle:hover {
+  background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
+.work-thinking-caret {
+  font-size: 10px;
+  color: var(--ui-fg-faint);
+}
+
+.work-thinking-text {
+  margin: 6px 0 2px;
+  padding: 2px 0 2px 12px;
+  max-height: 260px;
+  overflow: auto;
+  border-left: 2px solid var(--ui-border);
+  color: var(--ui-fg-dim);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-scrollbar) transparent;
+}
+
+/* ---------------------------------------------------------------- 右侧导航 */
+
+.work-navigator {
+  position: absolute;
+  top: 12px;
+  /* 让开右侧滚动条（8px），否则刻度会盖住滚动条拖拽区 */
+  right: 12px;
+  bottom: 12px;
+  width: 16px;
+  z-index: 2;
+  /* 整条轨道可悬浮（进入后所有刻度提亮）；不覆盖右侧 8px 滚动条 */
+  pointer-events: auto;
+}
+
+.work-nav-tick {
+  position: absolute;
+  right: 0;
+  width: 16px;
+  height: 14px;
+  margin-top: -5px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* 默认半透明的短横线：一条 = 一条用户提问 */
+.work-nav-tick::before {
+  content: '';
+  position: absolute;
+  right: 2px;
+  top: 6px;
+  width: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ui-fg-dim);
+  opacity: 0.3;
+  transition: width 0.12s, opacity 0.12s, background 0.12s;
+}
+
+/* 鼠标进入导航区域：整列稍微提亮，提示这里可以交互 */
+.work-navigator:hover .work-nav-tick::before {
+  opacity: 0.6;
+}
+
+/* 悬浮到某一条：高亮并加长；左侧浮出该条消息内容 */
+.work-nav-tick:hover::before {
+  width: 14px;
+  opacity: 1;
+  background: var(--ui-fg);
+}
+
+.work-nav-tick-active::before {
+  width: 14px;
+  opacity: 1;
+  background: var(--ui-accent);
+}
+
+/* hover 预览：浮在刻度左侧 */
+.work-nav-preview {
+  position: absolute;
+  right: 22px;
+  top: -6px;
+  /* 按钮只有 16px 宽：必须显式 max-content，否则绝对定位会按按钮宽度折成竖排 */
+  width: max-content;
+  max-width: 320px;
+  padding: 6px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-panel);
+  color: var(--ui-fg);
+  font-family: var(--ui-font-sans);
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(4px);
+  transition: opacity 0.12s, transform 0.12s, visibility 0.12s;
+  pointer-events: none;
+}
+
+.work-nav-tick:hover .work-nav-preview {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+}
+
+/* ---------------------------------------------------------------- 输入条 */
+
+.work-composer {
+  flex: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 18px 12px;
+  border-top: 1px solid var(--ui-border-soft);
+  background: var(--ui-bg-soft);
+}
+
+.work-input-shell {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--ui-input-border);
+  border-radius: 14px;
+  background: var(--ui-input-bg);
+  transition: border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.work-input-shell:focus-within {
+  border-color: var(--ui-accent);
+  box-shadow: var(--ui-focus-ring);
+}
+
+/* 嵌在外壳里：去掉自己的边框/底色，避免双重描边 */
+.work-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 2px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.work-input:focus {
+  border: none;
+  box-shadow: none;
+}
+
+.work-input-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.work-attach,
+.work-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ui-fg-dim);
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease-standard),
+    color var(--ui-duration-fast) var(--ui-ease-standard), opacity var(--ui-duration-fast);
+}
+
+.work-attach:hover {
+  background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
+.work-send {
+  background: var(--ui-accent);
+  color: var(--ui-accent-fg);
+}
+
+.work-send:hover:not(:disabled) {
+  background: var(--ui-accent-strong);
+}
+
+.work-send:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.work-send-stop {
+  background: color-mix(in srgb, var(--ui-danger) 16%, var(--ui-panel));
+  color: var(--ui-danger);
+}
+
+.work-send-stop:hover {
+  background: color-mix(in srgb, var(--ui-danger) 26%, var(--ui-panel));
+}
+
+/* ---------------------------------------------------------------- 附件 / 提示 */
+
+.work-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.work-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  padding: 3px 6px 3px 9px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-panel-faint);
+  font-size: 12px;
+  color: var(--ui-fg-dim);
+}
+
+.work-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-attachment-remove {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ui-fg-faint);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.work-attachment-remove:hover {
+  background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
+.work-composer-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 9px;
+  background: var(--ui-panel-faint);
+  color: var(--ui-fg-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.work-composer-notice-warn {
+  border-color: color-mix(in srgb, var(--ui-warm) 40%, transparent);
+  color: var(--ui-warm);
+}
+
+.work-composer-notice-error {
+  border-color: color-mix(in srgb, var(--ui-danger) 40%, transparent);
+  color: var(--ui-danger);
+}
+
+.work-composer-notice-close {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.work-composer-notice-close:hover {
+  background: var(--ui-hover);
+}
+
+.work-drop-hint {
+  position: absolute;
+  inset: 6px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--ui-accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ui-accent-soft) 80%, transparent);
+  color: var(--ui-accent);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- 模式开关 */
+
+.work-modes {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.work-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-panel-faint);
+  color: var(--ui-fg-dim);
+  font-family: var(--ui-font-sans);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease-standard),
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    color var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.work-mode:hover {
+  background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
+.work-mode-on {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.work-modes-hint {
+  font-size: 11.5px;
+  color: var(--ui-fg-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .work-cursor,
+  .work-dots span,
+  .work-flash {
+    animation: none;
+  }
+
+  .work-nav-preview {
+    transition: none;
+  }
+}

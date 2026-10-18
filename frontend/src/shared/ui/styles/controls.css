@@ -223,6 +223,15 @@
   cursor: pointer;
 }
 
+/* 多行输入：字体/边框/焦点与 .pui-input 一致；默认禁用手动缩放 */
+.pui-textarea {
+  display: block;
+  min-height: 36px;
+  line-height: 1.5;
+  resize: none;
+  overflow-y: hidden;
+}
+
 /* 深色下原生下拉项的底色（Chromium 支持） */
 .pui-select option {
   background: var(--ui-bg);

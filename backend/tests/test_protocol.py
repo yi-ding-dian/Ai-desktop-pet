@@ -168,6 +168,7 @@ SERVER_MIN_DATA: dict[str, dict] = {
     "state": {"state": "idle"},
     "behavior": {"id": "b1", "name": "walk"},
     "reply_start": {"message_id": "m1"},
+    "reasoning": {"message_id": "m1", "text": "先想想…"},
     "token": {"message_id": "m1", "text": "a"},
     "sentence": {"message_id": "m1", "index": 0, "text": "a"},
     "emotion": {"message_id": "m1", "emotion": "happy", "intensity": 1.0},
@@ -209,6 +210,43 @@ def test_all_server_events_serializable() -> None:
         payload = model_cls.model_validate(data)
         obj = json.loads(serialize_envelope(make_envelope(type_name, payload)))
         assert obj["type"] == type_name
+
+
+# ---------------------------------------------------------------- 工作模式单轮选项（2026-10-18）
+
+
+def test_user_message_options_parsed() -> None:
+    """单轮选项必须显式声明在 UserMessageData 上（EventData 默认忽略未知字段）。"""
+    msg = parse_client_message(
+        _raw(
+            "user_message",
+            {"text": "hi", "options": {"think": True, "search": False}},
+        )
+    )
+    data = msg.data
+    assert isinstance(data, UserMessageData)
+    assert data.options is not None
+    assert data.options.think is True
+    assert data.options.search is False
+
+
+def test_user_message_options_defaults_and_null() -> None:
+    """不传 / null 都容忍：旧客户端行为不变（允许搜索、不切模型）。"""
+    absent = parse_client_message(_raw("user_message", {"text": "hi"}))
+    assert isinstance(absent.data, UserMessageData)
+    assert absent.data.options is None
+
+    nulled = parse_client_message(_raw("user_message", {"text": "hi", "options": None}))
+    assert isinstance(nulled.data, UserMessageData)
+    assert nulled.data.options is None
+
+    defaults = parse_client_message(
+        _raw("user_message", {"text": "hi", "options": {}})
+    )
+    assert isinstance(defaults.data, UserMessageData)
+    assert defaults.data.options is not None
+    assert defaults.data.options.think is False
+    assert defaults.data.options.search is True
 
 
 # ---------------------------------------------------------------- 二进制音频帧（§3.5）

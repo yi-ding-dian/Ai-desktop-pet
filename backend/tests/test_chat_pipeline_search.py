@@ -47,6 +47,9 @@ class Sink:
     async def reply_start(self, message_id: str) -> None:
         self.events.append(("reply_start", {"message_id": message_id}))
 
+    async def reasoning(self, message_id: str, text: str) -> None:
+        self.events.append(("reasoning", {"message_id": message_id, "text": text}))
+
     async def token(self, message_id: str, text: str) -> None:
         self.events.append(("token", {"text": text}))
 

@@ -338,11 +338,21 @@ def test_stream_tool_calls_only_yields_empty_text_chunk() -> None:
     assert carried[2].tool_delta == ToolCallDelta(index=0, arguments='": 1}')
 
 
-def test_stream_frame_without_content_or_tool_calls_not_yielded() -> None:
-    """content 与 tool_calls 均无的帧（reasoning / 心跳）：不出帧。"""
+def test_stream_reasoning_frames_yielded_but_heartbeat_skipped() -> None:
+    """纯 reasoning 帧以 Chunk.reasoning 透传；content/tool/reasoning 全无的心跳帧不出。"""
     client = FakeClient([make_chunk(reasoning="思考中"), make_chunk()])
     chunks = collect(make_provider(client))
-    assert [c for c in chunks if not c.finished] == []
+    alive = [c for c in chunks if not c.finished]
+    assert [c.reasoning for c in alive] == ["思考中"]
+    assert all(c.text == "" for c in alive)
+
+
+def test_stream_reasoning_before_text_when_same_frame() -> None:
+    """同一帧同时带 reasoning 与 content：先出 reasoning，再出正文。"""
+    client = FakeClient([make_chunk(reasoning="先想", content="再答")])
+    chunks = collect(make_provider(client))
+    alive = [c for c in chunks if not c.finished]
+    assert [(c.reasoning, c.text) for c in alive] == [("先想", ""), ("", "再答")]
 
 
 def test_stream_multiple_tool_calls_in_one_frame_all_preserved() -> None:

@@ -231,6 +231,49 @@ export const IPC_REMINDER_LIST = {
   OPEN: 'reminder-list:open'
 } as const
 
+/**
+ * 工作模式（2026-10-18）：独立聊天窗。
+ *
+ * 数据流与教学黑板同型——宠物窗是唯一 WS 连接方，工作窗经主进程中继收发：
+ *  - 工作窗 → 主 → 宠物窗：发送 / 打断 / 历史请求；
+ *  - 宠物窗 → 主 → 工作窗：对话镜像 / 历史响应；
+ *  - 主 → 宠物窗：窗口存在性（决定是否镜像）。
+ */
+export const IPC_WORK = {
+  /** 渲染/菜单 → 主：打开工作窗（单例，已存在则聚焦） */
+  OPEN: 'work:open',
+  /** 工作窗 → 主：隐藏（不销毁，保留记录） */
+  HIDE: 'work:hide',
+  /** 工作窗 → 主：最小化 */
+  MINIMIZE: 'work:minimize',
+  /** 工作窗 → 主：渲染就绪（主进程在此之前缓冲事件） */
+  READY: 'work:ready',
+  /** 工作窗 → 主：发送（invoke → WorkSendResultPayload） */
+  REQUEST_SEND: 'work:request-send',
+  /** 主 → 宠物窗：发送请求（宠物面执行 sendUserMessage） */
+  SEND_REQUEST: 'work:send-request',
+  /** 宠物窗 → 主：发送结果（回给 invoke） */
+  SEND_RESULT: 'work:send-result',
+  /** 工作窗 → 主 → 宠物窗：打断 */
+  INTERRUPT: 'work:interrupt',
+  /** 宠物窗 → 主：对话镜像事件 */
+  REPORT_EVENT: 'work:report-event',
+  /** 主 → 工作窗：对话镜像事件 / 历史响应 */
+  EVENT: 'work:event',
+  /** 工作窗 → 主：历史请求（invoke → WorkHistoryPayload） */
+  REQUEST_HISTORY: 'work:request-history',
+  /** 主 → 宠物窗：历史请求 */
+  HISTORY_REQUEST: 'work:history-request',
+  /** 宠物窗 → 主：历史响应 */
+  HISTORY: 'work:history',
+  /** 主 → 宠物窗：工作窗是否存在（true 时宠物面才镜像） */
+  PRESENCE: 'work:presence',
+  /** 宠物窗 → 主：查询工作窗当前是否存在（宠物窗重载后补状态，invoke → WorkPresencePayload） */
+  GET_PRESENCE: 'work:get-presence',
+  /** 主 → 工作窗：宠物窗重载完成（清空旧记录、重新拉历史） */
+  PET_READY: 'work:pet-ready'
+} as const
+
 /** 尾巴朝向：down = 尾巴在气泡左下角（气泡悬于锚点上方，指向下方的宠物）；up = 翻向（气泡在锚点下方） */
 export type BubbleTail = 'down' | 'up'
 
@@ -424,6 +467,87 @@ export type TeachingBoardInbox =
   /** expand = 卷出恢复；fold = 折叠成角标；exit = 退出教学模式（滑出收起） */
   | { type: 'visibility'; action: 'expand' | 'fold' | 'exit' }
 
+// ------------------------------------------------------------------ 工作模式（2026-10-18）
+
+/** 工作窗单轮选项（与后端 UserMessageOptions 对齐） */
+export interface WorkTurnOptions {
+  /** 深度思考：切思考模型并展示推理流 */
+  think: boolean
+  /** 智能搜索：false = 本轮不提供 web_search / web_fetch */
+  search: boolean
+}
+
+/** 工作窗发送请求（工作窗 → 主 → 宠物窗） */
+export interface WorkSendRequestPayload {
+  requestId: string
+  text: string
+  attachments: { path: string; name: string }[]
+  options: WorkTurnOptions
+}
+
+/** 发送结果（宠物窗 → 主 → invoke 回执） */
+export interface WorkSendResultPayload {
+  requestId: string
+  ok: boolean
+  reason?: string
+}
+
+/** 对话镜像事件（宠物窗 → 主 → 工作窗） */
+export type WorkMirrorEvent =
+  | { kind: 'user_message'; localId: string; text: string; sentAt: number }
+  | { kind: 'reply_start'; messageId: string }
+  | { kind: 'reasoning'; messageId: string; text: string }
+  | { kind: 'token'; messageId: string; text: string }
+  | {
+      kind: 'reply_end'
+      messageId: string
+      fullText: string
+      interrupted: boolean
+    }
+  | { kind: 'state'; state: string }
+  | { kind: 'emotion'; messageId: string; emotion: string; intensity: number }
+  | { kind: 'notice'; code: string; message: string; level?: string }
+
+/** 历史消息（后端 messages 表行） */
+export interface WorkHistoryMessage {
+  id: number | string
+  role: string
+  content: string
+  created_at?: number
+  emotion?: string | null
+}
+
+/** 历史请求载荷（session_id 省略 = 当前连接会话） */
+export interface WorkHistoryRequestPayload {
+  requestId: string
+  limit?: number
+}
+
+/** 历史响应（宠物窗 → 主 → invoke 回执） */
+export interface WorkHistoryPayload {
+  requestId: string
+  ok: boolean
+  reason?: string
+  messages: WorkHistoryMessage[]
+  /** 发请求后缓冲的镜像事件（按序合并，避免与历史重复/丢失） */
+  bufferedEvents: WorkMirrorEvent[]
+  /** 正在流式的助手消息快照（中途打开工作窗时续上） */
+  live?: {
+    messageId: string
+    text: string
+    reasoning: string
+    startedAt: number
+  }
+}
+
+/** 工作窗状态（主 → 宠物窗） */
+export interface WorkPresencePayload {
+  /** 窗口是否存在（决定是否镜像对话；隐藏期间仍为 true） */
+  open: boolean
+  /** 是否正在工作（窗口可见且未最小化）——宠物依附/自主行为抑制的依据 */
+  active: boolean
+}
+
 
 // ------------------------------------------------------------------ 设置向导宠物（P4，设计文档 §7.6.6）与自绘托盘菜单（§7.6.4）
 
@@ -437,7 +561,12 @@ export interface SettingsVisibilityPayload {
 }
 
 /** 自绘托盘菜单项动作（菜单窗 → 主；主进程执行后收起菜单窗） */
-export type TrayMenuAction = 'toggle-pet' | 'teaching' | 'settings' | 'quit'
+export type TrayMenuAction =
+  | 'toggle-pet'
+  | 'teaching'
+  | 'work'
+  | 'settings'
+  | 'quit'
 
 /** 后端子进程状态（设计文档 §5.2 状态机；IPC 广播取值） */
 export type BackendState = 'starting' | 'ready' | 'failed' | 'stopped'
@@ -758,6 +887,49 @@ export interface PetBridgeApi {
     onOpen(cb: (payload: ReminderListOpenPayload) => void): () => void
     /** 宠物面：订阅列表页用户动作（ack / ack-all / expand）；返回取消订阅函数 */
     onAction(cb: (payload: ReminderListActionPayload) => void): () => void
+  }
+  /**
+   * 工作模式（独立聊天窗，2026-10-18）。
+   *  - 宠物面/托盘/菜单：open；
+   *  - 工作窗：hide/minimize/ready/requestSend/requestHistory/interrupt + onEvent/onPetReady；
+   *  - 宠物面：onSendRequest/sendResult/onHistoryRequest/reportHistory/onInterrupt/onPresence。
+   * 方法与窗口不匹配的调用在 main 侧按 sender 过滤，是安全空操作。
+   */
+  work: {
+    /** 打开工作窗（单例；已存在则 show + focus） */
+    open(): void
+    /** 工作窗：隐藏（保留记录与滚动位置） */
+    hide(): void
+    /** 工作窗：最小化 */
+    minimize(): void
+    /** 工作窗：渲染就绪 */
+    ready(): void
+    /** 工作窗：发送一条用户消息（invoke → 结果） */
+    requestSend(payload: WorkSendRequestPayload): Promise<WorkSendResultPayload>
+    /** 工作窗：请求历史回填（invoke → 历史 + 缓冲事件 + live 快照） */
+    requestHistory(payload: WorkHistoryRequestPayload): Promise<WorkHistoryPayload>
+    /** 工作窗：打断当前回复 */
+    interrupt(): void
+    /** 工作窗：订阅镜像事件；返回取消订阅函数 */
+    onEvent(cb: (event: WorkMirrorEvent) => void): () => void
+    /** 工作窗：订阅“宠物窗重载完成”（应清空旧记录并重新拉历史）；返回取消订阅函数 */
+    onPetReady(cb: () => void): () => void
+    /** 宠物面：上报镜像事件（主进程转发给工作窗；工作窗存在时才调用） */
+    reportEvent(event: WorkMirrorEvent): void
+    /** 宠物面：订阅发送请求（工作窗打字 → 主进程路由 → 宠物面执行 WS 发送）；返回取消订阅函数 */
+    onSendRequest(cb: (payload: WorkSendRequestPayload) => void): () => void
+    /** 宠物面：回执发送结果 */
+    sendResult(payload: WorkSendResultPayload): void
+    /** 宠物面：订阅历史请求；返回取消订阅函数 */
+    onHistoryRequest(cb: (payload: WorkHistoryRequestPayload) => void): () => void
+    /** 宠物面：回执历史（含缓冲事件与 live 快照） */
+    reportHistory(payload: WorkHistoryPayload): void
+    /** 宠物面：订阅打断请求；返回取消订阅函数 */
+    onInterrupt(cb: () => void): () => void
+    /** 宠物面：订阅工作窗存在性；返回取消订阅函数 */
+    onPresence(cb: (payload: WorkPresencePayload) => void): () => void
+    /** 宠物面：查询工作窗当前是否存在（重载后补状态） */
+    getPresence(): Promise<WorkPresencePayload>
   }
   /** 对话域（chat） */
   chat: {
