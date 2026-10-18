@@ -39,6 +39,12 @@ export interface FormValues {
   contextTokens: string
   /** 文件分析：是否允许发送图片（需多模态模型；关闭时后端本地拒绝图片） */
   allowImages: boolean
+  /** 联网搜索（DeepSeek Search/Fetch；默认关闭，11-01 起按次计费） */
+  searchEnabled: boolean
+  /** DeepSeek 官方接口根地址（不是对话 base_url） */
+  searchBaseUrl: string
+  /** 每次搜索返回条数（字符串保存用户输入；保存时校验 1–50） */
+  searchCount: string
 }
 
 /** 空表单（等待 config 或字段缺失时的底座；布尔默认与 backend config.py 默认一致） */
@@ -57,7 +63,10 @@ export const EMPTY_FORM: FormValues = {
   memoryEnabled: true,
   fileMaxChars: '20000',
   contextTokens: '100000',
-  allowImages: true
+  allowImages: true,
+  searchEnabled: true,
+  searchBaseUrl: 'https://api.deepseek.com',
+  searchCount: '5'
 }
 
 // ------------------------------------------------------------------ 宽松读取工具
@@ -117,6 +126,7 @@ export function snapshotToForm(config: ConfigData): FormValues {
   const behavior = asObject(config.behavior)
   const memory = asObject(config.memory)
   const files = asObject(config.files)
+  const search = asObject(config.search)
 
   return {
     llmBaseUrl: asString(llm?.base_url) ?? '',
@@ -133,7 +143,10 @@ export function snapshotToForm(config: ConfigData): FormValues {
     memoryEnabled: asBool(memory?.enabled) ?? true,
     fileMaxChars: asNumberText(files?.max_chars) ?? '20000',
     contextTokens: asNumberText(llm?.context_tokens) ?? '100000',
-    allowImages: asBool(files?.allow_images) ?? true
+    allowImages: asBool(files?.allow_images) ?? true,
+    searchEnabled: asBool(search?.enabled) ?? true,
+    searchBaseUrl: asString(search?.base_url) ?? 'https://api.deepseek.com',
+    searchCount: asNumberText(search?.count) ?? '5'
   }
 }
 
@@ -192,6 +205,23 @@ export function buildPatch(
     patch.memory = { enabled: form.memoryEnabled }
   }
 
+  // 联网搜索：只提交有变化的字段；count 语法非法时不提交（save 入口会拦）
+  const searchPatch: Record<string, unknown> = {}
+  if (form.searchEnabled !== baseline.searchEnabled) {
+    searchPatch.enabled = form.searchEnabled
+  }
+  if (form.searchBaseUrl.trim() !== baseline.searchBaseUrl.trim()) {
+    searchPatch.base_url = form.searchBaseUrl.trim()
+  }
+  const searchCount = parseIntegerText(form.searchCount)
+  if (
+    searchCount !== null &&
+    searchCount !== parseIntegerText(baseline.searchCount)
+  ) {
+    searchPatch.count = searchCount
+  }
+  if (Object.keys(searchPatch).length > 0) patch.search = searchPatch
+
   // 文件分析：只提交有变化且语法合法的整数；范围校验在保存入口
   // （useSettingsController.save 的 fileMaxCharsError/contextTokensError）完成。
   const filesPatch: Record<string, unknown> = {}
@@ -220,5 +250,6 @@ export function hasChanges(form: FormValues, baseline: FormValues): boolean {
   if (parseIntegerText(form.fileMaxChars) === null) return true
   if (parseIntegerText(form.contextTokens) === null) return true
   if (parseIntegerText(form.bubbleIdleSeconds) === null) return true
+  if (parseIntegerText(form.searchCount) === null) return true
   return buildPatch(form, baseline, quiet.list) !== null
 }

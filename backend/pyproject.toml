@@ -20,6 +20,8 @@ dependencies = [
     "tomlkit",
     "python-docx>=1.1",
     "openpyxl>=3.1",
+    # DeepSeek Search / Fetch（2026-10-18）：直接用 httpx 调独立接口
+    "httpx",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +47,7 @@ packages = [
     "backend.modules.memory",
     "backend.modules.notebook",
     "backend.modules.reminders",
+    "backend.modules.search",
     "backend.modules.tools",
     "backend.modules.voice",
     "backend.modules.voice.tts",

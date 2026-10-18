@@ -633,3 +633,23 @@ button:focus-visible,
   outline: 2px solid var(--ui-accent);
   outline-offset: 1px;
 }
+
+/* 搜索分区：计费/限流说明（2026-10-18） */
+.set-search-billing {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 10px;
+  background: var(--ui-panel-faint);
+  color: var(--ui-fg-dim);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.set-search-billing strong {
+  color: var(--ui-fg);
+}
+
+.set-search-billing p {
+  margin: 4px 0 0;
+}

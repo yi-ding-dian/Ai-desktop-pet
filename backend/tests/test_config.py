@@ -239,3 +239,30 @@ def test_save_config_recovers_from_broken_file(tmp_path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     assert "#" in text  # 模板注释回来了
     assert load_config(path).llm.model == "deepseek-flash"
+
+
+def test_search_config_defaults_validation_and_missing_section(tmp_path: Path) -> None:
+    """搜索配置（2026-10-18）：默认关闭；旧 config 缺 [search] 也能读；保存会补建。"""
+    cfg = AppConfig()
+    assert cfg.search.enabled is True
+    assert cfg.search.base_url == "https://api.deepseek.com"
+    assert cfg.search.count == 5
+    assert cfg.search.need_content is False
+
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate({"search": {"count": 0}})
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate({"search": {"base_url": "ftp://example.com"}})
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate({"search": {"max_fetch_chars": 10}})
+
+    path = tmp_path / "config.toml"
+    path.write_text('[llm]\nmodel = "m"\n', encoding="utf-8")
+    loaded = load_config(path)
+    assert loaded.search.enabled is True
+    loaded.search.enabled = False
+    save_config(loaded, path)
+    text = path.read_text(encoding="utf-8")
+    assert "[search]" in text
+    assert "enabled = false" in text
+    assert load_config(path).search.enabled is False

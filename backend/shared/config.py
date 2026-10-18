@@ -92,6 +92,22 @@ max_catchup                 = 10
 os_notification_when_hidden = true
 # 二期"稍后提醒"默认分钟数（当前仅存配置）
 snooze_minutes              = 10
+
+[search]           # 联网搜索（DeepSeek Search / Fetch，2026-10-18；默认开启）
+# 打开后模型可调用 web_search / web_fetch：先搜网页、读结果，再回答。
+# 计费：Search / Fetch 各 ¥5 / 1000 次成功请求；北京时间 2026-11-01 00:00 起计费
+#（失败、无结果、超时不计费；count 不影响单次价格）。API Key 复用 [llm] 的 DeepSeek Key。
+enabled          = true
+# DeepSeek 官方接口根地址（不是对话 base_url；换网关时可改）
+base_url         = "https://api.deepseek.com"
+# 每次搜索返回几条（1–50；默认 5，控制上下文与 token）
+count            = 5
+# 是否让 Search 直接返回网页正文（默认 false：用 summary，正文交给 web_fetch）
+need_content     = false
+# 单次请求超时（秒）
+timeout_seconds  = 15
+# web_fetch 注入给模型的正文上限（字）；超出截断
+max_fetch_chars  = 6000
 """
 
 
@@ -315,6 +331,57 @@ class ReminderConfig(BaseModel):
         return value
 
 
+class SearchConfig(BaseModel):
+    """联网搜索配置（2026-10-18：DeepSeek Search / Fetch）。
+
+    - ``enabled`` 默认 **True**：联网搜索默认可用；调用会按次计费
+      （2026-11-01 00:00 北京时间起），用户可在设置 → 搜索里随时关闭；
+    - ``base_url`` 是 DeepSeek 官方接口根地址（``https://api.deepseek.com``），
+      不是对话模型的 base_url；API Key 复用 ``[llm]`` 的 DeepSeek Key；
+    - ``count`` 只控制返回条数，不影响单次价格；
+    - ``need_content`` 默认 false：Search 用 600–800 字 summary 给模型读，
+      需要正文时由 ``web_fetch`` 单独抓取（控制 token）。
+    """
+
+    enabled: bool = True
+    base_url: str = "https://api.deepseek.com"
+    count: int = 5
+    need_content: bool = False
+    timeout_seconds: int = 15
+    max_fetch_chars: int = 6000
+
+    @field_validator("base_url")
+    @classmethod
+    def _check_base_url(cls, value: str) -> str:
+        text = value.strip().rstrip("/")
+        if not text.startswith(("http://", "https://")):
+            raise ValueError("search.base_url 必须是 http:// 或 https:// 开头的地址")
+        if not text.split("://", 1)[1].split("/", 1)[0]:
+            raise ValueError("search.base_url 缺少主机名（如 https://api.deepseek.com）")
+        return text
+
+    @field_validator("count")
+    @classmethod
+    def _check_count(cls, value: int) -> int:
+        if value < 1 or value > 50:
+            raise ValueError("search.count 必须在 1–50 之间")
+        return value
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def _check_timeout(cls, value: int) -> int:
+        if value < 1 or value > 60:
+            raise ValueError("search.timeout_seconds 必须在 1–60 秒之间")
+        return value
+
+    @field_validator("max_fetch_chars")
+    @classmethod
+    def _check_max_fetch_chars(cls, value: int) -> int:
+        if value < 1_000 or value > 50_000:
+            raise ValueError("search.max_fetch_chars 必须在 1,000–50,000 之间")
+        return value
+
+
 class AppConfig(BaseModel):
     """完整配置（缺省字段自动取默认值，容忍用户手改 TOML 的遗漏）。"""
 
@@ -326,6 +393,7 @@ class AppConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     files: FileConfig = Field(default_factory=FileConfig)
     reminders: ReminderConfig = Field(default_factory=ReminderConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
 
 
 def load_config(path: Path | None = None) -> AppConfig:

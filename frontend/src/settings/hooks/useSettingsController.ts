@@ -63,6 +63,8 @@ export interface SettingsController {
   contextTokensError: string | null
   /** 回复气泡自动收起时长字段的校验错误（提交前校验） */
   bubbleIdleError: string | null
+  /** 联网搜索条数字段的校验错误（提交前校验） */
+  searchCountError: string | null
   /** 配置快照版本号（每应用一次服务端 config 事件 +1；面板据此收起瞬态编辑态，如 Key 更新框） */
   revision: number
   /** 引导模式（首启引导 §7.6.5：首次加载时 llm.base_url 为空 → 显示欢迎条 + 自动切 LLM 分区） */
@@ -101,6 +103,7 @@ export function useSettingsController(): SettingsController {
   const [fileMaxCharsError, setFileMaxCharsError] = useState<string | null>(null)
   const [contextTokensError, setContextTokensError] = useState<string | null>(null)
   const [bubbleIdleError, setBubbleIdleError] = useState<string | null>(null)
+  const [searchCountError, setSearchCountError] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
   const [guideMode, setGuideMode] = useState(false)
   const [guideDone, setGuideDone] = useState(false)
@@ -179,6 +182,7 @@ export function useSettingsController(): SettingsController {
       setFileMaxCharsError(null)
       setContextTokensError(null)
       setBubbleIdleError(null)
+      setSearchCountError(null)
       setGuideMode(false) // 保存成功 → 欢迎条消失（首启引导 §7.6.5）
       setNotice({ kind: 'success', text: '已保存生效' })
       // 设置向导（§7.6.6）：保存成功上报主进程 → 宠物萌语气泡收起、飞回原位
@@ -327,6 +331,7 @@ export function useSettingsController(): SettingsController {
       if (key === 'fileMaxChars') setFileMaxCharsError(null)
       if (key === 'contextTokens') setContextTokensError(null)
       if (key === 'bubbleIdleSeconds') setBubbleIdleError(null)
+      if (key === 'searchCount') setSearchCountError(null)
     },
     []
   )
@@ -371,6 +376,15 @@ export function useSettingsController(): SettingsController {
       return
     }
     setBubbleIdleError(null)
+
+    // 联网搜索：1–50，与后端 SearchConfig 校验一致
+    const searchCount = parseIntegerText(current.searchCount)
+    if (searchCount === null || searchCount < 1 || searchCount > 50) {
+      setSearchCountError('请输入 1–50 的整数')
+      setNotice({ kind: 'error', text: '搜索条数不合法，请修正后再保存' })
+      return
+    }
+    setSearchCountError(null)
 
     const patch = buildPatch(current, baselineRef.current, quiet.list)
     if (!patch) return
@@ -452,6 +466,7 @@ export function useSettingsController(): SettingsController {
     fileMaxCharsError,
     contextTokensError,
     bubbleIdleError,
+    searchCountError,
     revision,
     guideMode,
     guideDone,

@@ -44,6 +44,9 @@ class ToolSpec:
     - ``needs_user_text``：backend 型 handler 是否额外接收用户本轮原话
       （``handler(args, user_text)``）。记忆本删除记录需要判断"用户是否点名/
       指的是删记录还是删文件"。
+    - ``feedback``：backend 型工具的结果是否要**回喂给模型**（``model_content``）
+      并触发一次续写。联网搜索 / 网页抓取用：模型先调工具，拿到网页资料后
+      再生成最终回答（2026-10-18）。
     """
 
     name: str
@@ -54,6 +57,7 @@ class ToolSpec:
     ack: str = ""
     prepare: Callable[[dict[str, Any], str], dict[str, Any]] | None = None
     needs_user_text: bool = False
+    feedback: bool = False
 
 
 class ToolRegistry:

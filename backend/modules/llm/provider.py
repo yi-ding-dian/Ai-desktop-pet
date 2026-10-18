@@ -13,16 +13,23 @@ from typing import Any, AsyncIterator, Protocol, Sequence
 
 @dataclass(frozen=True)
 class ChatMessage:
-    """一轮对话消息。role: system / user / assistant。
+    """一轮对话消息。role: system / user / assistant / tool。
 
     ``images``（可选，文件分析 P1 多模态）：data URL 列表；只有当前用户消息可能携带，
     历史消息不带（图片正文不落库、不跨轮重发）。provider 据此把 content 组装成
     OpenAI 多模态数组（text + image_url），无图片时保持纯字符串（协议兼容）。
+
+    ``tool_calls`` / ``tool_call_id``（2026-10-18 联网搜索结果回传）：
+    - assistant 消息携带模型的工具调用声明（OpenAI ``tool_calls`` 数组）；
+    - tool 消息携带对应调用的结果，``tool_call_id`` 必须与声明中的 id 一致。
+    普通对话消息两者均为空，行为与旧版逐字段一致。
     """
 
     role: str
     content: str
     images: tuple[str, ...] = ()
+    tool_calls: tuple[dict[str, Any], ...] = ()
+    tool_call_id: str | None = None
 
 
 @dataclass(frozen=True)

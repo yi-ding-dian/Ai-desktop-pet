@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -223,6 +224,51 @@ def test_reminder_tool_missing_or_bad_args_are_sanitized() -> None:
     list_spec = registry.get("list_reminders")
     assert list_spec is not None and list_spec.handler is not None
     assert list_spec.handler({"limit": "abc"})["message"] == "列出 20 条"
+
+
+# ---------------------------------------------------------------- 联网搜索工具（2026-10-18）
+
+
+class FakeSearchServiceTools:
+    async def search_from_tool(self, args, user_text=""):
+        return {
+            "ok": True,
+            "code": "search_ok",
+            "message": "已联网搜索：1 条结果",
+            "model_content": f"query={args.get('query')} user={user_text}",
+        }
+
+    async def fetch_from_tool(self, args):
+        return {
+            "ok": True,
+            "code": "fetch_ok",
+            "message": "已抓取网页",
+            "model_content": f"url={args.get('url')}",
+        }
+
+
+def test_default_registry_registers_search_tools() -> None:
+    registry = build_default_registry(search=FakeSearchServiceTools())
+    assert [s.name for s in registry.all()] == [
+        "open_settings",
+        "web_search",
+        "web_fetch",
+    ]
+    search = registry.get("web_search")
+    assert search is not None
+    assert search.executor == "backend"
+    assert search.feedback is True
+    assert search.needs_user_text is True
+    assert search.handler is not None
+    result = asyncio.run(search.handler({"query": "V4"}, "搜一下 V4"))
+    assert result["code"] == "search_ok"
+    assert "query=V4" in result["model_content"]
+
+    fetch = registry.get("web_fetch")
+    assert fetch is not None and fetch.feedback is True
+    assert fetch.handler is not None
+    result = asyncio.run(fetch.handler({"url": "https://example.com"}))
+    assert result["code"] == "fetch_ok"
 
 
 # ---------------------------------------------------------------- 快通道指令词表

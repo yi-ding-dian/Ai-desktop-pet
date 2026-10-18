@@ -28,6 +28,7 @@ from backend.application.chat_pipeline import ChatPipeline
 from backend.application.memory_service import MemoryService
 from backend.application.notebook_service import NotebookService
 from backend.application.runtime import Runtime
+from backend.application.search_service import SearchService
 from backend.application.session import SessionManager
 from backend.application.settings_service import SettingsService
 from backend.interfaces.ws.dispatcher import build_dispatcher
@@ -38,6 +39,7 @@ from backend.modules.memory.profile import ProfileStore
 from backend.modules.memory.store import MemoryStore
 from backend.modules.notebook import NotebookStore
 from backend.modules.reminders import ReminderStore
+from backend.modules.search import DeepSeekSearchProvider
 from backend.shared.config import load_config
 from backend.shared.db import connect_db, get_db_path
 from backend.shared.logging import setup_logging
@@ -84,6 +86,19 @@ def main() -> int:
     # base_url/model/采样参数热更、key 经读取链惰性获取（keyring 更新即时生效）
     runtime = Runtime(
         app_config, reminder_store=reminder_store, notebook=notebook_service
+    )
+    # 联网搜索（2026-10-18）：工具注册表在 Runtime 构造时构建；SearchService 需要
+    # 读 runtime.config.search 的活引用，所以 Runtime 之后再 bind（必须在建 pipeline 前）。
+    search_service = SearchService(
+        DeepSeekSearchProvider(config=lambda: runtime.config.search),
+        config=lambda: runtime.config.search,
+    )
+    runtime.bind_search(search_service)
+    logger.info(
+        "联网搜索装配：enabled={} endpoint={}（Search/Fetch 各 5 QPS；"
+        "2026-11-01 00:00 起按成功请求计费）",
+        app_config.search.enabled,
+        app_config.search.base_url,
     )
     logger.info(
         "LLM 装配：base_url={} model={} key={}",

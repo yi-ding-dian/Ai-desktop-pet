@@ -39,7 +39,10 @@
      模型不支持 tools）→ 摘除 tools 重放一次；再败以第一次错误收尾。降级置
      **进程级标记**（模块变量）——后续轮不再携带 tools（快通道不受影响）。
 
-生成最终回答（**唯一的两轮路径**，第二轮不携带 tools，避免循环调用）。
+- 联网搜索/抓取（2026-10-18，§4.8 工具机制的 feedback 扩展）：``web_search`` /
+  ``web_fetch`` 是 backend 型 + ``feedback`` 工具——handler 返回 ``model_content``
+  （网页资料）；流末执行后追加 assistant tool_calls + tool 消息，再调一轮 LLM
+  生成最终回答（**唯一的两轮路径**，第二轮不携带 tools，避免循环调用）。
 """
 
 from __future__ import annotations
@@ -281,6 +284,9 @@ class ChatPipeline:
             _stored_user_text(user_text, file_refs) if file_refs else user_text
         )
         llm_messages: list[ChatMessage] | None = None
+        #: 正常 LLM 路径的完整消息列表；联网搜索/抓取的续写轮需要它作为底座。
+        #: 快通道（打开设置）不赋值——那条路径不会产生 feedback 工具调用。
+        messages: list[ChatMessage] | None = None
 
         async def reject_with(text: str) -> None:
             """本地拒绝（不调 LLM）：用户消息照常落库，回复走气泡事件流。"""
@@ -533,6 +539,78 @@ class ChatPipeline:
                 await sink.token(message_id, ack_text)
                 await on_clean_text(ack_text)
 
+            # ---- 联网搜索/抓取：工具结果回喂模型，再生成一轮最终回答（2026-10-18）----
+            # 只对带 model_content 的 feedback 工具做（web_search / web_fetch）。
+            # 第一轮的 tool_calls 声明 + tool 结果消息必须成对出现，OpenAI 协议
+            # 才接受；第二轮不携带 tools，避免模型继续调工具形成循环。
+            feedback_items = [
+                (name, result)
+                for name, result in backend_results
+                if isinstance(result.get("model_content"), str)
+                and result.get("model_content")
+            ]
+            if feedback_items and messages is not None and llm_error is None:
+                assistant_calls: list[dict[str, Any]] = []
+                tool_messages: list[ChatMessage] = []
+                for tool_name, result in feedback_items:
+                    call_id = str(
+                        result.get("_tool_call_id") or f"call_{uuid.uuid4().hex[:8]}"
+                    )
+                    call_args = result.get("_tool_args")
+                    if not isinstance(call_args, dict):
+                        call_args = {}
+                    assistant_calls.append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(call_args, ensure_ascii=False),
+                            },
+                        }
+                    )
+                    tool_messages.append(
+                        ChatMessage(
+                            role="tool",
+                            content=str(result["model_content"]),
+                            tool_call_id=call_id,
+                        )
+                    )
+                follow_up = list(messages)
+                follow_up.append(
+                    ChatMessage(
+                        role="assistant",
+                        content="".join(clean_parts),
+                        tool_calls=tuple(assistant_calls),
+                    )
+                )
+                follow_up.extend(tool_messages)
+                logger.info(
+                    "联网搜索/抓取结果回传：{} 个工具调用，开始第二轮生成",
+                    len(feedback_items),
+                )
+                try:
+                    async for chunk in self._provider.stream_chat(follow_up):
+                        if not chunk.text:
+                            continue
+                        emotion = await self._emit(
+                            sink,
+                            message_id,
+                            parser.feed(chunk.text),
+                            clean_parts,
+                            on_clean_text=on_clean_text,
+                        )
+                        if emotion is not None:
+                            emotion_seen = True
+                            last_emotion = emotion
+                except LlmError as exc:
+                    # 第一轮文本/工具结果已产出：收尾后由下方统一推 error 事件；
+                    # 不把第二轮失败伪装成成功回答。
+                    llm_error = exc
+                    logger.warning(
+                        "搜索结果续写失败（{}）：{}", exc.code, exc.message
+                    )
+
             if not emotion_seen:
                 # 容忍模型不输出情绪标签：默认 neutral、不报错（补发一次显式事件）
                 last_emotion = "neutral"
@@ -684,9 +762,13 @@ class ChatPipeline:
             if spec.executor != "backend":
                 frontend_calls.append((tool_id, name, args))
                 continue
-            backend_results.append(
-                (name, await self._run_backend_tool(spec, args, user_text))
-            )
+            result = await self._run_backend_tool(spec, args, user_text)
+            if spec.feedback and result.get("model_content"):
+                # 只有 feedback 工具需要回喂模型：带上调用 id/原参数，供 pipeline
+                # 构造 assistant tool_calls 消息；通知循环只读 code/message，忽略私有键。
+                result["_tool_call_id"] = tool_id
+                result["_tool_args"] = args
+            backend_results.append((name, result))
         return frontend_calls, backend_results
 
     async def _run_backend_tool(
@@ -721,11 +803,16 @@ class ChatPipeline:
                 "code": "tool_error",
                 "message": "工具返回了无法识别的结果",
             }
-        return {
+        normalized = {
             "ok": bool(result.get("ok")),
             "code": str(result.get("code") or "tool_result"),
             "message": str(result.get("message") or ""),
         }
+        # 联网搜索/抓取：结果正文回喂模型（不进入用户通知），触发续写轮
+        model_content = result.get("model_content")
+        if isinstance(model_content, str) and model_content.strip():
+            normalized["model_content"] = model_content
+        return normalized
 
     def _compose_tool_ack(
         self,
@@ -738,6 +825,10 @@ class ChatPipeline:
         成功用工具 spec 的 ack，保证宠物口语自然。
         """
         for _name, result in backend_results:
+            # 联网搜索/抓取的结果会回喂模型：失败原因由模型在续写轮说明，
+            # 这里不要把它当成"最终回复"先吐一遍。
+            if result.get("model_content"):
+                continue
             if not result.get("ok") and result.get("message"):
                 return str(result["message"])
         if frontend_calls:

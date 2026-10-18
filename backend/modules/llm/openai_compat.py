@@ -42,14 +42,33 @@ def _message_payload(message: ChatMessage) -> dict[str, Any]:
     无图片：``content`` 仍是字符串（与旧版逐字段一致，兼容所有纯文本网关）；
     有图片：content 改为多模态数组 ``[{type:text}, {type:image_url}...]``
     （OpenAI 兼容视觉协议；data URL 由后端读取本地图片生成）。
+
+    工具回传（2026-10-18）：
+    - ``role='tool'``：发 ``tool_call_id + content``（不再带图片/工具声明）；
+    - assistant 带 ``tool_calls``：原样放入 OpenAI 协议字段，供第二轮续写。
     """
+    if message.role == "tool":
+        payload: dict[str, Any] = {
+            "role": "tool",
+            "content": message.content,
+        }
+        if message.tool_call_id:
+            payload["tool_call_id"] = message.tool_call_id
+        return payload
+
     if not message.images:
-        return {"role": message.role, "content": message.content}
+        payload = {"role": message.role, "content": message.content}
+        if message.tool_calls:
+            payload["tool_calls"] = list(message.tool_calls)
+        return payload
     content: list[dict[str, Any]] = [{"type": "text", "text": message.content}]
     content.extend(
         {"type": "image_url", "image_url": {"url": url}} for url in message.images
     )
-    return {"role": message.role, "content": content}
+    payload = {"role": message.role, "content": content}
+    if message.tool_calls:
+        payload["tool_calls"] = list(message.tool_calls)
+    return payload
 
 
 def _extract_content(chunk: Any) -> str:

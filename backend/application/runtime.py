@@ -45,6 +45,7 @@ from backend.shared.secrets import get_llm_key
 if TYPE_CHECKING:  # 仅类型注解（运行时经鸭子类型调用，避免多余 import 环）
     from backend.application.memory_service import MemoryService
     from backend.application.notebook_service import NotebookService
+    from backend.application.search_service import SearchService
     from backend.modules.behavior.engine import BehaviorEngine
 
 
@@ -125,6 +126,7 @@ class Runtime:
         *,
         reminder_store: ReminderStore | None = None,
         notebook: NotebookService | None = None,
+        search: SearchService | None = None,
     ) -> None:
         self._config = config
         self._llm = LlmSlot(create_llm_provider(config))
@@ -142,8 +144,13 @@ class Runtime:
         )
         # 记忆本服务（2026-10-18）：由 main 装配后注入；工具随之注册。
         self._notebook = notebook
+        # 联网搜索服务（2026-10-18）：由 main 用 bind_search 注入（它需要读
+        # runtime.config.search 的活引用，构造顺序在 Runtime 之后）；工具随后注册。
+        self._search = search
         # §4.7：内置工具（装配后只读）；未装配提醒/记忆本/搜索时注册表与旧版一致
-        self._tools = build_default_registry(self._reminders, self._notebook)
+        self._tools = build_default_registry(
+            self._reminders, self._notebook, self._search
+        )
         self._engine: BehaviorEngine | None = None
         self._memory: MemoryService | None = None
 
@@ -189,6 +196,18 @@ class Runtime:
     def bind_memory(self, service: MemoryService) -> None:
         """挂接记忆提取服务（main 装配；热重装配时随配置联动启停）。"""
         self._memory = service
+
+    def bind_search(self, service: SearchService) -> None:
+        """挂接联网搜索服务并重建工具注册表（main 在创建 ChatPipeline 前调用）。
+
+        为什么不在构造函数里建：``SearchService`` 的配置回调需要读
+        ``runtime.config.search`` 的活引用（设置保存后立即生效），所以必须先有
+        Runtime 实例。注册表在 ChatPipeline 构造时注入——bind 必须在它之前。
+        """
+        self._search = service
+        self._tools = build_default_registry(
+            self._reminders, self._notebook, self._search
+        )
 
     def voice_factory(self) -> VoiceOut:
         """每条连接一个语音出站（server 装配点，§4.4/§7.6.3）。

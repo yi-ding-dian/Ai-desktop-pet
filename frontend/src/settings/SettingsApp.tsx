@@ -1,13 +1,14 @@
 /**
  * 设置页主组件（settings 域）：左侧分区导航 + 右侧分区视图 + 底部保存条。
  *
- * 九个分区（设计文档 §7.6.1）：LLM / 文件 / 宠物 / 声音 / 行为 / 记忆 / 记忆本 / 主题 / 关于。
+ * 十个分区（设计文档 §7.6.1）：LLM / 搜索 / 文件 / 宠物 / 声音 / 行为 / 记忆 / 记忆本 / 主题 / 关于。
  * 数据流与全部状态在 useSettingsController（唯一控制器）；本文件只做布局、分区切换与状态文案。
  * 「记忆本」面板自带 WS 连接与数据流（useNotebookController），不混入配置保存状态。
  */
 import { useEffect, useState, type ReactElement } from 'react'
 import { useSettingsController, type SettingsController } from './hooks/useSettingsController'
 import LlmPanel from './panels/LlmPanel'
+import SearchPanel from './panels/SearchPanel'
 import FilePanel from './panels/FilePanel'
 import PetPanel from './panels/PetPanel'
 import VoicePanel from './panels/VoicePanel'
@@ -19,6 +20,7 @@ import AboutPanel from './panels/AboutPanel'
 
 type PanelId =
   | 'llm'
+  | 'search'
   | 'files'
   | 'pet'
   | 'voice'
@@ -30,6 +32,7 @@ type PanelId =
 
 const PANELS: ReadonlyArray<{ id: PanelId; label: string }> = [
   { id: 'llm', label: 'LLM' },
+  { id: 'search', label: '搜索' },
   { id: 'files', label: '文件' },
   { id: 'pet', label: '宠物' },
   { id: 'voice', label: '声音' },
@@ -85,6 +88,14 @@ export default function SettingsApp(): ReactElement {
             onTest={ctrl.testConnection}
             revision={ctrl.revision}
             guide={ctrl.guideMode}
+          />
+        )
+      case 'search':
+        return (
+          <SearchPanel
+            form={ctrl.form}
+            setField={ctrl.setField}
+            searchCountError={ctrl.searchCountError}
           />
         )
       case 'files':
