@@ -39,11 +39,14 @@ _FALLBACK_EMOTION_DIRECTIVE = (
 
 # 兜底能力清单：capabilities.md 缺失/不可读时使用（保持与文件同义的最简版）
 _FALLBACK_CAPABILITIES = (
-    "你可以调用系统提供的工具来完成真实的界面操作（不只是嘴上描述）。"
-    "可用工具：open_settings——打开小兔的设置面板（改 LLM 服务商 / 模型 / 密钥、"
-    "宠物名字、主题、声音与语音、行为、记忆等配置）。"
-    "用户表达「想改设置、打开设置面板」之类意图时，直接调用 open_settings"
-    "（不要描述快捷键、不要只给操作步骤）；调用前后用一句自然口语回应即可。"
+    "你可以调用系统提供的工具来完成真实的操作（不只是嘴上描述）。"
+    "可用工具：open_settings——打开小兔的设置面板；"
+    "create_reminder——创建提醒（text / due_at 带时区偏移的 ISO 时间 / repeat："
+    "none|daily|weekdays|weekly）；list_reminders——查看未触发的提醒；"
+    "cancel_reminder——按 id 或关键词取消提醒。"
+    "用户表达「想改设置、打开设置面板」时直接调用 open_settings；"
+    "用户让我提醒事情时调用 create_reminder（相对时间按当前时间换算，说不清就先问）；"
+    "调用前后用一句自然口语回应即可。"
 )
 
 # 兜底记忆提取指令：memory_extract.md 缺失/不可读时使用（保持与文件同义的最简版）

@@ -11,6 +11,7 @@ import {
   type AudioFramePacket,
   type ClientEventMap,
   type ClientEventType,
+  type ClientRole,
   type Envelope,
   type HelloAckData,
   type ServerEventMap,
@@ -47,6 +48,11 @@ export interface WsClientOptions {
   reconnectBaseMs?: number
   /** 重连退避封顶（默认 30s） */
   reconnectMaxMs?: number
+  /**
+   * 连接角色（hello.client_role，2026-10-18）：pet = 宠物窗（接收行为/提醒推送）；
+   * settings = 设置窗。缺省 pet（兼容旧调用方）。
+   */
+  clientRole?: ClientRole
 }
 
 /**
@@ -77,12 +83,14 @@ export class WsClient {
   private readonly pongTimeoutMs: number
   private readonly reconnectBaseMs: number
   private readonly reconnectMaxMs: number
+  private readonly clientRole: ClientRole
 
   constructor(options: WsClientOptions = {}) {
     this.pingIntervalMs = options.pingIntervalMs ?? 30_000
     this.pongTimeoutMs = options.pongTimeoutMs ?? 10_000
     this.reconnectBaseMs = options.reconnectBaseMs ?? 1_000
     this.reconnectMaxMs = options.reconnectMaxMs ?? 30_000
+    this.clientRole = options.clientRole ?? 'pet'
   }
 
   get connectionState(): WsConnectionState {
@@ -177,7 +185,8 @@ export class WsClient {
         serializeEnvelope('hello', {
           token: target.token,
           protocol_version: PROTOCOL_VERSION,
-          app_version: target.appVersion
+          app_version: target.appVersion,
+          client_role: this.clientRole
         })
       )
     }

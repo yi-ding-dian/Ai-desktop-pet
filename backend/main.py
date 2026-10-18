@@ -35,6 +35,7 @@ from backend.modules.behavior import BehaviorEngine
 from backend.modules.chat.history import HistoryStore
 from backend.modules.memory.profile import ProfileStore
 from backend.modules.memory.store import MemoryStore
+from backend.modules.reminders import ReminderStore
 from backend.shared.config import load_config
 from backend.shared.db import connect_db, get_db_path
 from backend.shared.logging import setup_logging
@@ -65,6 +66,7 @@ def main() -> int:
     history_store = HistoryStore(conn)
     memory_store = MemoryStore(conn)
     profile_store = ProfileStore(conn)
+    reminder_store = ReminderStore(conn)
     logger.info("数据库就绪：{}", db_path)
 
     # 会话管理由 HistoryStore 支撑：进程重启后 load_history 可回填、历史不丢
@@ -73,7 +75,7 @@ def main() -> int:
     # 运行时可重装配控制面（§7.6.3）：设置面板保存配置后由 Runtime 热更各模块；
     # LLM provider 经可热替换的槽（LlmSlot）被流水线/记忆提取/测试连接共享，
     # base_url/model/采样参数热更、key 经读取链惰性获取（keyring 更新即时生效）
-    runtime = Runtime(app_config)
+    runtime = Runtime(app_config, reminder_store=reminder_store)
     logger.info(
         "LLM 装配：base_url={} model={} key={}",
         app_config.llm.base_url or "(未配置，聊天时引导去设置)",
@@ -140,6 +142,7 @@ def main() -> int:
         engine=behavior_engine,
         history=history_store,
         settings=settings,
+        reminders=runtime.reminders,
     )
     app = create_app(
         dispatcher=dispatcher, app_version=__version__, voice_factory=runtime.voice_factory

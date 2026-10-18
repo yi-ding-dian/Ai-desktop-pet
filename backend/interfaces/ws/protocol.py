@@ -51,11 +51,17 @@ class Envelope(BaseModel):
 
 
 class HelloData(EventData):
-    """连接后首条消息：鉴权 + 版本协商。"""
+    """连接后首条消息：鉴权 + 版本协商。
+
+    ``client_role``（2026-10-18）：连接角色——``pet``（宠物窗，行为/提醒推送的
+    接收方）/ ``settings``（设置窗，只收发配置）。缺省 ``pet`` 兼容旧客户端；
+    多连接时路由按角色判定，避免设置窗抢走主动推送通道。
+    """
 
     token: str
     protocol_version: int
     app_version: str = ""
+    client_role: Literal["pet", "settings"] = "pet"
 
 
 class AttachmentRefData(EventData):
@@ -227,11 +233,19 @@ class ToolCallData(EventData):
 
 
 class ProactiveData(EventData):
-    """主动消息（问候/提醒），无对应用户输入。"""
+    """主动消息（问候/提醒），无对应用户输入。
+
+    提醒（2026-10-18）扩展：``kind=reminder`` 时带 ``reminder_id`` / ``due_at`` /
+    ``late``；前端**无论语音开关如何都展示气泡**，语音只是附加的音频帧。
+    """
 
     message_id: str
     text: str
     emotion: str = "neutral"
+    kind: Literal["greeting", "reminder"] = "greeting"
+    reminder_id: str | None = None
+    due_at: str | None = None
+    late: bool = False
 
 
 class NoticeData(EventData):

@@ -79,6 +79,19 @@ allow_images    = true
 max_image_bytes = 8388608
 # 单轮最多几个文件/图片
 max_per_turn = 3
+
+[reminders]        # 提醒：到点宠物主动气泡 + 可选语音（2026-10-18）
+enabled                     = true
+# 到点是否语音播报（默认关闭：气泡一定会出，语音只是附加通道；全局语音关闭时自动静默）
+voice                       = false
+# 免打扰时段策略：normal=照常提醒 / silent=只出气泡不出声（时段沿用 [behavior].quiet_hours）
+quiet_hours_policy          = "normal"
+# 一次最多补报几条错过的提醒（1–10）
+max_catchup                 = 3
+# 宠物隐藏时是否补系统通知
+os_notification_when_hidden = true
+# 二期"稍后提醒"默认分钟数（当前仅存配置）
+snooze_minutes              = 10
 """
 
 
@@ -261,6 +274,47 @@ class FileConfig(BaseModel):
         return value
 
 
+class ReminderConfig(BaseModel):
+    """提醒配置（2026-10-18，方案见仓库根 `待做方案.md`）。
+
+    - ``enabled``：总开关（关闭后已有提醒保留，只是不再到点推送）；
+    - ``voice``：到点是否语音播报，**默认关闭**（气泡无论语音开关都会出现，
+      语音只是附加通道；全局语音关闭时也自然静默）；
+    - ``quiet_hours_policy``：免打扰时段策略（时段沿用 ``[behavior].quiet_hours``）：
+      ``normal`` = 照常提醒，``silent`` = 只出气泡不出声；
+    - ``max_catchup``：一次 tick 最多补报几条（避免启动时语音轰炸）。
+    """
+
+    enabled: bool = True
+    voice: bool = False
+    quiet_hours_policy: str = "normal"
+    max_catchup: int = 3
+    os_notification_when_hidden: bool = True
+    snooze_minutes: int = 10
+
+    @field_validator("quiet_hours_policy")
+    @classmethod
+    def _check_policy(cls, value: str) -> str:
+        text = value.strip().lower()
+        if text not in ("normal", "silent"):
+            raise ValueError("reminders.quiet_hours_policy 只支持 normal / silent")
+        return text
+
+    @field_validator("max_catchup")
+    @classmethod
+    def _check_max_catchup(cls, value: int) -> int:
+        if value < 1 or value > 10:
+            raise ValueError("reminders.max_catchup 必须在 1–10 之间")
+        return value
+
+    @field_validator("snooze_minutes")
+    @classmethod
+    def _check_snooze(cls, value: int) -> int:
+        if value < 1 or value > 120:
+            raise ValueError("reminders.snooze_minutes 必须在 1–120 之间")
+        return value
+
+
 class AppConfig(BaseModel):
     """完整配置（缺省字段自动取默认值，容忍用户手改 TOML 的遗漏）。"""
 
@@ -271,6 +325,7 @@ class AppConfig(BaseModel):
     behavior: BehaviorConfig = Field(default_factory=BehaviorConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     files: FileConfig = Field(default_factory=FileConfig)
+    reminders: ReminderConfig = Field(default_factory=ReminderConfig)
 
 
 def load_config(path: Path | None = None) -> AppConfig:

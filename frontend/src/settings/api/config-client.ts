@@ -64,7 +64,8 @@ export function createSettingsBackendClient(): SettingsBackendClient {
     return createOfflineClient()
   }
 
-  const client = new WsClient()
+  // 设置窗角色：后端据此不把行为/提醒主动推送绑到这条连接（2026-10-18）
+  const client = new WsClient({ clientRole: 'settings' })
 
   /**
    * 已释放标志：dispose 后禁止再建连。

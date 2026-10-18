@@ -57,6 +57,7 @@ import {
   type TeachingBubbleItem
 } from './modules/teaching'
 import { setupToolExecutor } from './modules/tools'
+import { setupReminders } from './modules/reminders'
 import {
   setupSettingsGuidePetSide,
   subscribeSettingsGuide,
@@ -189,6 +190,13 @@ export default function App(): ReactElement {
   }, [teachingState.mode, guideActive])
   useEffect(
     () => setupSpeechBubble(wsClient, { shouldSuppress: () => speechSuppressedRef.current }),
+    [wsClient]
+  )
+
+  // ---- 提醒接线（reminders 域，2026-10-18）：后端 proactive{kind:'reminder'} → 气泡 + 系统通知 ----
+  // 气泡一定会出（与语音开关无关）；教学/向导/隐藏/流式中排队，恢复后补气泡
+  useEffect(
+    () => setupReminders(wsClient, { shouldSuppress: () => speechSuppressedRef.current }),
     [wsClient]
   )
 

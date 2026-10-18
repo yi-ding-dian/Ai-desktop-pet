@@ -13,7 +13,8 @@ let client: WsClient | null = null
 /** 建立（幂等的）全局 WS 连接；返回客户端单例供各业务域订阅/发送 */
 export function setupWsFromBridge(): WsClient {
   if (client) return client
-  const wsClient = new WsClient()
+  // 宠物窗角色：行为/提醒主动推送只绑 pet（设置窗自建连接用 settings，不抢通道）
+  const wsClient = new WsClient({ clientRole: 'pet' })
   client = wsClient
 
   const bridge = getPetBridge()

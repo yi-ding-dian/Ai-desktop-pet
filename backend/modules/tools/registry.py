@@ -10,12 +10,12 @@
 
 - ``"frontend"``：由前端执行（如 open_settings → 打开设置窗）。助手侧只需
   把工具名与参数经 WS 下发（``ToolCallData``），不产生回执依赖；
-- ``"backend"``：由后端执行（``handler`` 为执行函数）——为将来后端型工具
-  （如记忆查询）预留；本期内置工具均为 frontend 型。
+- ``"backend"``：由后端执行——chat 管道在 ``reply_end`` 前同步/异步调用
+  ``handler(args)``，结果以确定性 ``notice`` 回给聊天区（提醒工具即此型，
+  2026-10-18 起启用）。
 
-``handler`` 为何用普通 Callable 而非 async：本期无 backend 型工具、执行路径
-（谁在哪调度）尚未定稿；先保留注入缝、由调用方按需约定（避免过早绑定调度
-模型）。真正的调度实现属"结果回传续写"阶段。
+``handler`` 接受一个参数字典，返回 dict（``{"ok": bool, "code": str, "message": str}``）。
+允许返回 awaitable（handler 本身是普通函数、内部返回协程即可，当前提醒工具为同步）。
 """
 
 from __future__ import annotations

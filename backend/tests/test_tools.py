@@ -104,6 +104,63 @@ def test_default_registry_is_fresh_each_call() -> None:
     assert build_default_registry() is not build_default_registry()
 
 
+# ---------------------------------------------------------------- 提醒工具（2026-10-18）
+
+
+class FakeReminderServiceTools:
+    """提醒服务替身：只验证工具定义/handler 转发，不碰存储。"""
+
+    def create_from_tool(self, *, text: str, due_at: str, repeat: str) -> dict:
+        return {
+            "ok": True,
+            "code": "reminder_created",
+            "message": f"已设置提醒 · {text} · {due_at} · {repeat}",
+        }
+
+    def list_for_tool(self, limit: int = 20) -> dict:
+        return {"ok": True, "code": "reminders_listed", "message": f"列出 {limit} 条"}
+
+    def cancel_from_tool(self, *, key: str) -> dict:
+        return {"ok": True, "code": "reminder_cancelled", "message": f"取消 {key}"}
+
+
+def test_default_registry_registers_backend_reminder_tools() -> None:
+    """注入提醒服务后多出 3 个 backend 型工具；handler 直接转发给服务。"""
+    registry = build_default_registry(FakeReminderServiceTools())
+    assert [s.name for s in registry.all()] == [
+        "open_settings",
+        "create_reminder",
+        "list_reminders",
+        "cancel_reminder",
+    ]
+    spec = registry.get("create_reminder")
+    assert spec is not None and spec.executor == "backend" and spec.handler is not None
+    result = spec.handler(
+        {"text": "交房租", "due_at": "2026-10-18T09:00:00+08:00", "repeat": "daily"}
+    )
+    assert result["code"] == "reminder_created"
+    assert "交房租" in result["message"]
+
+
+def test_default_registry_without_service_keeps_old_tools() -> None:
+    """未注入提醒服务（旧装配/单测）：注册表与旧版逐字一致。"""
+    assert [s.name for s in build_default_registry().all()] == ["open_settings"]
+
+
+def test_reminder_tool_missing_or_bad_args_are_sanitized() -> None:
+    """模型漏传/传错类型：字段按空串处理，不出现字面量 "None"；limit 非法回落 20。"""
+    registry = build_default_registry(FakeReminderServiceTools())
+    create = registry.get("create_reminder")
+    assert create is not None and create.handler is not None
+    result = create.handler({"text": None, "due_at": None, "repeat": 123})
+    assert "None" not in result["message"]
+    assert "123" not in result["message"]
+
+    list_spec = registry.get("list_reminders")
+    assert list_spec is not None and list_spec.handler is not None
+    assert list_spec.handler({"limit": "abc"})["message"] == "列出 20 条"
+
+
 # ---------------------------------------------------------------- 快通道指令词表
 
 

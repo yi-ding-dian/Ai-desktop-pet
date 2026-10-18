@@ -32,6 +32,7 @@ from backend.modules.files import FileRef
 from backend.shared.errors import ErrorCode, ProtocolError
 
 if TYPE_CHECKING:  # 避免与 server 运行时循环 import（类型注解专用）
+    from backend.application.reminder_service import ReminderDelivery, ReminderService
     from backend.interfaces.ws.server import ConnectionContext
     from backend.modules.behavior.engine import BehaviorEngine
     from backend.modules.chat.history import HistoryStore
@@ -66,6 +67,54 @@ class _ConnectionSink:
         state = getattr(ws, "client_state", None)
         # 拿不到状态时保守视为未关闭（真实发送失败由 server 层日志兜底）
         return state is not None and state != WebSocketState.CONNECTED
+
+
+class _ReminderSink:
+    """把 ConnectionContext 适配为提醒服务的下行端口（interfaces 层职责）。
+
+    提醒的下行是"主动消息"：先推 ``proactive``（**气泡一定会出**，与语音开关无关），
+    再按 delivery.voice 决定是否合成语音帧。语音失败只降级为无声，不影响提醒送达。
+    """
+
+    def __init__(self, ctx: ConnectionContext) -> None:
+        self._ctx = ctx
+
+    def is_closed(self) -> bool:
+        ws = getattr(self._ctx, "ws", None)
+        state = getattr(ws, "client_state", None)
+        return state is not None and state != WebSocketState.CONNECTED
+
+    async def deliver(self, delivery: ReminderDelivery) -> bool:
+        if self.is_closed():
+            return False
+        await self._ctx.send_event(
+            "proactive",
+            {
+                "message_id": delivery.message_id,
+                "text": delivery.text,
+                "emotion": delivery.emotion,
+                "kind": "reminder",
+                "reminder_id": delivery.reminder_id,
+                "due_at": delivery.due_at,
+                "late": delivery.late,
+            },
+        )
+        if delivery.voice:
+            await self._speak(delivery)
+        return True
+
+    async def _speak(self, delivery: ReminderDelivery) -> None:
+        """可选语音通道：TTS 未启用/失败都只记日志，气泡已经送达。"""
+        voice = getattr(self._ctx, "voice", None)
+        if voice is None or not getattr(voice, "available", False):
+            return
+        try:
+            reply = voice.open_reply(self._ctx, delivery.message_id)
+            reply.push(0, delivery.spoken_text)
+            reply.mark_final(0)
+            await reply.finish()
+        except Exception:
+            logger.exception("提醒语音播报失败（气泡不受影响）")
 
 
 class Dispatcher:
@@ -117,6 +166,7 @@ def build_dispatcher(
     engine: BehaviorEngine | None = None,
     history: HistoryStore | None = None,
     settings: SettingsService | None = None,
+    reminders: ReminderService | None = None,
 ) -> Dispatcher:
     """装配默认事件路由（interfaces → application 的唯一接线点）。
 
@@ -125,6 +175,7 @@ def build_dispatcher(
     ``history``：会话历史库（P3，可为 None——load_history 退化为空历史回填）。
     ``settings``：设置面板用例（§7.6，可为 None——未装配时 get_config /
     set_config / test_llm 走 NOT_IMPLEMENTED 兜底，与旧版行为一致）。
+    ``reminders``：提醒调度服务（2026-10-18，可为 None——未装配存储时无提醒功能）。
     """
     dispatcher = Dispatcher()
 
@@ -171,10 +222,19 @@ def build_dispatcher(
             ),
             reply_to=msg.envelope.id,
         )
-        logger.info("连接 {} 鉴权通过，session={}", ctx.id, session.id)
-        if engine is not None:
-            # 行为引擎绑定当前连接（全局单例向"当前连接"推送；断开由引擎自检清理）
-            engine.set_connection(_ConnectionSink(ctx))
+        logger.info(
+            "连接 {} 鉴权通过，session={} role={}", ctx.id, session.id, data.client_role
+        )
+        # 主动推送通道只绑宠物窗（client_role）：设置窗自建连接只收发配置，
+        # 不抢行为/提醒的事件推送（2026-10-18；旧客户端缺省按 pet 兼容）
+        if data.client_role == "pet":
+            if engine is not None:
+                # 行为引擎绑定当前连接（全局单例向"当前连接"推送；断开由引擎自检清理）
+                engine.set_connection(_ConnectionSink(ctx))
+            if reminders is not None:
+                reminders.set_connection(_ReminderSink(ctx))
+        else:
+            logger.info("连接 {} 为设置窗：不绑定行为/提醒推送通道", ctx.id)
 
     async def on_user_message(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """用户消息：以后台任务运行对话流水线，消息循环保持可用（可即时处理 interrupt）。"""

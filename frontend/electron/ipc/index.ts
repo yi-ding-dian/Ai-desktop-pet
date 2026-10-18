@@ -4,7 +4,7 @@
  * 依赖方向：ipc（协议层）→ window（平台能力），单向。
  * 渲染进程永远不直接操作窗口（设计文档 §1.1 核心原则 1），一律经由这里转发。
  */
-import { ipcMain, powerMonitor, type BrowserWindow } from 'electron'
+import { ipcMain, Notification, powerMonitor, type BrowserWindow } from 'electron'
 import { IPC, IPC_EVENTS, type WindowDebugState } from './channels'
 import { backendManager } from '../backend-process'
 import type { Point, Rect, WindowCapability } from '../window'
@@ -68,7 +68,21 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     cap.cancelMove()
   })
   ipcMain.handle(IPC.WINDOW_GET_GEOMETRY, () => cap.getGeometry())
+  ipcMain.handle(
+    IPC.WINDOW_IS_VISIBLE,
+    () => !ctx.window.isDestroyed() && ctx.window.isVisible()
+  )
   ipcMain.handle(IPC.SYSTEM_GET_IDLE_SECONDS, () => powerMonitor.getSystemIdleTime())
+
+  // 系统通知（提醒 v1）：只认宠物窗，防其它渲染面（黑板/设置）滥用；
+  // 宠物隐藏 / 教学 / 向导中无法弹气泡时补发，标题/正文做长度夹取。
+  ipcMain.on(IPC.SYSTEM_NOTIFY, (event, payload: { title?: unknown; body?: unknown }) => {
+    if (event.sender !== ctx.window.webContents) return
+    const title = typeof payload?.title === 'string' ? payload.title.slice(0, 80) : '小兔'
+    const body = typeof payload?.body === 'string' ? payload.body.slice(0, 300) : ''
+    if (!body || !Notification.isSupported()) return
+    new Notification({ title, body }).show()
+  })
 
   // 窗口几何变化 → debounce 后推送（拖拽/缓动/系统移动统一收口，渲染侧据此上报 env_update）
   let geometryPushTimer: NodeJS.Timeout | null = null

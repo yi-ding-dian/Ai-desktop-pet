@@ -30,9 +30,11 @@
      reply_end → tool_call → idle），用户消息与 ack 照常落库——"打开设置"
      这类高频指令必须必达，不能被模型的不确定性拖累；
   2) 模型路径：请求携带 tools → 流式累积 ``Chunk.tool_delta``（按 index 归组
-     拼接 arguments）→ ``reply_end`` 之后派发 ``sink.tool_call``；模型只调工具、
-     没产出正文时（真机实测会发生），用该工具 spec 的 ack 补一句（走 token/分句
-     路径，TTS 可播报），避免用户端静默；
+     拼接 arguments）→ 按 ``executor`` 分流：frontend 型在 ``reply_end`` 之后派发
+     ``sink.tool_call``；backend 型（提醒，2026-10-18）当场执行 handler，结果以
+     确定性 ``notice`` 推送（不进历史/TTS）。模型只调工具、没产出正文时（真机
+     实测会发生），用工具 ack（失败则用失败原因）补一句（走 token/分句路径，
+     TTS 可播报），避免用户端静默；
   3) 降级：带 tools 的请求被 LLM_BAD_REQUEST 拒绝且本轮无任何产出（疑似网关/
      模型不支持 tools）→ 摘除 tools 重放一次；再败以第一次错误收尾。降级置
      **进程级标记**（模块变量）——后续轮不再携带 tools（快通道不受影响）。
@@ -41,8 +43,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, Sequence
 
 from loguru import logger
@@ -434,8 +438,14 @@ class ChatPipeline:
             # 模型只调工具、没产出正文（真机实测会发生）→ 用工具 ack 补一句，
             # 走 token / 分句路径（前端可见、TTS 可播报），避免用户端静默。
             tool_calls_to_emit.extend(self._collect_tool_calls(tool_acc))
-            if tool_calls_to_emit and not clean_parts:
-                ack_text = self._ack_for(tool_calls_to_emit[0][1])
+            # 执行方分流（2026-10-18）：backend 型工具（提醒）在 reply_end 前执行，
+            # 结果稍后以确定性 notice 推送；frontend 型（open_settings）保持原样，
+            # reply_end 之后经 tool_call 下发。执行结果也决定"无正文时补哪句话"。
+            frontend_calls, backend_results = await self._execute_tool_calls(
+                tool_calls_to_emit
+            )
+            if (frontend_calls or backend_results) and not clean_parts:
+                ack_text = self._compose_tool_ack(frontend_calls, backend_results)
                 clean_parts.append(ack_text)
                 await sink.token(message_id, ack_text)
                 await on_clean_text(ack_text)
@@ -462,8 +472,17 @@ class ChatPipeline:
             # 派发工具调用（§4.7）：协议约定在对应回复的 reply_end 之后推送，
             # 前端按 name 执行（如 open_settings → 打开设置窗）；工具调用本身
             # 不进对话历史（assistant 只存正文/补话，见上方 append_message）。
-            for tool_id, tool_name, tool_args in tool_calls_to_emit:
+            for tool_id, tool_name, tool_args in frontend_calls:
                 await sink.tool_call(tool_id, tool_name, tool_args)
+            # backend 型工具已执行完毕：把确定性结果推成 notice（不进历史/TTS）。
+            # 例：reminder_created → 聊天区"已设置提醒 · 明天 09:00 · 交房租"。
+            for tool_name, result in backend_results:
+                await self._send_notice(
+                    sink,
+                    str(result.get("code") or f"{tool_name}_result"),
+                    str(result.get("message") or "已经办好啦～"),
+                    "info" if result.get("ok") else "warn",
+                )
             if llm_error is not None:
                 # 回复先定型，再报错说明原因（前端不会卡在 thinking）
                 await sink.error(str(llm_error.code), llm_error.message)
@@ -505,7 +524,8 @@ class ChatPipeline:
             logger.warning("指令命中工具 {} 但注册表缺该定义（装配不一致），走正常流", name)
             return None
         if spec.executor != "frontend":
-            logger.warning("指令命中 backend 型工具 {}（本期未支持执行调度），走正常流", name)
+            # backend 型工具需要模型给出的参数（如提醒时间），不能由词表快通道静默命中
+            logger.info("指令命中 backend 型工具 {}，改走模型正常流（需要参数）", name)
             return None
         return spec
 
@@ -514,6 +534,81 @@ class ChatPipeline:
         spec = self._tools.get(tool_name) if self._tools is not None else None
         if spec is not None and spec.ack:
             return spec.ack
+        return _FALLBACK_ACK
+
+    async def _execute_tool_calls(
+        self, calls: list[tuple[str, str, dict[str, Any]]]
+    ) -> tuple[
+        list[tuple[str, str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]
+    ]:
+        """按 ``ToolSpec.executor`` 分流：返回 (前端调用, 后端结果)。
+
+        - 未注册 / frontend 型：原样交给前端（协议 tool_call）；
+        - backend 型：在这里执行 handler（同步或 awaitable），结果留给 notice。
+        单个工具执行失败只记录、不阻断本轮对话。
+        """
+        frontend_calls: list[tuple[str, str, dict[str, Any]]] = []
+        backend_results: list[tuple[str, dict[str, Any]]] = []
+        for tool_id, name, args in calls:
+            spec = self._tools.get(name) if self._tools is not None else None
+            if spec is None or spec.executor != "backend":
+                frontend_calls.append((tool_id, name, args))
+                continue
+            backend_results.append((name, await self._run_backend_tool(spec, args)))
+        return frontend_calls, backend_results
+
+    async def _run_backend_tool(
+        self, spec: ToolSpec, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """执行一个 backend 型工具，把结果收敛为 ``{ok, code, message}``。"""
+        if spec.handler is None:
+            logger.warning("backend 型工具 {} 未配置 handler，按失败处理", spec.name)
+            return {
+                "ok": False,
+                "code": "tool_error",
+                "message": f"工具 {spec.name} 暂时不可用",
+            }
+        try:
+            result = spec.handler(args)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception:
+            logger.exception("backend 型工具 {} 执行异常", spec.name)
+            return {
+                "ok": False,
+                "code": "tool_error",
+                "message": "工具执行失败，请稍后再试",
+            }
+        if not isinstance(result, dict):
+            logger.warning("backend 型工具 {} 返回值不是 dict：{!r}", spec.name, result)
+            return {
+                "ok": False,
+                "code": "tool_error",
+                "message": "工具返回了无法识别的结果",
+            }
+        return {
+            "ok": bool(result.get("ok")),
+            "code": str(result.get("code") or "tool_result"),
+            "message": str(result.get("message") or ""),
+        }
+
+    def _compose_tool_ack(
+        self,
+        frontend_calls: list[tuple[str, str, dict[str, Any]]],
+        backend_results: list[tuple[str, dict[str, Any]]],
+    ) -> str:
+        """模型只调工具、没产出正文时补的那句话。
+
+        后端工具失败时优先说失败原因（"提醒没设上：…"），不要把失败说成成功；
+        成功用工具 spec 的 ack，保证宠物口语自然。
+        """
+        for _name, result in backend_results:
+            if not result.get("ok") and result.get("message"):
+                return str(result["message"])
+        if frontend_calls:
+            return self._ack_for(frontend_calls[0][1])
+        if backend_results:
+            return self._ack_for(backend_results[0][0])
         return _FALLBACK_ACK
 
     @staticmethod
@@ -567,6 +662,9 @@ class ChatPipeline:
         memory_block = await self._build_memory_block(user_text)
         if memory_block is not None:
             messages.append(ChatMessage(role="system", content=memory_block))
+        time_block = self._time_block()
+        if time_block is not None:
+            messages.append(ChatMessage(role="system", content=time_block))
         messages.extend(session.recent_messages())
         return messages
 
@@ -629,6 +727,9 @@ class ChatPipeline:
         ]
         if memory_block is not None:
             messages.append(ChatMessage(role="system", content=memory_block))
+        time_block = self._time_block()
+        if time_block is not None:
+            messages.append(ChatMessage(role="system", content=time_block))
         messages.extend(history)
         messages.append(
             ChatMessage(role="user", content=current_content, images=tuple(images))
@@ -646,6 +747,25 @@ class ChatPipeline:
             max_per_turn=config.files.max_per_turn,
             max_image_bytes=config.files.max_image_bytes,
             allow_images=config.files.allow_images,
+        )
+
+    def _time_block(self) -> str | None:
+        """当前本地时间注入（仅在装配了提醒工具时）：模型据此把"20 分钟后 /
+        明天 9 点"换算成绝对 ISO 时间。
+
+        为什么只在有提醒工具时注入：能力清单是静态的，时间只有提醒场景需要；
+        未装配提醒的旧装配/单测保持原有 system 结构（零回归）。
+        """
+        if self._tools is None or self._tools.get("create_reminder") is None:
+            return None
+        now = datetime.now().astimezone()
+        weekdays = "一二三四五六日"
+        offset = now.strftime("%z")
+        tz_text = f"UTC{offset[:3]}:{offset[3:]}" if offset else "本地时区"
+        return (
+            f"当前本地时间：{now:%Y-%m-%d %H:%M}（周{weekdays[now.weekday()]}，{tz_text}）。"
+            "用户说相对时间（如“20 分钟后”“明天早上”）时，请基于这个时间换算成绝对时间；"
+            "调用提醒工具时 due_at 必须是带时区偏移的 ISO 时间。"
         )
 
     def _context_budget(self) -> int:

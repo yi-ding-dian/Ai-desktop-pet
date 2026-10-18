@@ -70,6 +70,20 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
       updated_at  INTEGER NOT NULL
     )
     """,
+    # 提醒（2026-10-18：到点主动气泡 + 语音；见 application/reminder_service.py）
+    """
+    CREATE TABLE IF NOT EXISTS reminders (
+      id          TEXT PRIMARY KEY,
+      text        TEXT NOT NULL,
+      due_at      TEXT NOT NULL,              -- 本地 ISO 时间（含偏移）
+      repeat_rule TEXT,                       -- NULL | daily | weekdays | weekly
+      status      TEXT NOT NULL DEFAULT 'scheduled',  -- scheduled | fired | cancelled
+      created_at  TEXT NOT NULL,
+      fired_at    TEXT,
+      session_id  TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, due_at)",
 )
 
 

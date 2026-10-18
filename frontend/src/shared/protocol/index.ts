@@ -28,7 +28,15 @@ export interface HelloData {
   token: string
   protocol_version: number
   app_version: string
+  /**
+   * 连接角色（2026-10-18）：pet = 宠物窗（行为/提醒推送接收方）；
+   * settings = 设置窗（只收发配置）。缺省按 pet 兼容旧客户端。
+   */
+  client_role?: ClientRole
 }
+
+/** 连接角色（与后端 protocol.py HelloData.client_role 对齐） */
+export type ClientRole = 'pet' | 'settings'
 
 /**
  * 附件引用（文件分析 P1）：用户在本机显式选择的文件。
@@ -202,11 +210,19 @@ export interface ToolCallData {
   args: Record<string, unknown>
 }
 
-/** 主动消息（问候/提醒），无对应用户输入 */
+/**
+ * 主动消息（问候/提醒），无对应用户输入。
+ * 提醒（2026-10-18）：kind='reminder' 时带 reminder_id / due_at / late；
+ * 前端**无论语音开关如何都要展示气泡**，语音只是后端追加的音频帧。
+ */
 export interface ProactiveData {
   message_id: string
   text: string
   emotion: string
+  kind?: 'greeting' | 'reminder'
+  reminder_id?: string | null
+  due_at?: string | null
+  late?: boolean
 }
 
 /**

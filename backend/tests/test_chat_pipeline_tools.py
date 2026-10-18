@@ -83,6 +83,9 @@ class ToolSink:
     async def tool_call(self, tool_id: str, name: str, args: dict) -> None:
         self.events.append(("tool_call", {"id": tool_id, "name": name, "args": args}))
 
+    async def notice(self, code: str, message: str, level: str = "info") -> None:
+        self.events.append(("notice", {"code": code, "message": message, "level": level}))
+
     async def error(self, code: str, message: str) -> None:
         self.events.append(("error", {"code": code, "message": message}))
 
@@ -335,6 +338,130 @@ def test_fast_path_ack_reaches_tts_via_splitter() -> None:
     assert "".join(d["text"] for d in sink.data_of("sentence")) == ack
     assert tts.calls  # 至少合成过一句（具体拆分由 splitter 决定）
     assert "".join(tts.calls) == ack
+
+
+# ---------------------------------------------------------------- backend 型工具（提醒，2026-10-18）
+
+
+class FakeReminderTools:
+    """提醒工具服务替身：记录转发参数，可注入成功/失败结果。"""
+
+    def __init__(self, *, result: dict[str, Any] | None = None) -> None:
+        self.result = result or {
+            "ok": True,
+            "code": "reminder_created",
+            "message": "已设置提醒 · 明天 09:00 · 交房租",
+        }
+        self.calls: list[dict[str, Any]] = []
+
+    def create_from_tool(self, *, text: str, due_at: str, repeat: str) -> dict[str, Any]:
+        self.calls.append({"text": text, "due_at": due_at, "repeat": repeat})
+        return self.result
+
+    def list_for_tool(self, limit: int = 20) -> dict[str, Any]:
+        self.calls.append({"limit": limit})
+        return self.result
+
+    def cancel_from_tool(self, *, key: str) -> dict[str, Any]:
+        self.calls.append({"key": key})
+        return self.result
+
+
+def reminder_registry(fake: FakeReminderTools) -> ToolRegistry:
+    return build_default_registry(fake)
+
+
+def reminder_tool_delta(arguments: str) -> list[ToolCallDelta]:
+    return [
+        ToolCallDelta(index=0, id="call_r", name="create_reminder"),
+        ToolCallDelta(index=0, arguments=arguments),
+    ]
+
+
+def test_backend_tool_executes_and_emits_notice_not_tool_call() -> None:
+    """backend 型工具：当场执行 → notice 确定性确认；不向前端派发 tool_call。"""
+    fake = FakeReminderTools()
+    provider = FakeLLMProvider(
+        pieces=["好嘞，这就给你设上～"],
+        tool_deltas=reminder_tool_delta(
+            '{"text": "交房租", "due_at": "2026-10-18T09:00:00+08:00", "repeat": "none"}'
+        ),
+    )
+    sink, _ = run_turn(
+        provider, tools=reminder_registry(fake), user_text="明天 9 点提醒我交房租"
+    )
+
+    assert fake.calls == [
+        {
+            "text": "交房租",
+            "due_at": "2026-10-18T09:00:00+08:00",
+            "repeat": "none",
+        }
+    ]
+    assert sink.data_of("tool_call") == []  # backend 工具不交前端执行
+    notice = sink.data_of("notice")[0]
+    assert notice["code"] == "reminder_created"
+    assert notice["level"] == "info"
+    assert "已设置提醒" in notice["message"]
+    # 模型有正文：不补 ack，正文照常
+    assert sink.data_of("reply_end")[0]["full_text"] == "好嘞，这就给你设上～"
+
+
+def test_backend_tool_failure_without_content_speaks_failure_message() -> None:
+    """模型只调工具且执行失败：补话必须是失败原因，不能把失败说成成功。"""
+    fake = FakeReminderTools(
+        result={
+            "ok": False,
+            "code": "reminder_error",
+            "message": "提醒没设上：提醒时间必须晚于现在（至少 10 秒后）",
+        }
+    )
+    provider = FakeLLMProvider(
+        pieces=[],
+        tool_deltas=reminder_tool_delta(
+            '{"text": "交房租", "due_at": "2026-10-17T09:00:00+08:00"}'
+        ),
+    )
+    sink, _ = run_turn(provider, tools=reminder_registry(fake), user_text="提醒我交房租")
+
+    expected = "提醒没设上：提醒时间必须晚于现在（至少 10 秒后）"
+    assert [d["text"] for d in sink.data_of("token")] == [expected]
+    assert sink.data_of("reply_end")[0]["full_text"] == expected
+    notice = sink.data_of("notice")[0]
+    assert notice["code"] == "reminder_error"
+    assert notice["level"] == "warn"
+
+
+def test_backend_tool_failure_with_content_keeps_model_text() -> None:
+    """模型已经说了话：notice 照常给出失败原因，但不覆盖模型正文。"""
+    fake = FakeReminderTools(
+        result={"ok": False, "code": "reminder_error", "message": "提醒没设上：时间太远"}
+    )
+    provider = FakeLLMProvider(
+        pieces=["我试试看～"],
+        tool_deltas=reminder_tool_delta('{"text": "交房租", "due_at": "2099-01-01"}'),
+    )
+    sink, _ = run_turn(provider, tools=reminder_registry(fake), user_text="提醒我")
+
+    assert sink.data_of("reply_end")[0]["full_text"] == "我试试看～"
+    assert sink.data_of("notice")[0]["message"] == "提醒没设上：时间太远"
+
+
+def test_time_block_injected_only_when_reminder_tools_registered() -> None:
+    """提醒工具装配后 system 注入当前时间；旧注册表（仅 open_settings）不注入。"""
+    provider = FakeLLMProvider(pieces=["好"])
+    run_turn(provider, tools=reminder_registry(FakeReminderTools()), user_text="随便聊聊")
+    assert any(
+        message.role == "system" and "用户说相对时间" in message.content
+        for message in provider.seen_messages[0]
+    )
+
+    legacy = FakeLLMProvider(pieces=["好"])
+    run_turn(legacy, tools=build_default_registry(), user_text="随便聊聊")
+    assert not any(
+        message.role == "system" and "用户说相对时间" in message.content
+        for message in legacy.seen_messages[0]
+    )
 
 
 # ---------------------------------------------------------------- 降级链

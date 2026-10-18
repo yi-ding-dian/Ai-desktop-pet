@@ -18,9 +18,10 @@
 - behavior：enabled / 空闲间隔 / 免打扰 热更（引擎每轮动态读）；
   ``proactive_enabled`` / ``greeting`` 尚无消费点（主动对话未实现，配置已存）；
 - memory：enabled / 空闲阈值 / 扫描周期 热更（服务循环每轮动态读）；
+- reminders：enabled 联动启停，语音/补报上限/免打扰策略每 tick 动态读；
 - 无"重启后生效"的残留项（主题等前端侧配置不走后端，见 §7.6.4）。
 
-依赖方向：application 层——依赖 modules（llm/voice）与 shared；不 import
+依赖方向：application 层——依赖 modules（llm/voice/reminders）与 shared；不 import
 interfaces（WS 细节由 dispatcher 转换）。
 """
 
@@ -30,9 +31,11 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Sequence
 
 from loguru import logger
 
+from backend.application.reminder_service import ReminderService
 from backend.application.voice import VoiceOut
 from backend.modules.llm.openai_compat import OpenAICompatProvider
 from backend.modules.llm.provider import ChatMessage, Chunk, LLMProvider, ProbeResult
+from backend.modules.reminders import ReminderStore
 from backend.modules.tools import ToolRegistry, build_default_registry
 from backend.modules.voice.tts import TTSProvider, create_tts_provider
 from backend.shared.config import AppConfig
@@ -115,11 +118,25 @@ class TtsSlot:
 class Runtime:
     """运行时装配控制面：持有当前配置与各模块活引用，负责热重装配（main 装配）。"""
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(
+        self, config: AppConfig, *, reminder_store: ReminderStore | None = None
+    ) -> None:
         self._config = config
         self._llm = LlmSlot(create_llm_provider(config))
         self._tts = TtsSlot()
-        self._tools = build_default_registry()  # §4.7：内置工具（装配后只读）
+        # 提醒服务（2026-10-18）：有存储才装配；配置/免打扰都取运行时活引用，
+        # 设置保存后下一 tick 即生效。提醒工具随之注册（backend 型，见 modules/tools）。
+        self._reminders = (
+            ReminderService(
+                reminder_store,
+                config=lambda: self._config.reminders,
+                quiet_hours=lambda: self._config.behavior.quiet_hours,
+            )
+            if reminder_store is not None
+            else None
+        )
+        # §4.7：内置工具（装配后只读）；未装配提醒存储时注册表与旧版一致
+        self._tools = build_default_registry(self._reminders)
         self._engine: BehaviorEngine | None = None
         self._memory: MemoryService | None = None
 
@@ -142,6 +159,11 @@ class Runtime:
     def tools(self) -> ToolRegistry:
         """内置工具注册表（§4.7；ChatPipeline 构造时注入，生产自动启用工具机制）。"""
         return self._tools
+
+    @property
+    def reminders(self) -> ReminderService | None:
+        """提醒调度服务（未装配存储时为 None；dispatcher 绑定宠物连接）。"""
+        return self._reminders
 
     def pet_name(self) -> str:
         """当前宠物名字（ChatPipeline 每轮组装 system prompt 时动态读，§7.6.3）。"""
@@ -176,9 +198,13 @@ class Runtime:
             self._engine.start()  # 引擎自判 [behavior].enabled 并记日志
         if self._memory is not None and self._config.memory.enabled:
             self._memory.start()
+        if self._reminders is not None:
+            self._reminders.start()  # 服务自判 [reminders].enabled 并记日志
 
     async def stop_services(self) -> None:
         """停止后台服务（进程退出前由 main 调用）。"""
+        if self._reminders is not None:
+            await self._reminders.stop()
         if self._memory is not None:
             await self._memory.stop()
         if self._engine is not None:
@@ -197,6 +223,7 @@ class Runtime:
         self.apply_voice(config)
         await self.apply_behavior(config)
         await self.apply_memory(config)
+        await self.apply_reminders(config)
 
     def apply_llm(self, config: AppConfig) -> None:
         """LLM provider 热更新：按新 base_url / model / 采样参数重建并换入槽。"""
@@ -241,3 +268,8 @@ class Runtime:
         """记忆服务热更新：enabled 联动启停 + 阈值换值（服务内每轮动态读）。"""
         if self._memory is not None:
             await self._memory.update_config(config.memory)
+
+    async def apply_reminders(self, config: AppConfig) -> None:
+        """提醒服务热更新：enabled 联动启停（语音/补报等参数每 tick 动态读）。"""
+        if self._reminders is not None:
+            await self._reminders.update_config(config.reminders)

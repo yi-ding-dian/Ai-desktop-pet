@@ -25,8 +25,12 @@ export const IPC = {
   WINDOW_MOVE_CANCEL: 'window:move-cancel',
   /** 查询窗口几何（invoke → WindowGeometry；行为执行 + env 上报用） */
   WINDOW_GET_GEOMETRY: 'window:get-geometry',
+  /** 查询宠物窗是否可见（invoke → boolean；提醒在隐藏时转系统通知，2026-10-18） */
+  WINDOW_IS_VISIBLE: 'window:is-visible',
   /** 查询系统空闲秒数（invoke → number；powerMonitor.getSystemIdleTime） */
   SYSTEM_GET_IDLE_SECONDS: 'system:get-idle-seconds',
+  /** 显示系统通知（payload: {title, body}；提醒在宠物隐藏/教学/向导中补发，2026-10-18） */
+  SYSTEM_NOTIFY: 'system:notify',
   /** 查询后端状态快照（invoke → BackendSnapshot；渲染进程晚订阅时补状态） */
   BACKEND_GET_SNAPSHOT: 'backend:get-snapshot',
   /** 教学模式：请求进入（payload: TeachingEnterReason；宠物面"关键词"或内部） */
@@ -374,6 +378,8 @@ export interface PetBridgeApi {
     cancelMove(): void
     /** 查询窗口几何（位置/尺寸/工作区；行为执行与 env 上报用） */
     getGeometry(): Promise<WindowGeometry>
+    /** 查询宠物窗当前是否可见（提醒在隐藏时转系统通知，2026-10-18） */
+    isVisible(): Promise<boolean>
     /** 订阅窗口几何变化（主进程已 debounce ~1s）；返回取消订阅函数 */
     onGeometryChanged(cb: (geo: WindowGeometry) => void): () => void
     /** 空气让路：上报光标处命中判定（true=实体/交互元素，false=空气透明区）——主进程据此输入让路/恢复 */
@@ -385,6 +391,11 @@ export interface PetBridgeApi {
   system: {
     /** 系统空闲秒数（用户多久没有键鼠操作） */
     getIdleSeconds(): Promise<number>
+    /**
+     * 显示一条系统通知（提醒功能 v1）：宠物隐藏 / 教学 / 设置向导中无法弹气泡时补发；
+     * 主进程走 Electron Notification（跨平台，无平台分支）。
+     */
+    notify(title: string, body: string): void
   }
   /**
    * 魔法球捕获动画（ball-animation 域）：

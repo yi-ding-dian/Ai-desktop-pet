@@ -87,6 +87,29 @@ export function speakLocalNotice(text: string, ttlMs = 5_000): boolean {
 }
 
 /**
+ * 宠物主动说一句**提醒**（提醒功能 v1，2026-10-18）：气泡一定会出，与语音开关无关。
+ *
+ * 与 ``speakLocalNotice`` 的区别：提醒优先级更高——即使当前已有常驻回复气泡，
+ * 也用提醒文本原地替换（用户刚看到的回复已经读过；下一轮回复会再次替换回来）。
+ * 唯一让位场景是**回复正在流式输出**（speechActive）：此时返回 false，调用方
+ * 排队等 reply_end 后再展示，避免把正在生成的回复打断。
+ */
+export function speakReminder(text: string, ttlMs = 60_000): boolean {
+  const bridge = bubbleBridge()
+  if (!bridge || typeof bridge.sayBegin !== 'function') return false
+  if (speechActive) return false
+  clearTransientTimer()
+  if (typeof bridge.setNextSpeechTtl === 'function') {
+    bridge.setNextSpeechTtl(ttlMs) // 主进程夹取上限 60s；提醒建议停留 60s
+  }
+  bridge.sayBegin()
+  bridge.sayText(text)
+  bridge.sayEnd(false)
+  speechLatest = text
+  return true
+}
+
+/**
  * 接线说话气泡驱动（App 在挂载时调用一次）。返回取消订阅函数。
  */
 export function setupSpeechBubble(client: WsClient, options: SpeechBubbleOptions): () => void {

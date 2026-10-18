@@ -86,6 +86,10 @@ const api: PetBridgeApi = {
       return ipcRenderer.invoke(IPC.WINDOW_GET_GEOMETRY)
     },
 
+    isVisible(): Promise<boolean> {
+      return ipcRenderer.invoke(IPC.WINDOW_IS_VISIBLE)
+    },
+
     onGeometryChanged(cb: (geo: WindowGeometry) => void): () => void {
       const listener = (_event: Electron.IpcRendererEvent, geo: WindowGeometry): void => cb(geo)
       ipcRenderer.on(IPC_EVENTS.WINDOW_GEOMETRY_CHANGED, listener)
@@ -115,6 +119,10 @@ const api: PetBridgeApi = {
   system: {
     getIdleSeconds(): Promise<number> {
       return ipcRenderer.invoke(IPC.SYSTEM_GET_IDLE_SECONDS)
+    },
+
+    notify(title: string, body: string): void {
+      ipcRenderer.send(IPC.SYSTEM_NOTIFY, { title, body })
     }
   },
 
