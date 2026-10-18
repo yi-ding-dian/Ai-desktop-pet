@@ -294,6 +294,15 @@ body,
   padding: 1px 2px 11px;
   font-size: 13.5px;
   line-height: 1.5;
+  /* 确认文案里带本机路径（删除文件）：保留换行并允许长路径折行，避免路径被裁掉 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  /* 极长路径/名字：气泡内滚动，避免把窗口撑出屏幕或把按钮挤掉 */
+  max-height: 220px;
+  overflow-y: auto;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .pet-bubble-actions {

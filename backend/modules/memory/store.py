@@ -183,6 +183,21 @@ class MemoryStore:
         cursor = self._conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
         return cursor.rowcount > 0
 
+    def delete_containing(self, value: str) -> int:
+        """删除所有包含 ``value`` 的记忆，返回删除条数（记忆本"忘掉"联动清理用）。
+
+        用 ``instr(lower(...))`` 做**字面**子串匹配，而不是 ``LIKE``——URL/路径里
+        常见 ``%`` / ``_``，LIKE 通配符会误伤。大小写折叠后比较（URL/路径通常是
+        ASCII；中文不受影响）。值太短时由调用方（记忆本服务）自行跳过，避免误删。
+        """
+        needle = (value or "").strip()
+        if not needle:
+            return 0
+        cursor = self._conn.execute(
+            "DELETE FROM memories WHERE instr(lower(text), lower(?)) > 0", (needle,)
+        )
+        return max(0, cursor.rowcount)
+
     def find_similar(self, text: str, *, threshold: float = SIMILARITY_THRESHOLD) -> Memory | None:
         """在已有记忆中找与 text 高度相似的一条（去重前置检查）。
 

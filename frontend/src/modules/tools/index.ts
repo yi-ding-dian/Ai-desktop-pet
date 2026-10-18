@@ -2,14 +2,20 @@
  * 工具域（§4.7 工具机制）：后端 `tool_call` 事件 → 前端执行器。
  *
  * 背景：工具调用由后端（快通道关键词 / 模型 tools 协议）识别并推 `tool_call` 事件
- * （在对应回复的 reply_end 之后），本域统一按 name 分派到具体执行器——首期仅
- * `open_settings` → 打开设置窗口（§7.6.1 入口已从 teaching 域关键词迁至后端）。
+ * （在对应回复的 reply_end 之后），本域统一按 name 分派到具体执行器。
+ *
+ * 2026-10-18 记忆本：
+ * - `open_item`：后端已把 name 解析成精确的 kind/value，这里只负责调
+ *   system.openExternal（链接）或 system.openPath（本机文件/文件夹）；
+ * - `delete_path`：后端已校验路径与保护目录，这里调主进程的
+ *   system.deletePathWithConfirm——主进程弹「删除/取消」确认气泡，**用户点删除
+ *   后**才移入回收站；成功后回传后端移除记忆本记录、清理长期记忆。
  *
  * 设计取舍：
- * - 执行落在前端：开窗等能力属主进程/渲染侧（window.pet bridge），后端只声明"要调什么"，
- *   不感知前端实现；
+ * - 执行落在前端：开窗/打开文件等能力属主进程/渲染侧（window.pet bridge），后端只
+ *   声明"要调什么"，不感知前端实现；
  * - 未知 name 记录日志并忽略：前后端版本漂移（后端先上新工具）时静默降级，不打断对话；
- * - bridge 调用可选链容错：旧 preload 无 settings 段时静默跳过（同 teaching 域惯例）。
+ * - bridge 调用可选链容错：旧 preload 无新方法时静默跳过并给本地短提示。
  */
 import { getPetBridge } from '../../shared/pet-bridge'
 import type { WsClient } from '../../shared/ws-client'
@@ -19,16 +25,108 @@ const devLog = (msg: string): void => {
   if (import.meta.env.DEV) console.log(`[tools] ${msg}`)
 }
 
+/** 取字符串参数（非字符串按空串，避免 String(null) 变成 "null"） */
+function str(args: Record<string, unknown>, key: string): string {
+  const value = args[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * 本地短提示（5s 自动收起）：工具执行结果不经过对话流水线时，用说话气泡
+ * 把"已放进回收站 / 没删成 / 打不开"告诉用户，避免点了确认后没有任何反馈。
+ */
+function speakLocal(text: string): void {
+  if (!text) return
+  try {
+    const bubble = getPetBridge().bubble
+    bubble?.setNextSpeechTtl?.(5000)
+    bubble?.sayBegin?.({ kind: 'chat' })
+    bubble?.sayText?.(text)
+    bubble?.sayEnd?.(false)
+  } catch (err) {
+    devLog(`本地提示失败：${String(err)}`)
+  }
+}
+
+/** 工具执行器签名：args + 当前 WS 客户端（delete_path 成功后回传后端清理记录） */
+type ToolExecutor = (args: Record<string, unknown>, client: WsClient) => void | Promise<void>
+
 /**
  * 工具执行器表（name → 执行函数）。
- * 新增内置工具在此登记一条；args 按各工具契约解析（当前 open_settings 无参数，忽略之）。
+ * 新增内置工具在此登记一条；args 按各工具契约解析。
  */
-const TOOL_EXECUTORS = new Map<string, (args: Record<string, unknown>) => void>([
+const TOOL_EXECUTORS = new Map<string, ToolExecutor>([
   [
     'open_settings',
     () => {
       devLog('open_settings → 请求打开设置窗口')
       getPetBridge().settings?.open?.()
+    }
+  ],
+  [
+    'open_item',
+    async (args) => {
+      const kind = str(args, 'kind')
+      const value = str(args, 'value')
+      if (!value) {
+        speakLocal('没找到要打开的内容。')
+        return
+      }
+      const system = getPetBridge().system
+      if (!system?.openExternal || !system?.openPath) {
+        speakLocal('这个版本还不支持打开链接或文件。')
+        return
+      }
+      devLog(`open_item → ${kind}: ${value}`)
+      try {
+        const result =
+          kind === 'path' ? await system.openPath(value) : await system.openExternal(value)
+        if (!result.ok) speakLocal(result.message || '打不开这个链接或文件。')
+      } catch (err) {
+        devLog(`open_item 失败：${String(err)}`)
+        speakLocal('打不开这个链接或文件。')
+      }
+    }
+  ],
+  [
+    'delete_path',
+    async (args, client) => {
+      const path = str(args, 'path')
+      const name = str(args, 'name')
+      if (!path) {
+        speakLocal('没找到要删除的路径。')
+        return
+      }
+      const system = getPetBridge().system
+      if (!system?.deletePathWithConfirm) {
+        speakLocal('这个版本还不支持删除文件。')
+        return
+      }
+      devLog(`delete_path → 请求确认：${path}`)
+      let result
+      try {
+        result = await system.deletePathWithConfirm(path, name || undefined)
+      } catch (err) {
+        devLog(`delete_path 确认失败：${String(err)}`)
+        speakLocal('确认气泡没弹出来，再试一次好吗？')
+        return
+      }
+      if (!result.confirmed) {
+        speakLocal(result.message || '好，不删了。')
+        return
+      }
+      if (!result.ok) {
+        speakLocal(result.message || '没删成，可能没有权限。')
+        return
+      }
+      speakLocal(name ? `已经把『${name}』放进回收站啦。` : '已经放进回收站啦。')
+      // 主进程已确认移入回收站：让后端移除记忆本记录、清理长期记忆。
+      // 断线时回传失败，记录会在下次打开时显示“路径不存在”，可手动删。
+      try {
+        client.send('notebook_file_deleted', { path })
+      } catch (err) {
+        devLog(`notebook_file_deleted 回传失败：${String(err)}`)
+      }
     }
   ]
 ])
@@ -45,7 +143,13 @@ export function setupToolExecutor(client: WsClient): () => void {
       devLog(`未知工具（已忽略）：name=${name}`)
       return
     }
-    executor(args)
+    try {
+      void Promise.resolve(executor(args, client)).catch((err: unknown) => {
+        devLog(`工具 ${name} 执行异常：${String(err)}`)
+      })
+    } catch (err) {
+      devLog(`工具 ${name} 执行异常：${String(err)}`)
+    }
   })
   return () => {
     offToolCall()

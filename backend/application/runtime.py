@@ -44,6 +44,7 @@ from backend.shared.secrets import get_llm_key
 
 if TYPE_CHECKING:  # 仅类型注解（运行时经鸭子类型调用，避免多余 import 环）
     from backend.application.memory_service import MemoryService
+    from backend.application.notebook_service import NotebookService
     from backend.modules.behavior.engine import BehaviorEngine
 
 
@@ -119,7 +120,11 @@ class Runtime:
     """运行时装配控制面：持有当前配置与各模块活引用，负责热重装配（main 装配）。"""
 
     def __init__(
-        self, config: AppConfig, *, reminder_store: ReminderStore | None = None
+        self,
+        config: AppConfig,
+        *,
+        reminder_store: ReminderStore | None = None,
+        notebook: NotebookService | None = None,
     ) -> None:
         self._config = config
         self._llm = LlmSlot(create_llm_provider(config))
@@ -135,8 +140,10 @@ class Runtime:
             if reminder_store is not None
             else None
         )
-        # §4.7：内置工具（装配后只读）；未装配提醒存储时注册表与旧版一致
-        self._tools = build_default_registry(self._reminders)
+        # 记忆本服务（2026-10-18）：由 main 装配后注入；工具随之注册。
+        self._notebook = notebook
+        # §4.7：内置工具（装配后只读）；未装配提醒/记忆本/搜索时注册表与旧版一致
+        self._tools = build_default_registry(self._reminders, self._notebook)
         self._engine: BehaviorEngine | None = None
         self._memory: MemoryService | None = None
 

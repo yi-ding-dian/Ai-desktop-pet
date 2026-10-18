@@ -625,3 +625,96 @@ def test_connection_context_tool_call_event_shape() -> None:
     envelope = json.loads(ctx.ws.sent[0])
     assert envelope["type"] == "tool_call"
     assert envelope["data"] == {"id": "call_1", "name": "open_settings", "args": {"q": "x"}}
+
+
+# ---------------------------------------------------------------- 记忆本前置解析（2026-10-18）
+
+
+def test_prepare_resolves_frontend_tool_args() -> None:
+    """prepare 成功：用解析后的参数派发前端 tool_call（名字 → 精确值）。"""
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="open_item",
+            description="",
+            parameters={"type": "object", "properties": {}},
+            executor="frontend",
+            prepare=lambda args, user_text: {
+                "ok": True,
+                "args": {
+                    "kind": "link",
+                    "value": "https://resolved",
+                    "user_text": user_text,
+                },
+            },
+        )
+    )
+    pipeline = ChatPipeline(FakeLLMProvider(), tools=registry)
+    frontend, backend = asyncio.run(
+        pipeline._execute_tool_calls(
+            [("t1", "open_item", {"name": "博客"})], "打开博客"
+        )
+    )
+    assert backend == []
+    assert frontend == [
+        (
+            "t1",
+            "open_item",
+            {"kind": "link", "value": "https://resolved", "user_text": "打开博客"},
+        )
+    ]
+
+
+def test_prepare_failure_becomes_backend_notice() -> None:
+    """prepare 失败：不派发前端，按后端结果发通知（找不到条目/路径失效等）。"""
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="open_item",
+            description="",
+            parameters={"type": "object", "properties": {}},
+            executor="frontend",
+            prepare=lambda args, user_text: {
+                "ok": False,
+                "code": "item_not_found",
+                "message": "记忆本里没有这条",
+            },
+        )
+    )
+    pipeline = ChatPipeline(FakeLLMProvider(), tools=registry)
+    frontend, backend = asyncio.run(
+        pipeline._execute_tool_calls([("t1", "open_item", {"name": "x"})], "打开 x")
+    )
+    assert frontend == []
+    assert backend == [
+        (
+            "open_item",
+            {"ok": False, "code": "item_not_found", "message": "记忆本里没有这条"},
+        )
+    ]
+
+
+def test_backend_tool_receives_user_text_when_needed() -> None:
+    """needs_user_text=True 的 handler 拿到用户本轮原话（删记录点名保护）。"""
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="delete_item",
+            description="",
+            parameters={"type": "object", "properties": {}},
+            executor="backend",
+            needs_user_text=True,
+            handler=lambda args, user_text: {
+                "ok": True,
+                "code": "items_deleted",
+                "message": f"user_text={user_text}",
+            },
+        )
+    )
+    pipeline = ChatPipeline(FakeLLMProvider(), tools=registry)
+    _frontend, backend = asyncio.run(
+        pipeline._execute_tool_calls(
+            [("t1", "delete_item", {"names": ["博客"]})], "忘掉博客"
+        )
+    )
+    assert backend[0][1]["message"] == "user_text=忘掉博客"

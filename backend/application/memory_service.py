@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import time
+from typing import Callable
 
 from loguru import logger
 
@@ -72,12 +73,15 @@ class MemoryService:
         idle_seconds: float = 300.0,
         check_interval_seconds: float = 15.0,
         prompt: str | None = None,
+        is_forgotten: Callable[[str], bool] | None = None,
     ) -> None:
         """
         - ``idle_seconds``：会话空闲多久后触发提取（默认 5 分钟，config [memory] 可配）；
         - ``check_interval_seconds``：扫描周期；
         - ``history``：从 messages 表读取比内存 deque 更长的对话片段（推荐传入）；
-        - ``prompt``：提取提示词（缺省从 llm/prompts 加载；测试可注入简版）。
+        - ``prompt``：提取提示词（缺省从 llm/prompts 加载；测试可注入简版）；
+        - ``is_forgotten``：记忆本遗忘名单过滤器（application 装配注入；记忆域
+          不 import notebook 域）。命中则这条待入库记忆跳过。
         """
         self._sessions = sessions
         self._history = history
@@ -88,6 +92,7 @@ class MemoryService:
             profile_store,
             complete=functools.partial(complete_via_provider, provider),
             prompt=prompt if prompt is not None else load_memory_extract_prompt(),
+            is_forgotten=is_forgotten,
         )
         self._task: asyncio.Task[None] | None = None
 

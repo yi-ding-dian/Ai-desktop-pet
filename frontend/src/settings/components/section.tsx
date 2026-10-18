@@ -1,6 +1,6 @@
 /**
  * 分区骨架（settings 域 components 层）：标题 + 说明 + 内容。
- * 七个分区（LLM/宠物/声音/行为/记忆/主题/关于）共用。
+ * 各设置分区共用（数量随功能增加；当前含记忆本）。
  */
 import type { ReactElement, ReactNode } from 'react'
 

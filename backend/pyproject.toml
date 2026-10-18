@@ -43,6 +43,8 @@ packages = [
     "backend.modules.llm",
     "backend.modules.llm.prompts",
     "backend.modules.memory",
+    "backend.modules.notebook",
+    "backend.modules.reminders",
     "backend.modules.tools",
     "backend.modules.voice",
     "backend.modules.voice.tts",

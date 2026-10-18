@@ -1,0 +1,264 @@
+/* 记忆本分区（settings 域，2026-10-18）：只消费 shared/theme 变量，跟随主题。 */
+
+.notebook-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.notebook-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.notebook-filter {
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel-faint);
+  color: var(--ui-fg-dim);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.notebook-filter:hover {
+  background: var(--ui-hover);
+}
+
+.notebook-filter.active {
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+  color: var(--ui-accent);
+}
+
+.notebook-count {
+  margin-left: 6px;
+  color: var(--ui-fg-faint);
+  font-size: 12px;
+}
+
+.notebook-btn {
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel);
+  color: var(--ui-fg);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.notebook-btn:hover:not(:disabled) {
+  background: var(--ui-hover);
+}
+
+.notebook-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.notebook-btn-primary {
+  background: var(--ui-accent);
+  border-color: transparent;
+  color: var(--ui-accent-fg);
+}
+
+.notebook-btn-primary:hover:not(:disabled) {
+  background: var(--ui-accent-strong);
+}
+
+.notebook-btn-danger {
+  color: var(--ui-danger);
+  border-color: color-mix(in srgb, var(--ui-danger) 45%, transparent);
+}
+
+.notebook-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ui-danger) 12%, transparent);
+}
+
+.notebook-btn-sm {
+  padding: 3px 9px;
+  font-size: 12px;
+  border-radius: 7px;
+}
+
+.notebook-hint {
+  margin: 4px 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--ui-panel-faint);
+  color: var(--ui-fg-dim);
+  font-size: 12px;
+}
+
+.notebook-add {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 120px minmax(200px, 2fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0 14px;
+}
+
+.notebook-add .set-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+  .notebook-add {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.notebook-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border-left: 3px solid var(--ui-border);
+  background: var(--ui-panel-faint);
+  color: var(--ui-fg);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.notebook-notice-info {
+  border-left-color: var(--ui-accent);
+}
+
+.notebook-notice-success {
+  border-left-color: var(--ui-success);
+}
+
+.notebook-notice-error {
+  border-left-color: var(--ui-danger);
+}
+
+.notebook-notice-text {
+  flex: 1;
+}
+
+.notebook-notice-close {
+  border: none;
+  background: transparent;
+  color: var(--ui-fg-dim);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.notebook-table-wrap {
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  overflow: auto;
+}
+
+.notebook-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.notebook-table th {
+  text-align: left;
+  padding: 8px 10px;
+  color: var(--ui-fg-dim);
+  font-weight: 600;
+  background: var(--ui-panel-faint);
+  border-bottom: 1px solid var(--ui-border);
+  white-space: nowrap;
+}
+
+.notebook-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ui-border-soft);
+  vertical-align: top;
+}
+
+.notebook-table tr:last-child td {
+  border-bottom: none;
+}
+
+.notebook-name {
+  font-weight: 600;
+  min-width: 90px;
+}
+
+.notebook-kind {
+  color: var(--ui-fg-dim);
+  white-space: nowrap;
+}
+
+.notebook-value {
+  max-width: 420px;
+  word-break: break-all;
+}
+
+.notebook-value-text {
+  color: var(--ui-fg-dim);
+}
+
+.notebook-warn {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--ui-danger);
+  white-space: nowrap;
+}
+
+.notebook-time {
+  color: var(--ui-fg-faint);
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.notebook-ops {
+  min-width: 150px;
+}
+
+.notebook-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.notebook-delete-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-panel-faint);
+}
+
+.notebook-delete-title {
+  color: var(--ui-fg-dim);
+  font-size: 12px;
+}
+
+.notebook-rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notebook-rename .set-input {
+  min-width: 100px;
+}
+
+.notebook-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--ui-fg-dim);
+  border: 1px dashed var(--ui-border);
+  border-radius: 10px;
+  font-size: 13px;
+}

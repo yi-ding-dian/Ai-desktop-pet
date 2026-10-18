@@ -31,6 +31,14 @@ export const IPC = {
   SYSTEM_GET_IDLE_SECONDS: 'system:get-idle-seconds',
   /** 显示系统通知（payload: {title, body}；提醒在宠物隐藏/教学/向导中补发，2026-10-18） */
   SYSTEM_NOTIFY: 'system:notify',
+  /** 用系统默认浏览器打开 http/https 外链（invoke(url) → OpenResult；记忆本 open_item） */
+  SYSTEM_OPEN_EXTERNAL: 'system:open-external',
+  /** 用默认程序打开本机文件/文件夹（invoke(path) → OpenResult；可执行/脚本类拒绝） */
+  SYSTEM_OPEN_PATH: 'system:open-path',
+  /** 宠物面：删除本机文件/文件夹——先弹气泡确认，确认后移入回收站（2026-10-18） */
+  SYSTEM_DELETE_PATH_CONFIRM: 'system:delete-path-confirm',
+  /** 设置面：删除本机文件/文件夹——主进程原生确认框，确认后移入回收站 */
+  SETTINGS_DELETE_PATH: 'settings:delete-path',
   /** 查询后端状态快照（invoke → BackendSnapshot；渲染进程晚订阅时补状态） */
   BACKEND_GET_SNAPSHOT: 'backend:get-snapshot',
   /** 教学模式：请求进入（payload: TeachingEnterReason；宠物面"关键词"或内部） */
@@ -446,6 +454,29 @@ export interface WindowDebugState {
   hitboxVisible: boolean
 }
 
+/** 打开外链/本机路径的结果（记忆本 open_item；失败 message 可直接展示） */
+export interface OpenResult {
+  ok: boolean
+  message?: string
+}
+
+/**
+ * 删除本机路径的结果：
+ * - ``confirmed=false``：用户点了取消 / 点别处 / 气泡超时——什么都没删；
+ * - ``confirmed=true, ok=false``：用户确认了，但删除失败（权限/路径变化等）。
+ */
+export interface DeletePathResult {
+  confirmed: boolean
+  ok: boolean
+  message?: string
+}
+
+/** 删除真实文件的请求（path 必须是绝对路径；name 仅用于确认气泡文案） */
+export interface DeletePathRequest {
+  path: string
+  name?: string
+}
+
 /**
  * 用户选中的文件（文件分析 P1）。
  * 只在主进程 stat 元信息，不读正文；正文由本地后端按路径读取并执行限额。
@@ -510,6 +541,15 @@ export interface PetBridgeApi {
      * 主进程走 Electron Notification（跨平台，无平台分支）。
      */
     notify(title: string, body: string): void
+    /** 用系统默认浏览器打开 http/https 外链（只放行 http/https；2026-10-18 记忆本） */
+    openExternal(url: string): Promise<OpenResult>
+    /** 用默认程序打开本机文件/文件夹（可执行/脚本类拒绝；2026-10-18 记忆本） */
+    openPath(path: string): Promise<OpenResult>
+    /**
+     * 宠物面：删除本机文件/文件夹——先从宠物头部弹「删除 / 取消」确认气泡，
+     * **用户点删除后**才把目标移入系统回收站（可恢复）。取消/超时什么都不做。
+     */
+    deletePathWithConfirm(path: string, name?: string): Promise<DeletePathResult>
   }
   /**
    * 魔法球捕获动画（ball-animation 域）：
@@ -578,6 +618,11 @@ export interface PetBridgeApi {
     notifySaved(): void
     /** 宠物面：订阅设置窗显示状态（向导编排——面板收起/萌语气泡/回位）；返回取消订阅函数 */
     onVisibility(cb: (payload: SettingsVisibilityPayload) => void): () => void
+    /**
+     * 设置面：删除本机文件/文件夹——主进程用原生确认框（删除/取消），
+     * 确认后才移入系统回收站。返回与宠物面同一结构。
+     */
+    deletePath(path: string): Promise<DeletePathResult>
   }
   /** 应用级操作（设置页用） */
   app: {

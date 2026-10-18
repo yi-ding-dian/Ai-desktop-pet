@@ -81,6 +81,7 @@ class ExtractionResult:
     ok: bool  # LLM 调用与解析是否成功（False=异常降级，未写任何数据）
     added: list[Memory] = field(default_factory=list)  # 新入库记忆
     duplicates: int = 0  # 因与已有/批内记忆高度相似而跳过的条数
+    forgotten: int = 0  # 撞上记忆本"遗忘名单"而跳过的条数
     profile_keys: list[str] = field(default_factory=list)  # 更新/新增的画像 key
     note: str = ""  # 结果摘要（失败原因已脱敏）
 
@@ -210,17 +211,22 @@ class MemoryExtractor:
         complete: CompleteFn,
         prompt: str,
         similarity_threshold: float = SIMILARITY_THRESHOLD,
+        is_forgotten: Callable[[str], bool] | None = None,
     ) -> None:
         """
         - ``complete``：注入的补全回调（application 用对话 provider 实现）；
         - ``prompt``：专用提示词全文（application 从 llm/prompts 加载后注入）；
-        - ``similarity_threshold``：去重阈值（字符 bigram Dice，向量接入后换余弦）。
+        - ``similarity_threshold``：去重阈值（字符 bigram Dice，向量接入后换余弦）；
+        - ``is_forgotten``：记忆本"遗忘名单"过滤器（application 注入，memory 域
+          不 import notebook 域）。返回 True 的待入库记忆直接跳过——用户已经
+          明确删掉的链接/路径，不能后台从旧对话里又捞回来。
         """
         self._store = store
         self._profile = profile_store
         self._complete = complete
         self._prompt = prompt
         self._threshold = similarity_threshold
+        self._is_forgotten = is_forgotten
 
     async def extract(self, messages: Sequence[MessageLike]) -> ExtractionResult:
         """从对话记录中提取记忆并入库；LLM/解析异常均不抛出（后台任务安全）。"""
@@ -246,11 +252,15 @@ class MemoryExtractor:
         extracted: list[ExtractedMemory],
         profiles: list[ExtractedProfile],
     ) -> ExtractionResult:
-        """去重 + 入库 + 画像更新。"""
+        """遗忘过滤 + 去重 + 入库 + 画像更新。"""
         added: list[Memory] = []
         duplicates = 0
+        forgotten = 0
         batch_texts: list[str] = []
         for item in extracted:
+            if self._is_forgotten is not None and self._is_forgotten(item.text):
+                forgotten += 1  # 用户在记忆本里明确删掉过的值（链接/路径等）
+                continue
             if self._store.find_similar(item.text, threshold=self._threshold) is not None:
                 duplicates += 1
                 continue
@@ -266,12 +276,17 @@ class MemoryExtractor:
             profile_keys.append(profile.key)
 
         result = ExtractionResult(
-            ok=True, added=added, duplicates=duplicates, profile_keys=profile_keys
+            ok=True,
+            added=added,
+            duplicates=duplicates,
+            forgotten=forgotten,
+            profile_keys=profile_keys,
         )
         logger.info(
-            "记忆提取完成：新增 {} 条 / 跳过重复 {} 条 / 画像更新 {} 项",
+            "记忆提取完成：新增 {} 条 / 跳过重复 {} 条 / 跳过已遗忘 {} 条 / 画像更新 {} 项",
             len(added),
             duplicates,
+            forgotten,
             len(profile_keys),
         )
         for memory in added:

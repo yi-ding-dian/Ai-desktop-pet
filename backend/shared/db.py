@@ -100,6 +100,37 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_reminder_events_unread "
     "ON reminder_events(acknowledged_at, fired_at)",
     "CREATE INDEX IF NOT EXISTS idx_reminder_events_fired ON reminder_events(fired_at)",
+    # 记忆本（2026-10-18）：用户明确要求记住的链接 / 本机路径 / 短文本。
+    # 名字是主键（name_key 归一化后唯一），值原样保存——打开/删除按名字取精确值，
+    # 不经过模型改写（与长期记忆「自然语言模糊召回」分工见 modules/notebook/store.py）。
+    """
+    CREATE TABLE IF NOT EXISTS saved_items (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      name_key    TEXT NOT NULL,              -- 归一化名字（去空白 + casefold），唯一键
+      kind        TEXT NOT NULL,              -- link / path / text
+      value       TEXT NOT NULL,              -- 原样保存的链接、绝对路径或短文本
+      is_dir      INTEGER NOT NULL DEFAULT 0, -- kind=path 时区分文件夹/文件（展示用）
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_items_name_key "
+    "ON saved_items(name_key)",
+    "CREATE INDEX IF NOT EXISTS idx_saved_items_kind ON saved_items(kind)",
+    # 遗忘名单（2026-10-18）：删除记忆本条目时记下归一化后的值，后台记忆提取据此
+    # 跳过含该值的记忆，防止从旧对话里把用户已经“忘掉”的链接/路径重新捞回来。
+    # 30 天过期（旧对话早已过提取窗口）；重新保存同一个值时清除。
+    """
+    CREATE TABLE IF NOT EXISTS forgotten_values (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      value_key   TEXT NOT NULL,              -- casefold 后的值（只用于子串匹配）
+      created_at  INTEGER NOT NULL,
+      expires_at  INTEGER NOT NULL
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_forgotten_values_key "
+    "ON forgotten_values(value_key)",
 )
 
 

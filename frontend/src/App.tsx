@@ -353,7 +353,12 @@ export default function App(): ReactElement {
       wsClient.on('emotion', (d) => setEmotion(d.emotion)),
       // 文件分析等一次性提示：聊天面板上方轻提示（不进历史、不弹气泡）
       wsClient.on('notice', (d) =>
-        showChatNotice(d.message, d.level === 'warn' ? 'warn' : d.level === 'error' ? 'error' : 'info')
+        showChatNotice(
+          d.message,
+          d.level === 'warn' ? 'warn' : d.level === 'error' ? 'error' : 'info',
+          // 记忆本清单可能较长：多留阅读时间（其余提示维持 8s）
+          d.code === 'items_listed' ? 20_000 : 8_000
+        )
       ),
       wsClient.on('error', (d) => setLastError(`${d.code}: ${d.message}`))
     ]

@@ -33,6 +33,18 @@ _REMINDER_TIME = re.compile(
     r"|\d{1,2}[:：]\d{2}"
 )
 
+#: 记忆本保存意图（2026-10-18）：用户明确说“记住/记一下/收藏”。
+#: 与提醒一样，模型会偶发“只嘴上答应、不真正调用工具”，对明确的保存指令用
+#: tool_choice 强制调用 save_item。词表只做“意图识别”，具体条目/名字仍由模型填。
+_REMEMBER_ACTION = re.compile(r"记住|记一下|记下|收藏|存到记忆本|记到记忆本")
+#: 句首/标点后的保存动作（排除“你记得吗”“记住我叫什么了吗”这类疑问/闲聊）
+_REMEMBER_START = re.compile(
+    r"(?:^|[，。！？；\s])(?:请|帮我|麻烦)?(?:记住|记一下|记下|收藏|存到记忆本|记到记忆本)"
+)
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+#: 否定表达（“没记住/不用记住/别收藏”）不是保存指令——即使带链接也不强制
+_REMEMBER_NEGATIVE = re.compile(r"(?:没|不|别|不用|不想|无需|不要)(?:用)?(?:记住|记下|记一下|收藏)")
+
 
 def match_directive(text: str) -> str | None:
     """在用户输入中匹配内置指令词表；命中返回工具名，未命中返回 None。
@@ -49,17 +61,31 @@ def match_directive(text: str) -> str | None:
 def match_forced_tool(text: str) -> str | None:
     """返回本轮应当**强制**调用的工具名；无则 None。
 
-    背景（2026-10-18 真机缺陷）：模型对“1 分钟后提醒我睡觉”这类请求会随机
-    只回一句“好，提醒你”，却不真正调用 ``create_reminder``——用户以为设上了，
-    到点没有提醒。对“提醒动作 + 明确时间”这种高置信度意图，调用方用
-    ``tool_choice`` 强制指定工具，把“模型自选”变成“必须调用”。
+    覆盖两类高置信度意图（其余仍由模型自选，避免打断反问）：
 
-    只覆盖 create_reminder：取消/查看提醒需要先确定目标或列表，强行调用反而
-    会打断模型的反问，暂不强制。
+    1. ``create_reminder``：提醒动作 + 明确时间——模型曾只回“好，提醒你”却不
+       真正创建，用户以为设上了、到点没有提醒（2026-10-18 真机复现）；
+    2. ``save_item``：明确的“记住/记一下/收藏”保存指令（句首动作，或带 URL）
+       ——同理，模型可能只口头答应“记住了”，实际没写进记忆本。
+
+    疑问句（“……吗/呢/？”）且没有链接时不强制（“记住我叫什么了吗”是在问，
+    不是让保存）。取消/查看/打开/删除需要先确定目标或列表，强行调用会打断
+    模型的反问，暂不强制。
     """
     content = (text or "").strip()
     if not content:
         return None
+    has_url = _URL_RE.search(content) is not None
     if _REMINDER_ACTION.search(content) and _REMINDER_TIME.search(content):
         return "create_reminder"
+    if _REMINDER_ACTION.search(content):
+        # 有提醒意图但没有明确时间：让模型反问“几点”，或自行编排“保存 + 提醒”
+        # 两个工具；此时强制 save_item 会抢掉提醒意图。
+        return None
+    if _REMEMBER_NEGATIVE.search(content):
+        return None
+    if _REMEMBER_START.search(content) or (_REMEMBER_ACTION.search(content) and has_url):
+        if not has_url and content.endswith(("吗", "呢", "？", "?")):
+            return None
+        return "save_item"
     return None

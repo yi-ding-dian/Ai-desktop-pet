@@ -38,6 +38,8 @@
   3) 降级：带 tools 的请求被 LLM_BAD_REQUEST 拒绝且本轮无任何产出（疑似网关/
      模型不支持 tools）→ 摘除 tools 重放一次；再败以第一次错误收尾。降级置
      **进程级标记**（模块变量）——后续轮不再携带 tools（快通道不受影响）。
+
+生成最终回答（**唯一的两轮路径**，第二轮不携带 tools，避免循环调用）。
 """
 
 from __future__ import annotations
@@ -81,6 +83,7 @@ from backend.modules.voice.splitter import SentenceSplitter
 from backend.shared.errors import LlmError, LlmErrorCode
 
 if TYPE_CHECKING:  # 仅类型注解；运行时经 Protocol/鸭子类型协作（避免循环 import）
+    from backend.application.notebook_service import NotebookService
     from backend.application.voice import ReplyVoice, VoiceOut
     from backend.modules.memory.profile import ProfileStore
     from backend.modules.memory.store import MemoryStore
@@ -137,6 +140,15 @@ def _stored_user_text(user_text: str, refs: Sequence[FileRef]) -> str:
 #: 没产出正文且该工具 spec 无 ack 时，用它补一句口语回应，避免用户端静默。
 _FALLBACK_ACK = "好嘞，已经帮你办好啦～"
 
+
+def _forced_tool_missed_notice(tool_name: str | None) -> tuple[str, str]:
+    """强制 tool_choice 后模型仍未返回该工具时的用户提示（按工具区分文案）。"""
+    if tool_name == "create_reminder":
+        return ("reminder_tool_missed", "这条提醒可能没设上：我这边没收到创建指令，再说一次好吗？")
+    if tool_name == "save_item":
+        return ("memory_item_missed", "这条可能没记上：我这边没收到保存指令，再说一次好吗？")
+    return ("tool_call_missed", "这个操作可能没完成：我这边没收到执行指令，再说一次好吗？")
+
 #: 进程级降级标记（§4.7）：带 tools 的请求被 LLM_BAD_REQUEST 拒绝且本轮无产出
 #: （疑似网关/模型不支持 tools）→ 置位后本进程后续轮不再携带 tools。
 #: 为什么用模块变量：降级结论对"这个网关 + 模型"是进程级事实，跨连接/跨会话共享；
@@ -168,6 +180,10 @@ class ChatPipeline:
 
     ``tools``（可选注入，§4.7 工具机制）：内置工具注册表；缺省 None 时
     行为与旧版完全一致（不做指令快通道、请求不携带 tools）。
+
+    ``notebook``（可选注入，2026-10-18 记忆本）：每轮把"名字 + 类型"清单注入
+    system（链接 URL / 本机路径不注入）；``open_item`` / ``delete_path`` 的
+    名字 → 精确值解析也由它完成。缺省 None 时行为与旧版完全一致。
     """
 
     def __init__(
@@ -178,6 +194,7 @@ class ChatPipeline:
         profile: ProfileStore | None = None,
         pet_name: Callable[[], str | None] | None = None,
         tools: ToolRegistry | None = None,
+        notebook: NotebookService | None = None,
         config: Callable[[], AppConfig] | None = None,
     ) -> None:
         self._provider = provider
@@ -185,6 +202,7 @@ class ChatPipeline:
         self._profile = profile
         self._pet_name = pet_name
         self._tools = tools
+        self._notebook = notebook
         # 配置活引用（文件限额 / 上下文预算每轮动态读，设置保存后下一轮即生效）；
         # None = 测试/未装配场景，使用保守默认值。
         self._config = config
@@ -385,7 +403,7 @@ class ChatPipeline:
                             "type": "function",
                             "function": {"name": forced_tool},
                         }
-                        logger.info("提醒意图明确，强制调用工具：{}", forced_tool)
+                        logger.info("意图明确，强制调用工具：{}", forced_tool)
 
                 async def consume_stream(**opts: Any) -> None:
                     """消费一次 LLM 流（首次请求与降级重放共用同一实现，防两处走样）。"""
@@ -507,7 +525,7 @@ class ChatPipeline:
             # 结果稍后以确定性 notice 推送；frontend 型（open_settings）保持原样，
             # reply_end 之后经 tool_call 下发。执行结果也决定"无正文时补哪句话"。
             frontend_calls, backend_results = await self._execute_tool_calls(
-                tool_calls_to_emit
+                tool_calls_to_emit, user_text
             )
             if (frontend_calls or backend_results) and not clean_parts:
                 ack_text = self._compose_tool_ack(frontend_calls, backend_results)
@@ -549,12 +567,8 @@ class ChatPipeline:
                     "info" if result.get("ok") else "warn",
                 )
             if forced_tool_missed and llm_error is None:
-                await self._send_notice(
-                    sink,
-                    "reminder_tool_missed",
-                    "这条提醒可能没设上：我这边没收到创建指令，再说一次好吗？",
-                    "warn",
-                )
+                missed_code, missed_text = _forced_tool_missed_notice(forced_tool)
+                await self._send_notice(sink, missed_code, missed_text, "warn")
             if llm_error is not None:
                 # 回复先定型，再报错说明原因（前端不会卡在 thinking）
                 await sink.error(str(llm_error.code), llm_error.message)
@@ -609,28 +623,74 @@ class ChatPipeline:
         return _FALLBACK_ACK
 
     async def _execute_tool_calls(
-        self, calls: list[tuple[str, str, dict[str, Any]]]
+        self, calls: list[tuple[str, str, dict[str, Any]]], user_text: str
     ) -> tuple[
         list[tuple[str, str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]
     ]:
         """按 ``ToolSpec.executor`` 分流：返回 (前端调用, 后端结果)。
 
+        - ``prepare``（记忆本 open_item / delete_path）：派发前做"名字 → 精确值"
+          解析与用户原话校验；失败直接转成后端通知，不派发；
         - 未注册 / frontend 型：原样交给前端（协议 tool_call）；
         - backend 型：在这里执行 handler（同步或 awaitable），结果留给 notice。
+          ``needs_user_text=True`` 的 handler 额外拿到用户本轮原话。
         单个工具执行失败只记录、不阻断本轮对话。
         """
         frontend_calls: list[tuple[str, str, dict[str, Any]]] = []
         backend_results: list[tuple[str, dict[str, Any]]] = []
         for tool_id, name, args in calls:
             spec = self._tools.get(name) if self._tools is not None else None
-            if spec is None or spec.executor != "backend":
+            if spec is None:
                 frontend_calls.append((tool_id, name, args))
                 continue
-            backend_results.append((name, await self._run_backend_tool(spec, args)))
+
+            if spec.prepare is not None:
+                try:
+                    prepared = spec.prepare(args, user_text)
+                    if inspect.isawaitable(prepared):
+                        prepared = await prepared
+                except Exception:
+                    logger.exception("工具 {} 前置解析异常", name)
+                    backend_results.append(
+                        (
+                            name,
+                            {
+                                "ok": False,
+                                "code": "tool_prepare_failed",
+                                "message": "这个操作没做成，再说一次好吗？",
+                            },
+                        )
+                    )
+                    continue
+                if not isinstance(prepared, dict) or not prepared.get("ok"):
+                    result = prepared if isinstance(prepared, dict) else {}
+                    backend_results.append(
+                        (
+                            name,
+                            {
+                                "ok": False,
+                                "code": str(result.get("code") or "tool_prepare_failed"),
+                                "message": str(
+                                    result.get("message") or "这个操作没做成，再说一次好吗？"
+                                ),
+                            },
+                        )
+                    )
+                    continue
+                prepared_args = prepared.get("args")
+                if isinstance(prepared_args, dict):
+                    args = prepared_args
+
+            if spec.executor != "backend":
+                frontend_calls.append((tool_id, name, args))
+                continue
+            backend_results.append(
+                (name, await self._run_backend_tool(spec, args, user_text))
+            )
         return frontend_calls, backend_results
 
     async def _run_backend_tool(
-        self, spec: ToolSpec, args: dict[str, Any]
+        self, spec: ToolSpec, args: dict[str, Any], user_text: str
     ) -> dict[str, Any]:
         """执行一个 backend 型工具，把结果收敛为 ``{ok, code, message}``。"""
         if spec.handler is None:
@@ -641,7 +701,10 @@ class ChatPipeline:
                 "message": f"工具 {spec.name} 暂时不可用",
             }
         try:
-            result = spec.handler(args)
+            if spec.needs_user_text:
+                result = spec.handler(args, user_text)
+            else:
+                result = spec.handler(args)
             if inspect.isawaitable(result):
                 result = await result
         except Exception:
@@ -734,6 +797,9 @@ class ChatPipeline:
         memory_block = await self._build_memory_block(user_text)
         if memory_block is not None:
             messages.append(ChatMessage(role="system", content=memory_block))
+        notebook_block = self._build_notebook_block()
+        if notebook_block is not None:
+            messages.append(ChatMessage(role="system", content=notebook_block))
         time_block = self._time_block()
         if time_block is not None:
             messages.append(ChatMessage(role="system", content=time_block))
@@ -777,6 +843,28 @@ class ChatPipeline:
                 logger.exception("记忆 last_used_at 更新失败（不影响本轮对话）")
         return block
 
+    def _build_notebook_block(self) -> str | None:
+        """记忆本清单 → 第三条 system 文本；未装配/为空返回 None。
+
+        只注入名字 + 类型（文本条目附值）；链接 URL 与本机路径不注入——打开时
+        模型只传名字，由 ``open_item`` 的 prepare 从后端取精确值。
+        """
+        if self._notebook is None:
+            return None
+        try:
+            block = self._notebook.build_prompt_block()
+        except Exception:
+            logger.exception("记忆本注入失败（本轮跳过）")
+            return None
+        if block is None:
+            logger.debug("记忆本注入：无条目，跳过")
+            return None
+        try:
+            logger.info("记忆本注入：{} 条", self._notebook.count())
+        except Exception:
+            pass
+        return block
+
     # ---------- 文件分析（P1）内部实现 ----------
 
     def _compose_messages(
@@ -799,6 +887,9 @@ class ChatPipeline:
         ]
         if memory_block is not None:
             messages.append(ChatMessage(role="system", content=memory_block))
+        notebook_block = self._build_notebook_block()
+        if notebook_block is not None:
+            messages.append(ChatMessage(role="system", content=notebook_block))
         time_block = self._time_block()
         if time_block is not None:
             messages.append(ChatMessage(role="system", content=time_block))

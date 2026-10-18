@@ -21,6 +21,8 @@ import {
   type BubbleUpdatePayload,
   type BallAnimationCommand,
   type BallAnimationPetReactionPayload,
+  type DeletePathResult,
+  type OpenResult,
   type PetBridgeApi,
   type PickedFile,
   type ReminderListActionPayload,
@@ -130,6 +132,21 @@ const api: PetBridgeApi = {
 
     notify(title: string, body: string): void {
       ipcRenderer.send(IPC.SYSTEM_NOTIFY, { title, body })
+    },
+
+    /** 用系统默认浏览器打开 http/https 链接（主进程做 scheme 白名单） */
+    openExternal(url: string): Promise<OpenResult> {
+      return ipcRenderer.invoke(IPC.SYSTEM_OPEN_EXTERNAL, url)
+    },
+
+    /** 用默认程序打开本机文件/文件夹（主进程拒绝可执行/脚本类） */
+    openPath(path: string): Promise<OpenResult> {
+      return ipcRenderer.invoke(IPC.SYSTEM_OPEN_PATH, path)
+    },
+
+    /** 宠物面：删除本机文件/文件夹（先弹气泡确认；确认后移入回收站） */
+    deletePathWithConfirm(path: string, name?: string): Promise<DeletePathResult> {
+      return ipcRenderer.invoke(IPC.SYSTEM_DELETE_PATH_CONFIRM, { path, name })
     }
   },
 
@@ -259,6 +276,11 @@ const api: PetBridgeApi = {
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.SETTINGS_VISIBILITY, listener)
       }
+    },
+
+    /** 设置面：删除本机文件/文件夹（主进程原生确认框；确认后移入回收站） */
+    deletePath(path: string): Promise<DeletePathResult> {
+      return ipcRenderer.invoke(IPC.SETTINGS_DELETE_PATH, path)
     }
   },
 

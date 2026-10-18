@@ -153,6 +153,11 @@ CLIENT_MIN_DATA: dict[str, dict] = {
     "ack_reminders": {"ids": ["e1"]},
     "get_reminder_history": {},
     "delete_reminder_item": {"id": "e1"},
+    "notebook_list": {"kind": "link"},
+    "notebook_save": {"items": [{"name": "博客", "kind": "link", "value": "https://a.com"}]},
+    "notebook_rename": {"old_name": "博客", "new_name": "主页"},
+    "notebook_delete": {"names": ["主页"]},
+    "notebook_file_deleted": {"path": "D:\\tmp\\a.txt"},
     "audio_chunk": {},
 }
 
@@ -170,6 +175,8 @@ SERVER_MIN_DATA: dict[str, dict] = {
     "proactive": {"message_id": "m1", "text": "hi"},
     "reminders": {"items": [], "unread_count": 0},
     "reminder_history": {"date": "2026-10-18", "items": [], "read_count": 0, "unread_count": 0},
+    "notebook_items": {"items": [], "count": 0},
+    "notebook_result": {"ok": True, "code": "items_saved", "message": "记好啦"},
     "notice": {"code": "context_reset", "message": "为了装下文件，先不带之前的聊天了"},
     "history": {"session_id": "s1"},
     "config": {},

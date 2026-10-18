@@ -33,7 +33,17 @@ class ToolSpec:
     - ``executor``：执行方（"frontend" / "backend"，见模块 docstring）；
     - ``handler``：backend 型工具的执行函数（frontend 型为 None）；
     - ``ack``：工具执行后"模型没说话时"的确认话兜底文案（chat 管道取用）——
-      模型只回 tool_calls 不产出正文时，用它补一句口语回应，避免用户端静默。
+      模型只回 tool_calls 不产出正文时，用它补一句口语回应，避免用户端静默；
+    - ``prepare``：**frontend 型工具的前置解析**——chat 管道在 ``reply_end``
+      之后派发 ``tool_call`` 前调用 ``prepare(args, user_text)``。返回
+      ``{"ok": True, "args": {...}}`` 时用解析后的参数派发；返回
+      ``{"ok": False, "code": "...", "message": "..."}`` 时作为后端结果发通知、
+      不派发。用于"名字 → 精确值"的解析（记忆本 open_item / delete_path）：
+      模型只传名字，URL/路径由后端取，避免抄错；同时可校验用户本轮原话
+      （防文件/网页内容诱导操作）。
+    - ``needs_user_text``：backend 型 handler 是否额外接收用户本轮原话
+      （``handler(args, user_text)``）。记忆本删除记录需要判断"用户是否点名/
+      指的是删记录还是删文件"。
     """
 
     name: str
@@ -42,6 +52,8 @@ class ToolSpec:
     executor: str = "frontend"
     handler: Callable[..., Any] | None = None
     ack: str = ""
+    prepare: Callable[[dict[str, Any], str], dict[str, Any]] | None = None
+    needs_user_text: bool = False
 
 
 class ToolRegistry:

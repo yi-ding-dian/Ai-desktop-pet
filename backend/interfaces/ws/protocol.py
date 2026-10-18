@@ -165,6 +165,48 @@ class DeleteReminderItemData(EventData):
     id: str
 
 
+# ---------------------------------------------------------------- §3.2 记忆本（2026-10-18）
+
+
+class NotebookListData(EventData):
+    """设置页：拉取记忆本条目。"""
+
+    kind: str | None = None
+
+
+class NotebookItemInput(EventData):
+    """设置页新增/更新一条记忆本条目（与工具 save_item 的 item 同构）。"""
+
+    name: str = ""
+    kind: str | None = None
+    value: str
+
+
+class NotebookSaveData(EventData):
+    """设置页保存（同名更新）。"""
+
+    items: list[NotebookItemInput] = Field(default_factory=list)
+
+
+class NotebookRenameData(EventData):
+    """设置页改名。"""
+
+    old_name: str
+    new_name: str
+
+
+class NotebookDeleteData(EventData):
+    """设置页删除**记录**（不动磁盘文件；设置页按钮即明确操作）。"""
+
+    names: list[str] = Field(default_factory=list)
+
+
+class NotebookFileDeletedData(EventData):
+    """宠物面：主进程已确认删除真实文件（移入回收站）——后端据此移除记录/清记忆。"""
+
+    path: str
+
+
 class EnvUpdateData(EventData):
     """环境上报：屏幕/窗口几何 + 系统空闲 + 宠物状态（行为决策依据）。"""
 
@@ -323,6 +365,34 @@ class ReminderHistoryData(EventData):
     pending_count: int = 0
 
 
+class NotebookItemData(EventData):
+    """记忆本条目快照（设置页列表）。``path_exists`` 只对 path 类有意义。"""
+
+    id: int
+    name: str
+    kind: str
+    value: str
+    is_dir: bool = False
+    created_at: int = 0
+    updated_at: int = 0
+    path_exists: bool = True
+
+
+class NotebookItemsData(EventData):
+    """记忆本列表响应（notebook_list / 保存成功后的刷新）。"""
+
+    items: list[NotebookItemData] = Field(default_factory=list)
+    count: int = 0
+
+
+class NotebookResultData(EventData):
+    """记忆本写操作结果（保存/改名/删除/文件已删）。"""
+
+    ok: bool
+    code: str = ""
+    message: str = ""
+
+
 class NoticeData(EventData):
     """一次性提示（不进入对话历史、不参与 TTS）。
 
@@ -391,6 +461,11 @@ CLIENT_EVENT_MODELS: dict[str, type[EventData]] = {
     "ack_reminders": AckRemindersData,
     "get_reminder_history": GetReminderHistoryData,
     "delete_reminder_item": DeleteReminderItemData,
+    "notebook_list": NotebookListData,
+    "notebook_save": NotebookSaveData,
+    "notebook_rename": NotebookRenameData,
+    "notebook_delete": NotebookDeleteData,
+    "notebook_file_deleted": NotebookFileDeletedData,
     "audio_chunk": AudioChunkData,
 }
 
@@ -408,6 +483,8 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "proactive": ProactiveData,
     "reminders": RemindersData,
     "reminder_history": ReminderHistoryData,
+    "notebook_items": NotebookItemsData,
+    "notebook_result": NotebookResultData,
     "notice": NoticeData,
     "history": HistoryData,
     "config": ConfigData,

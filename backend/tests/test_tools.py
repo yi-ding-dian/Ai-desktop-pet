@@ -148,6 +148,69 @@ def test_default_registry_without_service_keeps_old_tools() -> None:
     assert [s.name for s in build_default_registry().all()] == ["open_settings"]
 
 
+# ---------------------------------------------------------------- 记忆本工具（2026-10-18）
+
+
+class FakeNotebookServiceTools:
+    """记忆本服务替身：只验证工具定义/参数转发/前置解析接线，不碰存储。"""
+
+    def save_from_tool(self, items):
+        return {"ok": True, "code": "items_saved", "message": f"存了 {len(items or [])} 条"}
+
+    def list_from_tool(self, kind=None, limit=50):
+        return {"ok": True, "code": "items_listed", "message": f"列出 {limit} 条（{kind}）"}
+
+    def rename_from_tool(self, old_name, new_name):
+        return {"ok": True, "code": "item_renamed", "message": f"{old_name}->{new_name}"}
+
+    def delete_from_tool(self, names, user_text=""):
+        return {"ok": True, "code": "items_deleted", "message": f"删 {names}（{user_text}）"}
+
+    def prepare_open(self, args, user_text):
+        return {"ok": True, "args": {"kind": "link", "value": "https://resolved", "name": args.get("name", "")}}
+
+    def prepare_delete_path(self, args, user_text):
+        return {"ok": True, "args": {"kind": "file", "path": "D:\\a.txt", "name": args.get("name", "")}}
+
+
+def test_default_registry_registers_notebook_tools() -> None:
+    registry = build_default_registry(notebook=FakeNotebookServiceTools())
+    assert [s.name for s in registry.all()] == [
+        "open_settings",
+        "save_item",
+        "list_items",
+        "rename_item",
+        "delete_item",
+        "open_item",
+        "delete_path",
+    ]
+    assert registry.get("save_item").executor == "backend"
+    assert registry.get("delete_item").needs_user_text is True
+    assert registry.get("open_item").executor == "frontend"
+    assert registry.get("open_item").prepare is not None
+    assert registry.get("delete_path").prepare is not None
+
+
+def test_notebook_tool_handlers_forward() -> None:
+    notebook = FakeNotebookServiceTools()
+    registry = build_default_registry(notebook=notebook)
+    save = registry.get("save_item")
+    assert save is not None and save.handler is not None
+    assert save.handler({"items": [{"value": "https://a.com"}]})["message"] == "存了 1 条"
+
+    listed = registry.get("list_items")
+    assert listed is not None and listed.handler is not None
+    assert "20" in listed.handler({"limit": "20", "kind": "link"})["message"]
+
+    renamed = registry.get("rename_item")
+    assert renamed is not None and renamed.handler is not None
+    assert "old->new" in renamed.handler({"old_name": "old", "new_name": "new"})["message"]
+
+    deleted = registry.get("delete_item")
+    assert deleted is not None and deleted.handler is not None
+    assert "hi" in deleted.handler({"names": ["x"]}, "hi")["message"]
+
+
 def test_reminder_tool_missing_or_bad_args_are_sanitized() -> None:
     """模型漏传/传错类型：字段按空串处理，不出现字面量 "None"；limit 非法回落 20。"""
     registry = build_default_registry(FakeReminderServiceTools())
@@ -222,3 +285,47 @@ def test_match_forced_tool_hits_create_reminder(text: str) -> None:
 def test_match_forced_tool_misses(text: str) -> None:
     """没有明确时间 / 不是创建动作：不强制，保留模型反问的空间。"""
     assert match_forced_tool(text) is None
+
+
+# ---------------------------------------------------------------- 强制工具意图（记忆本）
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "记住这个链接 https://example.com/a",
+        "帮我记住我的生日是 5 月 3 日",
+        "记一下：我的快递单号是 SF123456789",
+        "收藏一下这段话",
+        "把这个存到记忆本 https://example.com",
+        "记住这个链接好吗 https://example.com",
+    ],
+)
+def test_match_forced_tool_hits_save_item(text: str) -> None:
+    """明确的保存指令 → 强制 save_item（防模型只口头答应“记住了”）。"""
+    assert match_forced_tool(text) == "save_item"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "记住我叫什么了吗",
+        "你还记得我的生日吗",
+        "我记住了",
+        "没记住这个链接 https://example.com",
+        "不用记住这个链接 https://example.com",
+        "记住明天提醒我",
+        "记住这个链接，提醒我明天看 https://example.com",
+        "这个东西很好看",
+        "把那个删了",
+        "",
+    ],
+)
+def test_match_forced_tool_does_not_force_save_item(text: str) -> None:
+    """疑问 / 闲聊 / 非保存指令：不强制，交给模型判断。"""
+    assert match_forced_tool(text) != "save_item"
+
+
+def test_reminder_has_priority_over_save_item() -> None:
+    """“记住明天 9 点提醒我”是提醒，不是记忆本保存。"""
+    assert match_forced_tool("记住明天9点提醒我开会") == "create_reminder"

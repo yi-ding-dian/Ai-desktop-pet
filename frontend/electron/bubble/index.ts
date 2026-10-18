@@ -147,6 +147,28 @@ let readyWaiters: Array<() => void> = []
 let ipcRegistered = false
 /** 弹出流程防重入（等待页面就绪是异步的：防右键连点并发建窗/重复下发） */
 let opening = false
+/**
+ * 当前待确认动作（2026-10-18 泛化）：确认气泡不再只服务"清空聊天"。
+ * - ``onConfirm``：用户点「确认」后执行的动作（清空聊天 / 删除文件的 IPC 回调等）；
+ * - ``resolve``：把"确认/取消/超时/点别处"的结果交还给请求方（invoke 的 Promise）；
+ * - ``timer``：长时间无操作按取消处理，避免调用方永久挂起。
+ */
+interface PendingConfirm {
+  onConfirm: () => void | Promise<void>
+  resolve: (confirmed: boolean) => void
+  timer: NodeJS.Timeout | null
+}
+let pendingConfirm: PendingConfirm | null = null
+/** 确认气泡无人操作自动取消的时长（ms） */
+const CONFIRM_TIMEOUT_MS = 120_000
+
+/** 确认气泡请求（主进程内部 IPC 用；onConfirm 可为空——删除文件由 IPC 处理器执行） */
+export interface ConfirmRequest {
+  message: string
+  confirmLabel?: string
+  cancelLabel?: string
+  onConfirm?: () => void | Promise<void>
+}
 /** 收起流程中（已发 REQUEST_CLOSE、等待渲染侧退场回报或超时兜底） */
 let closing = false
 /** 退场回报超时定时器 */
@@ -597,6 +619,7 @@ function waitBubbleReady(timeoutMs: number): Promise<boolean> {
 
 /** 应用退出清理（will-quit；气泡窗直接销毁，不做额外等待——正常退出不播退场动画） */
 export function destroyBubble(): void {
+  settleConfirm(false)
   if (warmTimer) {
     clearTimeout(warmTimer)
     warmTimer = null
@@ -768,15 +791,17 @@ function buildMenuPayload(): BubbleOpenPayload {
   }
 }
 
-/** 组装清空确认载荷（场景2） */
-function buildConfirmPayload(): BubbleOpenPayload {
+/** 组装确认载荷（2026-10-18 泛化：清空聊天 / 删除本机文件共用） */
+function buildConfirmPayload(request: ConfirmRequest): BubbleOpenPayload {
   return {
     session: ++sessionSeq,
     variant: 'confirm',
     tail: 'down',
     motion: { enter: 'light', exit: 'light' },
     stableWindow: REUSE_BUBBLE_WINDOW,
-    ...CLEAR_CHAT_CONFIRM
+    message: request.message,
+    confirmLabel: request.confirmLabel ?? '确定',
+    cancelLabel: request.cancelLabel ?? '取消'
   }
 }
 
@@ -813,6 +838,19 @@ function reposition(win: BrowserWindow, size: Size): void {
   if (currentPayload) currentPayload = { ...currentPayload, tail }
 }
 
+/** 结清当前待确认动作：把结果交还请求方并清掉定时器（幂等）。 */
+function settleConfirm(confirmed: boolean): void {
+  const pending = pendingConfirm
+  if (!pending) return
+  pendingConfirm = null
+  if (pending.timer) clearTimeout(pending.timer)
+  try {
+    pending.resolve(confirmed)
+  } catch (err) {
+    console.warn('[bubble] 确认结果回传失败（忽略）：', err)
+  }
+}
+
 /**
  * 气泡收尾（真实隐藏）：清超时定时器 + closing 复位 + hide + **销毁窗口**（不复用——见
  * destroyBubbleWindow）。
@@ -821,6 +859,8 @@ function reposition(win: BrowserWindow, size: Size): void {
  * 见 maybeRestoreSpeech 的守卫）。
  */
 function finishClose(reason: string): void {
+  // 确认气泡被关闭（取消/点别处/退场回报）：把 false 交还给请求方
+  settleConfirm(false)
   clearSpeechIdleTimer()
   stopSpeechHoverPoll()
   if (closeTimer) {
@@ -1092,6 +1132,8 @@ function onPetMoved(): void {
  */
 async function openMenuBubble(): Promise<void> {
   if (opening) return
+  // 右键菜单抢场：任何待确认动作按取消处理（用户已经转向别的操作）
+  settleConfirm(false)
   opening = true
   try {
     const pet = petWin
@@ -1141,18 +1183,81 @@ async function openMenuBubble(): Promise<void> {
 }
 
 /**
- * 菜单"清空聊天" → 换成确认气泡（场景2）：同一气泡窗换内容（不关窗）——
- * 新 session 载荷下发，渲染侧重播一次入场动画（motion）；窗口按确认预估尺寸重定位。
+ * 弹出确认气泡并等待用户选择（2026-10-18 泛化）。
+ *
+ * - 同一时间只有一个待确认动作；新请求会把旧请求按取消结清；
+ * - 用户点「确认」：执行 onConfirm（可为空——删除文件由 IPC 处理器在拿到
+ *   ``true`` 后执行），resolve(true)，收起气泡；
+ * - 取消 / 点别处 / 120s 超时：resolve(false)，**什么都不做**；
+ * - 说话气泡让位（保留文本），确认关闭后由 maybeRestoreSpeech 恢复——
+ *   删除确认不吞掉宠物刚说的话。
  */
-function switchToConfirmBubble(): void {
-  const win = bubbleWin
-  if (!win || win.isDestroyed() || !win.isVisible()) return
-  const payload = buildConfirmPayload()
-  const tail = applyPlacement(win, ESTIMATED_SIZE.confirm)
-  currentPayload = { ...payload, tail }
-  lastTail = tail
-  sendTo(win, IPC_BUBBLE.OPEN, currentPayload)
-  console.log('[bubble] 已切换为清空确认气泡')
+export async function openConfirmBubble(request: ConfirmRequest): Promise<boolean> {
+  settleConfirm(false)
+  if (opening) {
+    console.warn('[bubble] 气泡正在弹出，确认请求忽略')
+    return false
+  }
+  const pet = petWin
+  if (!pet || pet.isDestroyed()) {
+    console.warn('[bubble] 宠物窗口不可用，无法弹出确认气泡')
+    return false
+  }
+
+  opening = true
+  let resolvePromise: (confirmed: boolean) => void = () => {}
+  const result = new Promise<boolean>((resolve) => {
+    resolvePromise = resolve
+  })
+  try {
+    // 说话气泡让位：保留文本，确认关闭后恢复
+    if (speechActive || isSpeechShowing()) stopSpeech('确认让位', true, true)
+    if (closing) finishClose('确认弹出前收尾')
+    interactive = true
+
+    const a = computeAnchor()
+    if (!a) return false
+    anchor = a
+
+    const win = ensureBubbleWindow()
+    if (!bubbleReady && !(await waitBubbleReady(READY_TIMEOUT_MS))) {
+      console.warn(`[bubble] 气泡页 ${READY_TIMEOUT_MS}ms 未就绪，确认请求取消`)
+      return false
+    }
+    if (win.isDestroyed()) return false
+
+    // 组装内容 → 预估尺寸定位 → 显示并聚焦（确认态 = 可点，像原生弹窗）
+    const payload = buildConfirmPayload(request)
+    const tail = applyPlacement(win, ESTIMATED_SIZE.confirm)
+    currentPayload = { ...payload, tail }
+    lastTail = tail
+
+    pendingConfirm = {
+      onConfirm: request.onConfirm ?? (() => {}),
+      resolve: resolvePromise,
+      timer: setTimeout(() => {
+        console.log(`[bubble] 确认气泡 ${CONFIRM_TIMEOUT_MS}ms 无操作，按取消处理`)
+        settleConfirm(false)
+        closeBubble('确认超时')
+      }, CONFIRM_TIMEOUT_MS)
+    }
+    pendingConfirm.timer?.unref?.()
+
+    win.moveTop()
+    win.setIgnoreMouseEvents(false)
+    win.show()
+    win.focus()
+    sendTo(win, IPC_BUBBLE.OPEN, currentPayload)
+    scheduleOpenRepost(win)
+    console.log('[bubble] 确认气泡已弹出（等待用户选择）')
+    return result
+  } catch (err) {
+    console.error('[bubble] 弹出确认气泡异常：', err)
+    settleConfirm(false)
+    return false
+  } finally {
+    opening = false
+  }
 }
 
 /** 向宠物窗发"请求清空聊天"（【清空】确认后；清空逻辑归后续任务——宠物窗侧本期只留 console 占位） */
@@ -1213,15 +1318,37 @@ function dispatchAction(id: string): void {
       break
     }
     case 'clear-chat':
-      // 清空 = 破坏性操作：先换确认气泡（不关窗），确认后才执行
-      switchToConfirmBubble()
+      // 清空 = 破坏性操作：先换确认气泡（不关窗），确认后才执行。
+      // 清空后不恢复旧说话气泡（内容已经不要了）
+      suppressSpeechRestore = true
+      speechText = ''
+      void openConfirmBubble({ ...CLEAR_CHAT_CONFIRM, onConfirm: requestClearChat })
       break
-    case 'confirm':
-      requestClearChat()
-      closeBubble('动作：清空确认')
+    case 'confirm': {
+      // 确认气泡是泛化的：当前待确认动作可能是清空聊天，也可能是删除文件
+      const pending = pendingConfirm
+      if (!pending) {
+        console.warn('[bubble] 收到 confirm，但没有待确认动作（已过期/重复点击）')
+        closeBubble('动作：确认（无待确认项）')
+        break
+      }
+      try {
+        const action: unknown = pending.onConfirm()
+        if (action && typeof (action as Promise<void>).catch === 'function') {
+          void (action as Promise<void>).catch((err) => {
+            console.warn('[bubble] 确认动作执行失败（忽略）：', err)
+          })
+        }
+      } catch (err) {
+        console.warn('[bubble] 确认动作执行失败（忽略）：', err)
+      }
+      settleConfirm(true)
+      closeBubble('动作：确认')
       break
+    }
     case 'cancel':
-      closeBubble('动作：清空取消')
+      settleConfirm(false)
+      closeBubble('动作：取消')
       break
     case 'expand':
       // 说话气泡「展开」（悬浮工具条）：带聊天记录进入教学——黑板滑出 + 兔子站讲台位 + 记录预填
