@@ -115,6 +115,58 @@ check('error 映射为 error 样式', withError.notice?.kind === 'error')
 const cleared = workReducer(withError, { type: 'clear-notice' })
 check('clear-notice 清空提示', cleared.notice === null)
 
+check(
+  '历史的 DB id / 时间挂到消息上',
+  loaded.messages[0].dbId === 1 && typeof loaded.messages[0].createdAt === 'number'
+)
+
+// ---------------------------------------------------------------- 落库回执 / 单条删除
+
+let managed: WorkState = workReducer(EMPTY_WORK_STATE, {
+  type: 'mirror',
+  event: { kind: 'user_message', localId: 'u-live', text: '问题', sentAt: now }
+})
+managed = workReducer(managed, {
+  type: 'mirror',
+  event: { kind: 'message_saved', clientId: 'u-live', dbId: 42, role: 'user' }
+})
+managed = workReducer(managed, {
+  type: 'mirror',
+  event: { kind: 'reply_start', messageId: 'm-live' }
+})
+managed = workReducer(managed, {
+  type: 'mirror',
+  event: { kind: 'token', messageId: 'm-live', text: '回答' }
+})
+managed = workReducer(managed, {
+  type: 'mirror',
+  event: { kind: 'message_saved', clientId: 'm-live', dbId: 43, role: 'assistant' }
+})
+check(
+  'message_saved 把 DB id 挂回用户消息与助手消息',
+  managed.messages.find((m) => m.id === 'u-live')?.dbId === 42 &&
+    managed.messages.find((m) => m.id === 'm-live')?.dbId === 43
+)
+
+const afterDeleteUser = workReducer(managed, {
+  type: 'mirror',
+  event: { kind: 'message_deleted', dbId: 42, ok: true }
+})
+check(
+  '删单条只移除该条，助手回答保留',
+  afterDeleteUser.messages.length === 1 &&
+    afterDeleteUser.messages[0].id === 'm-live'
+)
+
+const afterDeleteFail = workReducer(managed, {
+  type: 'mirror',
+  event: { kind: 'message_deleted', dbId: 999, ok: false }
+})
+check(
+  '删除失败保留消息并给出提示',
+  afterDeleteFail.messages.length === 2 && afterDeleteFail.notice?.kind === 'warn'
+)
+
 const reset = workReducer(loaded, { type: 'reset' })
 check('reset 回到空态', reset.messages.length === 0 && reset.streamingId === null)
 

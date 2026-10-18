@@ -174,6 +174,12 @@ export function setupWorkPetSide(client: WsClient): () => void {
     if (import.meta.env.DEV) console.log(`[work] 打断已发（sent=${sent}）`)
   })
 
+  const offDeleteMessage = bridge.work?.onDeleteMessage?.(({ dbId }) => {
+    if (typeof dbId !== 'number' || !Number.isFinite(dbId) || dbId <= 0) return
+    const sent = client.send('delete_message', { id: Math.trunc(dbId) })
+    if (import.meta.env.DEV) console.log(`[work] 删除消息 id=${dbId}（sent=${sent}）`)
+  })
+
   const offPresence = bridge.work?.onPresence?.(({ open, active }) => {
     const wasActive = workActiveLocal
     workOpen = Boolean(open)
@@ -198,14 +204,26 @@ export function setupWorkPetSide(client: WsClient): () => void {
 
   // ------------------------------------------------------------------ WS 镜像
 
-  const offSent = subscribeSentUserMessages((text) => {
+  const offSent = subscribeSentUserMessages((text, localId) => {
     lastUserSentAt = Date.now()
     emitNow({
       kind: 'user_message',
-      localId: `u_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+      localId,
       text,
       sentAt: lastUserSentAt
     })
+  })
+
+  const offMessageSaved = client.on('message_saved', ({ client_id, db_id, role }) => {
+    emitNow({ kind: 'message_saved', clientId: client_id, dbId: db_id, role })
+  })
+
+  const offMessageDeleted = client.on('message_deleted', ({ id, ok }) => {
+    emitNow({ kind: 'message_deleted', dbId: id, ok })
+  })
+
+  const offSources = client.on('sources', ({ message_id, items }) => {
+    emitNow({ kind: 'sources', messageId: message_id, items })
   })
 
   const offReplyStart = client.on('reply_start', ({ message_id }) => {
@@ -302,8 +320,12 @@ export function setupWorkPetSide(client: WsClient): () => void {
     offSendRequest?.()
     offHistoryRequest?.()
     offInterrupt?.()
+    offDeleteMessage?.()
     offPresence?.()
     offSent()
+    offMessageSaved()
+    offMessageDeleted()
+    offSources()
     offReplyStart()
     offReasoning()
     offToken()

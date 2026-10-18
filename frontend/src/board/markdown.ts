@@ -98,3 +98,79 @@ function closeOpenFences(text: string): string {
 export function renderMarkdownSafe(text: string | null | undefined): string {
   return md.render(closeOpenFences(text ?? ''))
 }
+
+/**
+ * 从「来源」列表提取引用编号 → URL（2026-10-18）。
+ *
+ * 模型输出来源的格式并不稳定，已见到：
+ *   ``[1] 《新闻直播间》 … — https://…``
+ *   ``1. 《新闻直播间》 … — https://…``
+ *   ``1) …`` / ``1、…``（允许前置 ``-`` / ``*``）
+ * 这里统一把「方括号编号」或「有序列表编号」映射到该行第一个 URL；正文里的
+ * ``[n]`` 与来源的 ``n.`` 共用同一个编号。
+ */
+export function extractCitationSources(text: string): Map<number, string> {
+  const sources = new Map<number, string>()
+  for (const line of text.split('\n')) {
+    const match = line.match(
+      /^\s*(?:[-*]\s*)?(?:\[(\d+)\]|(\d+)[.)、）．])\s*[^\n]*?(https?:\/\/[^\s)>\]]+)/
+    )
+    if (!match) continue
+    const number = Number(match[1] ?? match[2])
+    // URL 尾部可能带句号/逗号/分号（模型手写结果），去掉
+    const url = match[3].replace(/[.,;。，；]+$/, '')
+    if (Number.isInteger(number) && number > 0 && !sources.has(number)) {
+      sources.set(number, url)
+    }
+  }
+  return sources
+}
+
+/**
+ * 把正文里的 ``[n]`` 换成指向来源 URL 的 Markdown 链接。
+ *
+ * 跳过 fenced code / 行内 code；``(?<!\[)`` 避免把 ``[[1]](url)`` 这类已有链接
+ * 再包一层。找不到对应来源时保持原样。
+ */
+export function linkCitationMarkers(
+  text: string,
+  sources: Map<number, string>
+): string {
+  if (sources.size === 0) return text
+  let inFence = false
+  return text
+    .split('\n')
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) {
+        inFence = !inFence
+        return line
+      }
+      if (inFence) return line
+      // 行内代码原样保留
+      return line
+        .split(/(`[^`]*`)/g)
+        .map((part, index) => {
+          if (index % 2 === 1) return part
+          return part.replace(/(?<!\[)\[(\d+)\]/g, (whole, digits: string) => {
+            const url = sources.get(Number(digits))
+            return url ? `[${whole}](${url})` : whole
+          })
+        })
+        .join('')
+    })
+    .join('\n')
+}
+
+/**
+ * Markdown 渲染 + 引用角标可点击（工作窗/黑板共用）。
+ * 没有来源列表时退化为普通渲染，行为不变。
+ */
+export function renderMarkdownWithCitations(
+  text: string | null | undefined
+): string {
+  const raw = text ?? ''
+  const sources = extractCitationSources(raw)
+  return renderMarkdownSafe(
+    sources.size > 0 ? linkCitationMarkers(raw, sources) : raw
+  )
+}

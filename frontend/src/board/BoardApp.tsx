@@ -30,7 +30,7 @@ import {
   useFramelessMove,
   useFramelessResize
 } from '../shared/ui'
-import { renderMarkdownSafe } from './markdown'
+import { renderMarkdownWithCitations } from './markdown'
 
 // ------------------------------------------------------------------ bridge 容错访问
 
@@ -477,14 +477,18 @@ function ReplyCard({ item }: { item: ReplyItem }): JSX.Element {
         <>
           <div
             className="md-body"
-            dangerouslySetInnerHTML={{ __html: renderMarkdownSafe(item.finalText) }}
+            dangerouslySetInnerHTML={{
+              __html: renderMarkdownWithCitations(item.finalText)
+            }}
           />
           {item.interrupted ? <div className="board-note">（被打断）</div> : null}
         </>
       ) : item.streamText ? (
         <div
           className="md-body"
-          dangerouslySetInnerHTML={{ __html: renderMarkdownSafe(item.streamText) }}
+          dangerouslySetInnerHTML={{
+            __html: renderMarkdownWithCitations(item.streamText)
+          }}
         />
       ) : (
         <div className="board-thinking" role="status" aria-label="正在思考">

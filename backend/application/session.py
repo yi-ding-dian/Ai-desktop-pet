@@ -64,24 +64,57 @@ class Session:
         """更新活跃时间。"""
         self.last_active_at = _now_ms()
 
-    def append_message(self, role: str, content: str, *, emotion: str | None = None) -> None:
+    def append_message(
+        self,
+        role: str,
+        content: str,
+        *,
+        emotion: str | None = None,
+        created_at: int | None = None,
+    ) -> int | None:
         """追加一条对话消息（role: user / assistant / system）。
 
         - 内存态立即生效（上下文组装用）；
-        - 同时增量落库（若装配了 store）；写库失败不打断对话，只记日志；
+        - 同时增量落库（若装配了 store），返回 DB 行 id（工作模式删除用）；
+          写库失败不打断对话，只记日志并返回 None；
         - 顺带更新活跃时间——memory_service 的"会话空闲"判定依赖它。
         """
         self.history.append(ChatMessage(role=role, content=content))
         self.touch()
         if self._store is not None:
             try:
-                self._store.append_message(self.id, role, content, emotion=emotion)
+                return self._store.append_message(
+                    self.id,
+                    role,
+                    content,
+                    emotion=emotion,
+                    created_at=created_at,
+                )
             except Exception:  # sqlite 异常不应影响对话主链路
                 logger.exception("消息落库失败 session={} role={}", self.id, role)
+        return None
 
     def recent_messages(self) -> list[ChatMessage]:
         """取最近 N 轮消息（时间顺序，注入 LLM 上下文用）。"""
         return list(self.history)
+
+    def reload_history(self) -> None:
+        """从 SQLite 重建注入 LLM 的内存上下文（删除单条消息后用）。
+
+        不重建的话，工作窗虽然删掉了消息，模型下一轮仍会在上下文里看到它。
+        deque 上限与正常窗口一致（最近 N 轮）。
+        """
+        if self._store is None:
+            return
+        try:
+            rows = self._store.recent_messages(self.id, limit=_HISTORY_MAX_MESSAGES)
+        except Exception:  # 读库失败：保留现有上下文，不影响对话
+            logger.exception("会话上下文重载失败 session={}", self.id)
+            return
+        self.history = deque(
+            (ChatMessage(role=row["role"], content=row["content"]) for row in rows),
+            maxlen=_HISTORY_MAX_MESSAGES,
+        )
 
     def drop_context(self) -> int:
         """丢弃**内存上下文**（文件分析超预算时用）：返回清掉的消息条数。

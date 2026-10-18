@@ -20,6 +20,7 @@ from backend.interfaces.ws.protocol import (
     AckRemindersData,
     BehaviorDoneData,
     ClientMessage,
+    DeleteMessageData,
     DeleteReminderItemData,
     EnvUpdateData,
     GetReminderHistoryData,
@@ -304,6 +305,7 @@ def build_dispatcher(
                     if data.options is not None
                     else None
                 ),
+                client_id=data.client_id,
             )
         )
 
@@ -315,6 +317,24 @@ def build_dispatcher(
         state:idle。因此本处只需取消回复任务本身。
         """
         await ctx.cancel_reply()
+
+    async def on_delete_message(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """删除当前会话的单条消息（工作模式，2026-10-18）。
+
+        - 只按 ``ctx.session_id + id`` 删，跨会话/不存在的 id 一律 ok=false；
+        - 删除后重建会话内存上下文，保证模型下一轮不再看到该消息；
+        - 不联动删除“配对”的另一条（用户定稿：删单条，不删整轮）。
+        """
+        data = cast(DeleteMessageData, msg.data)
+        session = sessions.get(ctx.session_id or "")
+        if session is None or history is None:
+            await ctx.send_event("message_deleted", {"id": data.id, "ok": False})
+            return
+        ok = history.delete_message(session.id, data.id)
+        if ok:
+            session.reload_history()
+        await ctx.send_event("message_deleted", {"id": data.id, "ok": ok})
+        logger.info("删除消息 session={} id={} ok={}", session.id, data.id, ok)
 
     async def on_load_history(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """拉取历史消息（§3.2 load_history → §3.3 history）：气泡回填。
@@ -570,6 +590,7 @@ def build_dispatcher(
     dispatcher.register("user_message", on_user_message)
     dispatcher.register("interrupt", on_interrupt)
     dispatcher.register("load_history", on_load_history)
+    dispatcher.register("delete_message", on_delete_message)
     dispatcher.register("pet_event", on_pet_event)
     dispatcher.register("behavior_done", on_behavior_done)
     dispatcher.register("env_update", on_env_update)

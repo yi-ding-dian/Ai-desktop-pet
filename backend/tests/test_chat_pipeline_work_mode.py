@@ -1,10 +1,9 @@
-"""工作模式（2026-10-18）：单轮选项、思考模型、联网过滤、推理流。
+"""工作模式（2026-10-18）：单轮选项、深度思考、联网过滤、推理流。
 
 覆盖：
-- ``options.think``：切思考模型、抬高输出预算、不发 temperature/tools；
-- 思考模型被拒：去掉覆盖重试，且不污染进程级 tools 降级标记；
+- ``options.think``：**同一模型** + 推理提示 + 更大输出预算（不切模型、不移除工具）；
 - ``options.search=False``：只移除 web_search/web_fetch，其余工具保留；
-- 推理增量以 ``reasoning`` 事件先于正文 token 推送。
+- 推理增量以 ``reasoning`` 事件先于正文 token 推送（网关返回时）。
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ from backend.application.session import SessionManager
 from backend.modules.llm.provider import ChatMessage, Chunk
 from backend.modules.tools import build_default_registry
 from backend.shared.config import AppConfig
-from backend.shared.errors import LlmError, LlmErrorCode
 from fakes import FakeLLMProvider
 
 
@@ -98,13 +96,12 @@ class ReasoningProvider:
         yield Chunk(text="", finished=True)
 
 
-def make_config(*, think_model: str = "", base_url: str = "https://api.deepseek.com/v1") -> AppConfig:
+def make_config(*, base_url: str = "https://api.deepseek.com/v1") -> AppConfig:
     return AppConfig.model_validate(
         {
             "llm": {
                 "base_url": base_url,
                 "model": "deepseek-chat",
-                "think_model": think_model,
                 "max_tokens": 768,
             }
         }
@@ -137,7 +134,8 @@ def run(
 # ---------------------------------------------------------------- 深度思考
 
 
-def test_think_switch_model_budget_and_no_tools() -> None:
+def test_think_uses_same_model_with_larger_budget() -> None:
+    """深度思考不切模型：只抬高输出预算、追加推理提示，工具照常保留。"""
     provider = FakeLLMProvider(pieces=["好"])
     sink = run(
         provider,
@@ -147,43 +145,15 @@ def test_think_switch_model_budget_and_no_tools() -> None:
     )
 
     opts = provider.seen_opts[0]
-    assert opts["model"] == "deepseek-reasoner"
+    assert "model" not in opts  # 沿用配置里的同一个模型
+    assert "temperature" not in opts  # 不改采样参数
     assert opts["max_tokens"] >= 2048
-    assert opts["temperature"] is None
-    assert "tools" not in opts
+    assert "tools" in opts  # 同一模型下工具不受影响
+    system_texts = [
+        m.content for m in provider.seen_messages[0] if m.role == "system"
+    ]
+    assert any("请先充分推理" in text for text in system_texts)
     assert "error" not in sink.types()
-
-
-def test_think_explicit_model_wins() -> None:
-    provider = FakeLLMProvider(pieces=["好"])
-    run(
-        provider,
-        options=TurnOptions(think=True),
-        config=make_config(think_model="my-reasoner", base_url="https://example.com/v1"),
-    )
-    assert provider.seen_opts[0]["model"] == "my-reasoner"
-
-
-def test_think_model_rejected_falls_back_without_poisoning_tools() -> None:
-    """思考模型不存在：去掉 model/temperature 重试，并给出 notice。"""
-    provider = FakeLLMProvider(
-        pieces=["好"],
-        fail_calls={1: LlmError(LlmErrorCode.LLM_BAD_REQUEST, "model not found")},
-    )
-    sink = run(
-        provider,
-        options=TurnOptions(think=True),
-        config=make_config(),
-        tools=build_default_registry(search=SearchStub()),
-    )
-
-    assert len(provider.seen_opts) == 2
-    assert "model" not in provider.seen_opts[1]
-    assert "temperature" not in provider.seen_opts[1]
-    assert [d["code"] for d in sink.data_of("notice")] == ["think_model_fallback"]
-    assert "error" not in sink.types()
-    # 第二轮回退不置位进程级“工具不支持”标记：后续轮仍能带 tools。
-    assert "tools" not in provider.seen_opts[1]  # 思考轮本就不发 tools
 
 
 # ---------------------------------------------------------------- 联网开关

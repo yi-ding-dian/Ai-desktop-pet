@@ -26,6 +26,7 @@ import { attachFrameless, framelessBounds } from '../window/frameless'
 import { podiumPoint } from '../teaching/geometry'
 import { getTeachingMode } from '../teaching'
 import { runRelocateAnimation } from '../ball-animation'
+import { WorkBrowser } from './browser'
 
 const isDev = !app.isPackaged
 
@@ -47,6 +48,8 @@ const WORK_WINDOW_TITLE = '工作模式 · AI 桌面宠物'
 // ------------------------------------------------------------------ 模块级状态（本域单例）
 
 let workWin: BrowserWindow | null = null
+/** 工作窗内嵌浏览器（每个窗口实例一个；窗口销毁时同步销毁所有标签页） */
+let workBrowser: WorkBrowser | null = null
 let petWin: BrowserWindow | null = null
 /** 工作窗渲染侧是否已安装订阅（收到 `work:ready`）；此前事件进缓冲 */
 let workReady = false
@@ -267,6 +270,8 @@ function createWorkWindow(): BrowserWindow {
   workWin = win
   workReady = false
   eventBuffer = []
+  workBrowser?.destroy()
+  workBrowser = new WorkBrowser(win)
 
   // 标题权威在主进程（同设置窗）：渲染页 <title> 不覆盖契约文案
   win.on('page-title-updated', (event) => event.preventDefault())
@@ -338,6 +343,8 @@ function createWorkWindow(): BrowserWindow {
     workWin = null
     workReady = false
     eventBuffer = []
+    workBrowser?.destroy()
+    workBrowser = null
     rejectAll('work-window-closed')
     notifyPresence(false)
     if (!quitting) returnPetHome()
@@ -353,6 +360,8 @@ function createWorkWindow(): BrowserWindow {
     workWin = null
     workReady = false
     eventBuffer = []
+    workBrowser?.destroy()
+    workBrowser = null
     rejectAll('work-window-failed')
     notifyPresence(false)
     if (!quitting) returnPetHome()
@@ -408,6 +417,8 @@ export function destroyWork(): void {
   workWin = null
   workReady = false
   eventBuffer = []
+  workBrowser?.destroy()
+  workBrowser = null
   petPlaced = false
   petHomeRect = null
   rejectAll('app-quit')
@@ -520,6 +531,8 @@ export function initWork(pet: BrowserWindow): void {
     const buffered = eventBuffer
     eventBuffer = []
     for (const item of buffered) sendToWork(IPC_WORK.EVENT, item)
+    // 渲染面重载后浏览器标签状态需要补发（视图仍在主进程活着）
+    workBrowser?.sendState()
     console.log(`[work] 工作窗就绪，回放缓冲事件 ${buffered.length} 条`)
   })
 
@@ -555,6 +568,56 @@ export function initWork(pet: BrowserWindow): void {
   ipcMain.on(IPC_WORK.INTERRUPT, (event) => {
     if (!isWorkSender(event.sender)) return
     sendToPet(IPC_WORK.INTERRUPT)
+  })
+
+  ipcMain.on(IPC_WORK.DELETE_MESSAGE, (event, raw: unknown) => {
+    if (!isWorkSender(event.sender)) return
+    const value = raw as { dbId?: unknown } | null
+    const dbId =
+      value !== null && typeof value?.dbId === 'number' ? Math.trunc(value.dbId) : NaN
+    if (!Number.isFinite(dbId) || dbId <= 0) return
+    sendToPet(IPC_WORK.DELETE_MESSAGE_REQUEST, { dbId })
+  })
+
+  // 内嵌浏览器：渲染面只传意图，视图生命周期/安全策略全在主进程 browser.ts
+  ipcMain.on(IPC_WORK.BROWSER_OPEN, (event, raw: unknown) => {
+    if (!isWorkSender(event.sender)) return
+    const value = raw as { url?: unknown; label?: unknown } | null
+    if (value === null || typeof value?.url !== 'string') return
+    workBrowser?.open({
+      url: value.url,
+      label: typeof value.label === 'string' ? value.label : undefined
+    })
+  })
+
+  ipcMain.on(IPC_WORK.BROWSER_CLOSE, (event, id: unknown) => {
+    if (!isWorkSender(event.sender)) return
+    if (typeof id !== 'string' || id.length === 0) return
+    workBrowser?.close(id)
+  })
+
+  ipcMain.on(IPC_WORK.BROWSER_ACTIVATE, (event, id: unknown) => {
+    if (!isWorkSender(event.sender)) return
+    if (id !== null && typeof id !== 'string') return
+    workBrowser?.activate(id)
+  })
+
+  ipcMain.on(IPC_WORK.BROWSER_ACTION, (event, action: unknown) => {
+    if (!isWorkSender(event.sender)) return
+    if (
+      action !== 'back' &&
+      action !== 'forward' &&
+      action !== 'reload' &&
+      action !== 'external'
+    ) {
+      return
+    }
+    workBrowser?.action(action)
+  })
+
+  ipcMain.on(IPC_WORK.BROWSER_OVERLAY, (event, open: unknown) => {
+    if (!isWorkSender(event.sender)) return
+    workBrowser?.setOverlay(Boolean(open))
   })
 
   ipcMain.on(IPC_WORK.REPORT_EVENT, (event, payload: WorkMirrorEvent) => {

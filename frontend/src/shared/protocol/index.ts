@@ -52,7 +52,7 @@ export interface AttachmentRef {
  * 缺省 = 旧行为（允许联网、不切思考模型）。
  */
 export interface UserMessageOptions {
-  /** 本轮切到「深度思考模型」并展示推理流 */
+  /** 本轮追加"先充分推理"提示并抬高输出预算（同一模型，不切换） */
   think?: boolean
   /** 本轮是否向模型提供联网工具（false = 移除 web_search / web_fetch） */
   search?: boolean
@@ -64,6 +64,8 @@ export interface UserMessageData {
   session_id?: string | null
   attachments?: AttachmentRef[]
   options?: UserMessageOptions | null
+  /** 前端本地消息 id：后端 message_saved 原样回传，用于把 DB 行 id 挂回同一条消息 */
+  client_id?: string | null
 }
 
 /** 心跳（§3.6：前端每 30s 发 ping，服务端回 pong） */
@@ -113,6 +115,11 @@ export interface TestLlmData {
 export interface LoadHistoryData {
   session_id?: string
   limit?: number
+}
+
+/** 删除单条消息（工作模式）：当前会话的 messages 表行 id */
+export interface DeleteMessageData {
+  id: number
 }
 
 /** 行为执行完成/被中断回报（Phase 3） */
@@ -287,6 +294,39 @@ export interface BehaviorData {
 /** 一轮回复开始 */
 export interface ReplyStartData {
   message_id: string
+}
+
+/**
+ * 一条消息已落库（工作模式，2026-10-18）。
+ * - 用户消息：client_id = user_message.client_id（前端本地 id）；
+ * - 助手消息：client_id = reply 的 message_id。
+ */
+export interface MessageSavedData {
+  client_id: string
+  db_id: number
+  role: string
+}
+
+/** 单条消息删除结果（工作模式）；ok=false = 不属于当前会话/已不存在 */
+export interface MessageDeletedData {
+  id: number
+  ok: boolean
+}
+
+/** 联网搜索来源（工作窗引用悬浮卡片） */
+export interface SourceItemData {
+  index: number
+  title: string
+  url: string
+  snippet: string
+  site_name: string
+  date: string
+}
+
+/** 一轮回复用到的搜索来源（与正文分离） */
+export interface SourcesData {
+  message_id: string
+  items: SourceItemData[]
 }
 
 /**
@@ -473,6 +513,12 @@ export interface ServerEventMap {
   state: StateData
   behavior: BehaviorData
   reply_start: ReplyStartData
+  /** 消息落库回执（工作模式：把 DB id 挂回消息，删除用） */
+  message_saved: MessageSavedData
+  /** 单条消息删除结果 */
+  message_deleted: MessageDeletedData
+  /** 本轮联网搜索来源（引用悬浮卡片） */
+  sources: SourcesData
   /** 推理模型思考增量（工作模式「已思考」折叠块） */
   reasoning: ReasoningData
   token: TokenData
@@ -520,6 +566,8 @@ export interface ClientEventMap {
   /** 前端本地展示的助手台词补录（只写入会话历史，不触发回复） */
   note_assistant_message: NoteAssistantMessageData
   load_history: LoadHistoryData
+  /** 工作模式：删除当前会话的一条消息 */
+  delete_message: DeleteMessageData
   behavior_done: BehaviorDoneData
   env_update: EnvUpdateData
   get_reminders: GetRemindersData

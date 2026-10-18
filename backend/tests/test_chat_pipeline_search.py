@@ -68,6 +68,9 @@ class Sink:
     async def notice(self, code: str, message: str, level: str = "info") -> None:
         self.events.append(("notice", {"code": code, "message": message, "level": level}))
 
+    async def sources(self, message_id: str, items: list[dict[str, Any]]) -> None:
+        self.events.append(("sources", {"message_id": message_id, "items": items}))
+
     async def error(self, code: str, message: str) -> None:
         self.events.append(("error", {"code": code, "message": message}))
 
@@ -107,6 +110,16 @@ def test_web_search_feedback_round() -> None:
                 "[联网搜索结果]\n[1] DeepSeek V4\nURL: https://example.com/v4\n"
                 "摘要: V4 已发布。"
             ),
+            "sources": [
+                {
+                    "index": 1,
+                    "title": "DeepSeek V4",
+                    "url": "https://example.com/v4",
+                    "snippet": "V4 已发布。",
+                    "site_name": "Example",
+                    "date": "2026-10-18",
+                }
+            ],
         }
 
     registry = ToolRegistry()
@@ -157,6 +170,19 @@ def test_web_search_feedback_round() -> None:
     assert "我搜一下～" in reply
     assert "根据搜索结果 [1]" in reply
     assert sink.data_of("tool_call") == []
+
+    # 结构化来源在正文回答前回传（工作窗引用悬浮卡片用）
+    source_events = sink.data_of("sources")
+    assert source_events and source_events[0]["items"][0]["url"] == "https://example.com/v4"
+    assert source_events[0]["items"][0]["snippet"] == "V4 已发布。"
+    assert source_events[0]["message_id"]
+    source_index = next(
+        i for i, (kind, _data) in enumerate(sink.events) if kind == "sources"
+    )
+    reply_end_index = next(
+        i for i, (kind, _data) in enumerate(sink.events) if kind == "reply_end"
+    )
+    assert source_index < reply_end_index
 
     # 搜索通知在 reply_end 之后推送
     notices = sink.data_of("notice")

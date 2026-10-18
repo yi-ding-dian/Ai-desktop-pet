@@ -256,6 +256,22 @@ export const IPC_WORK = {
   SEND_RESULT: 'work:send-result',
   /** 工作窗 → 主 → 宠物窗：打断 */
   INTERRUPT: 'work:interrupt',
+  /** 工作窗 → 主：删除单条消息（payload: {dbId}） */
+  DELETE_MESSAGE: 'work:delete-message',
+  /** 主 → 宠物窗：删除单条消息（宠物面发 WS delete_message） */
+  DELETE_MESSAGE_REQUEST: 'work:delete-message-request',
+  /** 工作窗 → 主：在内嵌浏览器打开一个链接 */
+  BROWSER_OPEN: 'work:browser-open',
+  /** 工作窗 → 主：关闭内嵌浏览器标签 */
+  BROWSER_CLOSE: 'work:browser-close',
+  /** 工作窗 → 主：切换到某标签（null = 对话） */
+  BROWSER_ACTIVATE: 'work:browser-activate',
+  /** 工作窗 → 主：浏览器工具条动作 */
+  BROWSER_ACTION: 'work:browser-action',
+  /** 工作窗 → 主：DOM 浮层（+N 标签菜单）打开时临时隐藏原生网页视图，避免被盖住 */
+  BROWSER_OVERLAY: 'work:browser-overlay',
+  /** 主 → 工作窗：标签列表/激活态 */
+  BROWSER_STATE: 'work:browser-state',
   /** 宠物窗 → 主：对话镜像事件 */
   REPORT_EVENT: 'work:report-event',
   /** 主 → 工作窗：对话镜像事件 / 历史响应 */
@@ -469,6 +485,16 @@ export type TeachingBoardInbox =
 
 // ------------------------------------------------------------------ 工作模式（2026-10-18）
 
+/** 联网搜索来源（工作窗引用悬浮卡片；与后端 SourceItemData 对齐） */
+export interface WorkSourceItem {
+  index: number
+  title: string
+  url: string
+  snippet: string
+  site_name: string
+  date: string
+}
+
 /** 工作窗单轮选项（与后端 UserMessageOptions 对齐） */
 export interface WorkTurnOptions {
   /** 深度思考：切思考模型并展示推理流 */
@@ -496,6 +522,9 @@ export interface WorkSendResultPayload {
 export type WorkMirrorEvent =
   | { kind: 'user_message'; localId: string; text: string; sentAt: number }
   | { kind: 'reply_start'; messageId: string }
+  | { kind: 'message_saved'; clientId: string; dbId: number; role: string }
+  | { kind: 'message_deleted'; dbId: number; ok: boolean }
+  | { kind: 'sources'; messageId: string; items: WorkSourceItem[] }
   | { kind: 'reasoning'; messageId: string; text: string }
   | { kind: 'token'; messageId: string; text: string }
   | {
@@ -547,6 +576,44 @@ export interface WorkPresencePayload {
   /** 是否正在工作（窗口可见且未最小化）——宠物依附/自主行为抑制的依据 */
   active: boolean
 }
+
+// ------------------------------------------------------------------ 工作模式内嵌浏览器（2026-10-18）
+
+/** 内嵌浏览器标签（渲染面展示用；WebContentsView 只在主进程持有） */
+export interface WorkBrowserTab {
+  id: string
+  title: string
+  url: string
+  loading: boolean
+  /** 加载失败说明（成功时为 undefined） */
+  error?: string
+}
+
+/** 内嵌浏览器状态（主 → 工作窗） */
+export interface WorkBrowserState {
+  tabs: WorkBrowserTab[]
+  /** 当前激活标签；null = 对话 */
+  activeId: string | null
+  canGoBack: boolean
+  canGoForward: boolean
+}
+
+/** 工作窗 → 主：打开链接 */
+export interface WorkBrowserOpenPayload {
+  url: string
+  /** 初始标签名（取不到时用域名）；加载后会被页面标题覆盖 */
+  label?: string
+}
+
+/** 工作窗 → 主：浏览器工具条动作 */
+export type WorkBrowserAction = 'back' | 'forward' | 'reload' | 'external'
+
+/** 标题栏高度（与套件 .pui-titlebar 对齐；WebContentsView 的 top 计算用） */
+export const WORK_TITLEBAR_HEIGHT = 40
+/** 浏览器工具条高度（与 work.css .work-browser-bar 对齐） */
+export const WORK_BROWSER_TOOLBAR_HEIGHT = 34
+/** 网页视图四周边距：露出窗口圆角 + 保留四边缩放热区 */
+export const WORK_BROWSER_INSET = 8
 
 
 // ------------------------------------------------------------------ 设置向导宠物（P4，设计文档 §7.6.6）与自绘托盘菜单（§7.6.4）
@@ -726,6 +793,8 @@ export interface PetBridgeApi {
     notify(title: string, body: string): void
     /** 用系统默认浏览器打开 http/https 外链（只放行 http/https；2026-10-18 记忆本） */
     openExternal(url: string): Promise<OpenResult>
+    /** 写系统剪贴板（工作模式复制消息；preload 直接调 Electron clipboard） */
+    copyText(text: string): void
     /** 用默认程序打开本机文件/文件夹（可执行/脚本类拒绝；2026-10-18 记忆本） */
     openPath(path: string): Promise<OpenResult>
     /**
@@ -910,6 +979,20 @@ export interface PetBridgeApi {
     requestHistory(payload: WorkHistoryRequestPayload): Promise<WorkHistoryPayload>
     /** 工作窗：打断当前回复 */
     interrupt(): void
+    /** 工作窗：删除单条消息（按后端 DB 行 id；删除结果经 onEvent 的 message_deleted 回传） */
+    deleteMessage(payload: { dbId: number }): void
+    /** 工作窗：在内嵌浏览器打开链接（已有同 URL 标签则切换过去） */
+    browserOpen(payload: WorkBrowserOpenPayload): void
+    /** 工作窗：关闭内嵌浏览器标签 */
+    browserClose(id: string): void
+    /** 工作窗：切换标签（null = 对话） */
+    browserActivate(id: string | null): void
+    /** 工作窗：浏览器工具条动作（后退/前进/刷新/系统浏览器） */
+    browserAction(action: WorkBrowserAction): void
+    /** 工作窗：临时隐藏/恢复原生网页视图（DOM 下拉菜单浮在网页上方时用） */
+    browserOverlay(open: boolean): void
+    /** 工作窗：订阅内嵌浏览器状态；返回取消订阅函数 */
+    onBrowserState(cb: (state: WorkBrowserState) => void): () => void
     /** 工作窗：订阅镜像事件；返回取消订阅函数 */
     onEvent(cb: (event: WorkMirrorEvent) => void): () => void
     /** 工作窗：订阅“宠物窗重载完成”（应清空旧记录并重新拉历史）；返回取消订阅函数 */
@@ -926,6 +1009,8 @@ export interface PetBridgeApi {
     reportHistory(payload: WorkHistoryPayload): void
     /** 宠物面：订阅打断请求；返回取消订阅函数 */
     onInterrupt(cb: () => void): () => void
+    /** 宠物面：订阅删除单条消息请求；返回取消订阅函数 */
+    onDeleteMessage(cb: (payload: { dbId: number }) => void): () => void
     /** 宠物面：订阅工作窗存在性；返回取消订阅函数 */
     onPresence(cb: (payload: WorkPresencePayload) => void): () => void
     /** 宠物面：查询工作窗当前是否存在（重载后补状态） */

@@ -90,6 +90,18 @@ class HistoryStore:
         assert cursor.lastrowid is not None
         return int(cursor.lastrowid)
 
+    def delete_message(self, session_id: str, message_id: int) -> bool:
+        """删除当前会话的一条消息（工作模式单条删除）；返回是否删到。
+
+        只按 ``session_id + id`` 精确删，防止跨会话误删；调用方随后应重载
+        会话内存上下文（application.session.Session.reload_history）。
+        """
+        cursor = self._conn.execute(
+            "DELETE FROM messages WHERE id = ? AND session_id = ?",
+            (int(message_id), session_id),
+        )
+        return cursor.rowcount > 0
+
     def recent_messages(self, session_id: str, limit: int = 20) -> list[dict[str, Any]]:
         """取最近 limit 条消息（**时间正序**返回，直接供 load_history/history 事件）。
 

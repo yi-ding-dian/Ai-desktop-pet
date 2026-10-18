@@ -149,6 +149,7 @@ CLIENT_MIN_DATA: dict[str, dict] = {
     "get_profile": {},
     "note_assistant_message": {"text": "你好呀~你叫什么名字呢？"},
     "load_history": {"session_id": "s1"},
+    "delete_message": {"id": 1},
     "behavior_done": {"id": "b1"},
     "env_update": {},
     "get_reminders": {"limit": 20},
@@ -168,6 +169,8 @@ SERVER_MIN_DATA: dict[str, dict] = {
     "state": {"state": "idle"},
     "behavior": {"id": "b1", "name": "walk"},
     "reply_start": {"message_id": "m1"},
+    "message_saved": {"client_id": "u1", "db_id": 1, "role": "user"},
+    "message_deleted": {"id": 1, "ok": True},
     "reasoning": {"message_id": "m1", "text": "先想想…"},
     "token": {"message_id": "m1", "text": "a"},
     "sentence": {"message_id": "m1", "index": 0, "text": "a"},
@@ -181,6 +184,19 @@ SERVER_MIN_DATA: dict[str, dict] = {
     "notebook_items": {"items": [], "count": 0},
     "notebook_result": {"ok": True, "code": "items_saved", "message": "记好啦"},
     "notice": {"code": "context_reset", "message": "为了装下文件，先不带之前的聊天了"},
+    "sources": {
+        "message_id": "m1",
+        "items": [
+            {
+                "index": 1,
+                "title": "新闻",
+                "url": "https://example.com/a",
+                "snippet": "摘要",
+                "site_name": "央视网",
+                "date": "2026/10/18",
+            }
+        ],
+    },
     "history": {"session_id": "s1"},
     "config": {},
     "profile": {"has_name": False, "name": None, "memory_enabled": True},

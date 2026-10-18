@@ -50,6 +50,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -98,7 +99,8 @@ if TYPE_CHECKING:  # 仅类型注解；运行时经 Protocol/鸭子类型协作�
 class TurnOptions:
     """单轮对话选项（工作模式，2026-10-18）。
 
-    - ``think``：切到「深度思考模型」并透传推理流；
+    - ``think``：同一模型下追加"先充分推理"提示并抬高输出预算（不切模型）；
+      网关若返回 ``reasoning_content`` 仍会透传为 reasoning 事件；
     - ``search``：是否向模型提供联网工具（False 时移除 web_search / web_fetch）。
 
     定义在 application 层（而不是 import interfaces 的协议模型），保持
@@ -132,6 +134,10 @@ class ReplySink(Protocol):
 
     async def reply_start(self, message_id: str) -> None: ...
 
+    async def message_saved(self, client_id: str, db_id: int, role: str) -> None:
+        """一条消息已落库：把 DB 行 id 回给前端（工作模式单条删除用）。"""
+        ...
+
     async def reasoning(self, message_id: str, text: str) -> None:
         """推理模型思考过程增量（工作模式折叠展示；不进入正文/TTS）。"""
         ...
@@ -159,6 +165,10 @@ class ReplySink(Protocol):
 
     async def notice(self, code: str, message: str, level: str = "info") -> None:
         """一次性提示（文件分析丢弃旧上下文等）；不进入回复正文/历史/TTS。"""
+        ...
+
+    async def sources(self, message_id: str, items: list[dict[str, Any]]) -> None:
+        """本轮联网搜索的结构化来源（工作窗引用悬浮卡片用）。"""
         ...
 
 
@@ -255,6 +265,7 @@ class ChatPipeline:
         voice: VoiceOut | None = None,
         attachments: Sequence[FileRef] | None = None,
         options: TurnOptions | None = None,
+        client_id: str | None = None,
     ) -> None:
         """执行一轮对话；被取消（interrupt / 新消息抢占）时按 §7.2 收尾。
 
@@ -270,19 +281,18 @@ class ChatPipeline:
         超限直接本地拒绝（不调 LLM）；上下文超预算先丢历史（notice 提示），
         仍超则拒绝。文件正文只注入本轮，历史里只存"📎 文件名 + 问题"。
 
-        工作模式选项（``options``，2026-10-18）：``think`` 切换思考模型并透传
-        推理流（不发 tools，避免思考模型不支持 function calling）；``search``
+        工作模式选项（``options``，2026-10-18）：``think`` 用**同一模型**追加
+        "先充分推理"提示并抬高输出预算（不切模型、不移除工具）；``search``
         为 False 时只移除联网工具，其余工具照常。None = 旧行为。
         """
         message_id = f"m_{uuid.uuid4().hex}"
-        # 工作模式单轮选项（None = 旧行为：允许搜索、不切思考模型）
+        # 回复开始时间：助手消息落库时用它作 created_at，保证实时与历史回填的时间一致
+        reply_created_at = int(time.time() * 1000)
+        # 工作模式单轮选项（None = 旧行为：允许搜索、普通回复）
         think = bool(options is not None and options.think)
         search = True if options is None else options.search
-        think_model = self._resolve_think_model() if think else None
         parser = EmotionTagParser()
         clean_parts: list[str] = []
-        #: 本轮是否已产出推理增量（思考模型失败回退时判断“能否安全重试”）
-        reasoning_seen = False
         emotion_seen = False
         last_emotion: str | None = None  # 本轮最后出现的情绪（随 assistant 消息落库）
         reply_started = False
@@ -335,10 +345,27 @@ class ChatPipeline:
         #: 快通道（打开设置）不赋值——那条路径不会产生 feedback 工具调用。
         messages: list[ChatMessage] | None = None
 
+        async def save_message(
+            role: str,
+            content: str,
+            *,
+            emotion: str | None = None,
+            saved_client_id: str = "",
+            created_at: int | None = None,
+        ) -> None:
+            """落库并把 DB 行 id 回给前端（工作模式按 id 删除单条消息）。"""
+            db_id = session.append_message(
+                role, content, emotion=emotion, created_at=created_at
+            )
+            if db_id is not None:
+                saved = getattr(sink, "message_saved", None)
+                if saved is not None:
+                    await saved(saved_client_id, db_id, role)
+
         async def reject_with(text: str) -> None:
             """本地拒绝（不调 LLM）：用户消息照常落库，回复走气泡事件流。"""
             nonlocal reply_started, emotion_seen, last_emotion
-            session.append_message("user", stored_user_text)
+            await save_message("user", stored_user_text, saved_client_id=client_id or "")
             await sink.reply_start(message_id)
             reply_started = True
             clean_parts.append(text)
@@ -346,7 +373,13 @@ class ChatPipeline:
             emotion_seen = True
             last_emotion = "sad"
             await sink.emotion(message_id, "sad", 1.0)
-            session.append_message("assistant", text, emotion="sad")
+            await save_message(
+                "assistant",
+                text,
+                emotion="sad",
+                saved_client_id=message_id,
+                created_at=reply_created_at,
+            )
             await sink.reply_end(message_id, text)
             await sink.state("idle")
 
@@ -415,7 +448,7 @@ class ChatPipeline:
                     budget,
                 )
 
-            session.append_message("user", stored_user_text)
+            await save_message("user", stored_user_text, saved_client_id=client_id or "")
             await sink.reply_start(message_id)
             reply_started = True
 
@@ -440,19 +473,7 @@ class ChatPipeline:
                     if llm_messages is not None
                     else await self._build_messages(session, user_text=user_text)
                 )
-                # 深度思考轮次不发 tools：多数 reasoner（含 deepseek-reasoner）
-                # 对 function calling/temperature 支持不稳定，避免请求直接失败。
-                use_tools = (
-                    self._tools is not None and not _tools_unsupported and not think
-                )
-                # 提醒这类“必须真正调用工具”的意图在思考轮会被跳过：明确告知用户，
-                # 避免“设了提醒却没生效”的静默失败。
-                if think and self._tools is not None and match_forced_tool(user_text):
-                    await sink.notice(
-                        "think_tool_skipped",
-                        "深度思考模式下本轮不执行工具调用；需要设提醒等操作时请先关闭深度思考。",
-                        "warn",
-                    )
+                use_tools = self._tools is not None and not _tools_unsupported
                 # 提醒意图（动作 + 明确时间）强制 tool_choice：模型偶发“只回一句
                 # 提醒你、不真正调用工具”，用户以为设上了、到点却没有任何提醒
                 # （2026-10-18 真机复现）。强制指定后模型必须返回该工具调用。
@@ -480,18 +501,15 @@ class ChatPipeline:
                         }
                         logger.info("意图明确，强制调用工具：{}", forced_tool)
 
-                # 工作模式：思考模型覆盖 + 输出预算 + 临时 system 提示
+                # 工作模式：深度思考 = 同一模型 + 推理提示 + 更大输出预算。
+                # 不切模型、不改 temperature、不移除工具（用户定稿：深度思考用同一个模型）。
                 extra_system: list[str] = []
                 if think:
-                    if think_model:
-                        request_opts["model"] = think_model
                     config = self._config() if self._config is not None else None
                     base_max = config.llm.max_tokens if config is not None else 768
                     request_opts["max_tokens"] = max(base_max, _THINK_MIN_MAX_TOKENS)
-                    # reasoner 不接受 temperature：显式 None = provider 不发该参数
-                    request_opts["temperature"] = None
                     extra_system.append(_THINK_HINT)
-                elif options is not None and options.search and self._tools is not None:
+                if options is not None and options.search and self._tools is not None:
                     extra_system.append(_SEARCH_HINT)
                 if extra_system:
                     # 插在开头的 system 段之后、历史/本轮用户消息之前：
@@ -511,10 +529,9 @@ class ChatPipeline:
 
                 async def consume_stream(**opts: Any) -> None:
                     """消费一次 LLM 流（首次请求与降级重放共用同一实现，防两处走样）。"""
-                    nonlocal emotion_seen, last_emotion, reasoning_seen
+                    nonlocal emotion_seen, last_emotion
                     async for chunk in self._provider.stream_chat(messages, **opts):
                         if chunk.reasoning:
-                            reasoning_seen = True
                             await sink.reasoning(message_id, chunk.reasoning)
                         if chunk.text:
                             emotion = await self._emit(
@@ -556,40 +573,6 @@ class ChatPipeline:
                     except LlmError as first:
                         first_error = first
                         error = first
-
-                    # 思考模型降级：模型名不存在 / 网关不认 reasoner 等请求级拒绝时，
-                    # 去掉 model 与 temperature 覆盖，用默认模型重试一次。只在尚未
-                    # 产出任何正文/推理/工具分片时重试，避免把两次尝试拼成一段回答。
-                    if (
-                        think
-                        and "model" in request_opts
-                        and error.code == LlmErrorCode.LLM_BAD_REQUEST
-                        and not clean_parts
-                        and not tool_acc
-                        and not reasoning_seen
-                    ):
-                        logger.warning(
-                            "思考模型被拒（{}：{}），改用默认模型重试",
-                            error.code,
-                            error.message,
-                        )
-                        request_opts.pop("model", None)
-                        request_opts.pop("temperature", None)
-                        await sink.notice(
-                            "think_model_fallback",
-                            "深度思考模型不可用，已改用默认模型回答。",
-                            "warn",
-                        )
-                        try:
-                            await consume_stream(**request_opts)
-                            return None
-                        except LlmError as retry_exc:
-                            logger.warning(
-                                "默认模型重试仍失败（{}）：{}",
-                                retry_exc.code,
-                                retry_exc.message,
-                            )
-                            return retry_exc
 
                     if not (
                         use_tools
@@ -675,6 +658,33 @@ class ChatPipeline:
                 await sink.token(message_id, ack_text)
                 await on_clean_text(ack_text)
 
+            # 搜索来源结构化回传（工作窗引用悬浮卡片用；正文里只有 [n] 角标）：
+            # 按 URL 去重，旁路信息失败不影响回复。
+            source_items: list[dict[str, Any]] = []
+            for _tool_name, result in backend_results:
+                items = result.get("sources")
+                if isinstance(items, list):
+                    source_items.extend(
+                        item
+                        for item in items
+                        if isinstance(item, dict) and item.get("url")
+                    )
+            if source_items:
+                deduped_sources: list[dict[str, Any]] = []
+                seen_urls: set[str] = set()
+                for item in source_items:
+                    url_text = str(item.get("url", "")).strip()
+                    if not url_text or url_text in seen_urls:
+                        continue
+                    seen_urls.add(url_text)
+                    deduped_sources.append(item)
+                sender = getattr(sink, "sources", None)
+                if sender is not None:
+                    try:
+                        await sender(message_id, deduped_sources)
+                    except Exception:
+                        logger.debug("来源信息发送失败（忽略）")
+
             # ---- 联网搜索/抓取：工具结果回喂模型，再生成一轮最终回答（2026-10-18）----
             # 只对带 model_content 的 feedback 工具做（web_search / web_fetch）。
             # 第一轮的 tool_calls 声明 + tool 结果消息必须成对出现，OpenAI 协议
@@ -725,12 +735,9 @@ class ChatPipeline:
                     "联网搜索/抓取结果回传：{} 个工具调用，开始第二轮生成",
                     len(feedback_items),
                 )
-                # 第二轮沿用思考模型与预算（若本轮开着深度思考）；不带 tools。
+                # 第二轮沿用深度思考的输出预算（同一模型）；不带 tools。
                 follow_up_opts: dict[str, Any] = {}
                 if think:
-                    if think_model:
-                        follow_up_opts["model"] = think_model
-                    follow_up_opts["temperature"] = None
                     config = self._config() if self._config is not None else None
                     base_max = config.llm.max_tokens if config is not None else 768
                     follow_up_opts["max_tokens"] = max(base_max, _THINK_MIN_MAX_TOKENS)
@@ -777,7 +784,13 @@ class ChatPipeline:
 
             full_text = "".join(clean_parts)
             if full_text:
-                session.append_message("assistant", full_text, emotion=last_emotion)
+                await save_message(
+                    "assistant",
+                    full_text,
+                    emotion=last_emotion,
+                    saved_client_id=message_id,
+                    created_at=reply_created_at,
+                )
             await sink.reply_end(message_id, full_text)
             # 派发工具调用（§4.7）：协议约定在对应回复的 reply_end 之后推送，
             # 前端按 name 执行（如 open_settings → 打开设置窗）；工具调用本身
@@ -809,7 +822,13 @@ class ChatPipeline:
                 partial = "".join(clean_parts)
                 if partial:
                     # 用户已看到的半截回复（含其最后情绪），照实落库
-                    session.append_message("assistant", partial, emotion=last_emotion)
+                    await save_message(
+                        "assistant",
+                        partial,
+                        emotion=last_emotion,
+                        saved_client_id=message_id,
+                        created_at=reply_created_at,
+                    )
                 try:
                     await sink.reply_end(message_id, partial, interrupted=True)
                     await sink.state("idle")
@@ -961,6 +980,10 @@ class ChatPipeline:
         model_content = result.get("model_content")
         if isinstance(model_content, str) and model_content.strip():
             normalized["model_content"] = model_content
+        # 搜索来源结构化信息：只给工作窗做引用悬浮卡片，不进入模型/通知
+        sources = result.get("sources")
+        if isinstance(sources, list):
+            normalized["sources"] = sources
         return normalized
 
     def _compose_tool_ack(
@@ -1104,22 +1127,6 @@ class ChatPipeline:
         except Exception:
             pass
         return block
-
-    def _resolve_think_model(self) -> str | None:
-        """解析「深度思考」模型（工作模式，2026-10-18）。
-
-        顺序：显式 ``llm.think_model`` → DeepSeek 端点默认 ``deepseek-reasoner``
-        → None（不覆盖模型，仍按思考提示与更大输出预算执行）。
-        """
-        config = self._config() if self._config is not None else None
-        if config is None:
-            return None
-        explicit = (config.llm.think_model or "").strip()
-        if explicit:
-            return explicit
-        if "api.deepseek.com" in (config.llm.base_url or "").lower():
-            return "deepseek-reasoner"
-        return None
 
     # ---------- 文件分析（P1）内部实现 ----------
 

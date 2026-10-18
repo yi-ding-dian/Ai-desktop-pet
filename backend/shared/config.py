@@ -31,9 +31,6 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # OpenAI 兼容端点：留空 = 未配置（首启引导里选服务商，或手工填，如 https://api.deepseek.com/v1）
 base_url    = ""
 model       = "deepseek-flash"
-# 深度思考模型（工作模式的「深度思考」开关）：留空时 DeepSeek 端点自动用
-# deepseek-reasoner，其他端点回退到 model（仍按思考提示 + 更大输出预算执行）。
-think_model = ""
 temperature = 0.8
 # 最大回复长度：推理型模型（如 deepseek-flash）的思考过程也消耗 token，需给足
 max_tokens  = 768
@@ -127,9 +124,6 @@ class LlmConfig(BaseModel):
 
     base_url: str = ""
     model: str = "deepseek-flash"
-    # 深度思考模型（工作模式）：空 = 自动（DeepSeek 端点用 deepseek-reasoner，
-    # 其他端点回退到 model）
-    think_model: str = ""
     temperature: float = 0.8
     # 推理型模型思考也占 token，默认给足 768，避免思考吃光导致空回复
     max_tokens: int = 768
@@ -165,12 +159,6 @@ class LlmConfig(BaseModel):
         if not text:
             raise ValueError("model 不能为空")
         return text
-
-    @field_validator("think_model")
-    @classmethod
-    def _check_think_model(cls, value: str) -> str:
-        """允许空串（= 自动选择），非空时去首尾空白。"""
-        return value.strip()
 
 
 class EmbeddingConfig(BaseModel):

@@ -6,7 +6,8 @@
  */
 import type {
   WorkHistoryMessage,
-  WorkMirrorEvent
+  WorkMirrorEvent,
+  WorkSourceItem
 } from '../../electron/ipc/channels'
 
 export interface WorkMessage {
@@ -18,9 +19,15 @@ export interface WorkMessage {
   status: 'streaming' | 'done' | 'error'
   /** 本轮用户消息发送时间（思考用时 = 首个正文 token - sentAt） */
   sentAt: number
+  /** 消息时间的权威值（列表常显；用户=发送时间，助手=开始回复/历史落库时间） */
+  createdAt: number
+  /** 后端 messages 表行 id（历史消息直接有；实时消息等 message_saved 回执） */
+  dbId?: number
   /** 思考用时（ms）；只在有 reasoning 时定稿 */
   thinkingMs?: number
   interrupted?: boolean
+  /** 本轮联网搜索的结构化来源（悬浮卡片；历史回填没有） */
+  sources?: WorkSourceItem[]
 }
 
 export interface WorkNotice {
@@ -63,14 +70,22 @@ function historyId(item: WorkHistoryMessage): string {
   return `h_${String(item.id)}`
 }
 
+function historyDbId(item: WorkHistoryMessage): number | undefined {
+  const value = typeof item.id === 'number' ? item.id : Number(item.id)
+  return Number.isFinite(value) ? value : undefined
+}
+
 function fromHistory(item: WorkHistoryMessage): WorkMessage {
+  const createdAt = item.created_at ?? now()
   return {
     id: historyId(item),
     role: item.role === 'user' ? 'user' : 'assistant',
     text: item.content ?? '',
     reasoning: '',
     status: 'done',
-    sentAt: item.created_at ?? 0
+    sentAt: createdAt,
+    createdAt,
+    dbId: historyDbId(item)
   }
 }
 
@@ -91,7 +106,8 @@ function ensureAssistant(state: WorkState, messageId: string): WorkState {
         text: '',
         reasoning: '',
         status: 'streaming',
-        sentAt: state.lastUserAt
+        sentAt: state.lastUserAt,
+        createdAt: now()
       }
     ],
     streamingId: messageId
@@ -132,9 +148,42 @@ function applyMirror(state: WorkState, event: WorkMirrorEvent): WorkState {
             text: event.text,
             reasoning: '',
             status: 'done',
-            sentAt: event.sentAt
+            sentAt: event.sentAt,
+            createdAt: event.sentAt
           }
         ]
+      }
+    }
+    case 'message_saved': {
+      if (!event.clientId) return state
+      return {
+        ...state,
+        messages: state.messages.map((message) =>
+          message.id === event.clientId ? { ...message, dbId: event.dbId } : message
+        )
+      }
+    }
+    case 'sources': {
+      const base = ensureAssistant(state, event.messageId)
+      return patchAssistant(base, event.messageId, (message) => ({
+        ...message,
+        sources: event.items
+      }))
+    }
+    case 'message_deleted': {
+      const messages = state.messages.filter((message) => message.dbId !== event.dbId)
+      const deletedStreaming = state.messages.some(
+        (message) => message.dbId === event.dbId && message.id === state.streamingId
+      )
+      const notice =
+        event.ok === false
+          ? { kind: 'warn' as const, text: '这条消息没删成（可能已不存在）～' }
+          : state.notice
+      return {
+        ...state,
+        messages,
+        notice,
+        streamingId: deletedStreaming ? null : state.streamingId
       }
     }
     case 'reply_start': {
@@ -218,7 +267,8 @@ export function workReducer(state: WorkState, action: WorkAction): WorkState {
           ...message,
           text: action.live?.text || message.text,
           reasoning: action.live?.reasoning || message.reasoning,
-          sentAt: action.live?.startedAt || message.sentAt
+          sentAt: action.live?.startedAt || message.sentAt,
+          createdAt: action.live?.startedAt || message.createdAt
         }))
       }
       return next

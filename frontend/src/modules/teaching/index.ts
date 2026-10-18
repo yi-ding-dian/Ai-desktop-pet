@@ -62,8 +62,8 @@ const tokenAccum = new Map<string, string>()
 
 const stateSubscribers = new Set<(state: TeachingStatePayload) => void>()
 const bubbleSubscribers = new Set<(items: TeachingBubbleItem[]) => void>()
-/** "已发送的用户消息"订阅者（chat 域会话记录用——统一发送入口成功送出后广播） */
-const sentSubscribers = new Set<(text: string) => void>()
+/** "已发送的用户消息"订阅者（chat 域会话记录 / 工作窗镜像用——统一发送入口成功送出后广播） */
+const sentSubscribers = new Set<(text: string, localId: string) => void>()
 
 /** 订阅教学模式状态（App：面板收起/气泡显隐/讲台走位）；返回取消订阅函数 */
 export function subscribeTeachingState(cb: (state: TeachingStatePayload) => void): () => void {
@@ -81,18 +81,20 @@ export function subscribeTeachingBubbles(cb: (items: TeachingBubbleItem[]) => vo
   }
 }
 
-/** 订阅"已发送的用户消息"（chat 域会话记录用——两条发送路径统一从此广播）；返回取消订阅函数 */
-export function subscribeSentUserMessages(cb: (text: string) => void): () => void {
+/** 订阅"已发送的用户消息"（chat 域会话记录 / 工作窗镜像用——两条发送路径统一从此广播）；返回取消订阅函数 */
+export function subscribeSentUserMessages(
+  cb: (text: string, localId: string) => void
+): () => void {
   sentSubscribers.add(cb)
   return () => {
     sentSubscribers.delete(cb)
   }
 }
 
-function emitSent(text: string): void {
+function emitSent(text: string, localId: string): void {
   for (const cb of [...sentSubscribers]) {
     try {
-      cb(text)
+      cb(text, localId)
     } catch (err) {
       console.error('[teaching] 发送订阅者抛错：', err)
     }
@@ -200,9 +202,12 @@ export function sendUserMessage(
   }
 
   // ② 照常发往后端（消息本身不受教学模式影响）；附件只传路径/显示名
+  // localId 同时作为 client_id 发给后端：message_saved 回传 DB 行 id 时按它挂回消息
+  const localId = makeLocalId()
   const refs = attachments?.map((item) => ({ path: item.path, name: item.name }))
   const payload = {
     text,
+    client_id: localId,
     ...(refs && refs.length > 0 ? { attachments: refs } : {}),
     // 工作模式的单轮开关；宠物胶囊/黑板路径不传 = 旧行为
     ...(options ? { options } : {})
@@ -220,15 +225,19 @@ export function sendUserMessage(
   const names = refs?.map((item) => item.name).join('、') ?? ''
   const displayText = names ? `📎 ${names}${text ? `\n${text}` : ''}` : text
 
-  // ②b 已发送广播（chat 域会话记录——"展开进教学"预填黑板的数据源）
-  emitSent(displayText)
+  // ②b 已发送广播（chat 域会话记录——"展开进教学"预填黑板的数据源；工作窗用同一 localId）
+  emitSent(displayText, localId)
 
-  // ③ 教学模式中：推入头顶气泡 + 镜像给黑板（localId 一并带上，黑板据此建立问题→段落映射）
+  // ③ 教学模式中：推入头顶气泡 + 镜像给黑板（黑板用自己的气泡 id 建立问题→段落映射）
   if (isTeachingMode()) {
-    const localId = pushBubble(displayText)
-    const event: UserMessageMirrorEvent = { kind: 'user_message', text: displayText, localId }
+    const bubbleId = pushBubble(displayText)
+    const event: UserMessageMirrorEvent = {
+      kind: 'user_message',
+      text: displayText,
+      localId: bubbleId
+    }
     reportMirror(event)
-    devLog(`镜像 user_message（localId=${localId}）：${displayText.slice(0, 24)}`)
+    devLog(`镜像 user_message（localId=${bubbleId}）：${displayText.slice(0, 24)}`)
   }
   return true
 }

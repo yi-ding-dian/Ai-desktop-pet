@@ -2,7 +2,7 @@
  * preload：contextBridge 安全桥（只暴露白名单 API，设计文档 §2.2）。
  * 渲染进程只能访问 window.pet，无法触达 Node / Electron 原生能力。
  */
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   IPC,
   IPC_BUBBLE,
@@ -39,6 +39,9 @@ import {
   type TeachingStatePayload,
   type TrayMenuAction,
   type WindowDebugState,
+  type WorkBrowserAction,
+  type WorkBrowserOpenPayload,
+  type WorkBrowserState,
   type WorkHistoryPayload,
   type WorkHistoryRequestPayload,
   type WorkMirrorEvent,
@@ -159,6 +162,11 @@ const api: PetBridgeApi = {
     /** 用系统默认浏览器打开 http/https 链接（主进程做 scheme 白名单） */
     openExternal(url: string): Promise<OpenResult> {
       return ipcRenderer.invoke(IPC.SYSTEM_OPEN_EXTERNAL, url)
+    },
+
+    /** 写系统剪贴板（工作模式复制消息） */
+    copyText(text: string): void {
+      clipboard.writeText(String(text))
     },
 
     /** 用默认程序打开本机文件/文件夹（主进程拒绝可执行/脚本类） */
@@ -517,6 +525,41 @@ const api: PetBridgeApi = {
       ipcRenderer.send(IPC_WORK.INTERRUPT)
     },
 
+    deleteMessage(payload: { dbId: number }): void {
+      ipcRenderer.send(IPC_WORK.DELETE_MESSAGE, payload)
+    },
+
+    browserOpen(payload: WorkBrowserOpenPayload): void {
+      ipcRenderer.send(IPC_WORK.BROWSER_OPEN, payload)
+    },
+
+    browserClose(id: string): void {
+      ipcRenderer.send(IPC_WORK.BROWSER_CLOSE, id)
+    },
+
+    browserActivate(id: string | null): void {
+      ipcRenderer.send(IPC_WORK.BROWSER_ACTIVATE, id)
+    },
+
+    browserAction(action: WorkBrowserAction): void {
+      ipcRenderer.send(IPC_WORK.BROWSER_ACTION, action)
+    },
+
+    browserOverlay(open: boolean): void {
+      ipcRenderer.send(IPC_WORK.BROWSER_OVERLAY, Boolean(open))
+    },
+
+    onBrowserState(cb: (state: WorkBrowserState) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        state: WorkBrowserState
+      ): void => cb(state)
+      ipcRenderer.on(IPC_WORK.BROWSER_STATE, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.BROWSER_STATE, listener)
+      }
+    },
+
     onEvent(cb: (event: WorkMirrorEvent) => void): () => void {
       const listener = (_event: Electron.IpcRendererEvent, payload: WorkMirrorEvent): void =>
         cb(payload)
@@ -573,6 +616,17 @@ const api: PetBridgeApi = {
       ipcRenderer.on(IPC_WORK.INTERRUPT, listener)
       return () => {
         ipcRenderer.removeListener(IPC_WORK.INTERRUPT, listener)
+      }
+    },
+
+    onDeleteMessage(cb: (payload: { dbId: number }) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: { dbId: number }
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_WORK.DELETE_MESSAGE_REQUEST, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.DELETE_MESSAGE_REQUEST, listener)
       }
     },
 

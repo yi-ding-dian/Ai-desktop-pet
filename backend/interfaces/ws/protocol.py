@@ -78,7 +78,7 @@ class AttachmentRefData(EventData):
 class UserMessageOptions(EventData):
     """单轮对话选项（工作模式，2026-10-18）。
 
-    - ``think``：本轮切到「深度思考模型」并展示推理流；
+    - ``think``：本轮追加"先充分推理"提示并抬高输出预算（同一模型，不切换）；
     - ``search``：本轮是否提供联网工具（False 时移除 web_search / web_fetch，
       其余工具不受影响）。
     旧客户端不传 = None，行为与之前完全一致（允许搜索、不切模型）。
@@ -89,12 +89,23 @@ class UserMessageOptions(EventData):
 
 
 class UserMessageData(EventData):
-    """用户文字输入；可携带本轮附件（文件分析 P1）与单轮选项（工作模式）。"""
+    """用户文字输入；可携带本轮附件（文件分析 P1）与单轮选项（工作模式）。
+
+    ``client_id``：前端本地消息 id（工作窗用它把落库后的 DB id 挂回同一条消息，
+    删除时按 DB id 精确删）；旧客户端不传不影响对话。
+    """
 
     text: str
     session_id: str | None = None
     attachments: list[AttachmentRefData] = Field(default_factory=list)
     options: UserMessageOptions | None = None
+    client_id: str | None = None
+
+
+class DeleteMessageData(EventData):
+    """删除单条消息（工作模式，2026-10-18）：按 messages 表行 id 删当前会话的一条。"""
+
+    id: int
 
 
 class PingData(EventData):
@@ -270,6 +281,25 @@ class ReplyStartData(EventData):
     message_id: str
 
 
+class MessageSavedData(EventData):
+    """一条消息已落库（工作模式，2026-10-18）：把 DB 行 id 回给前端。
+
+    - 用户消息：``client_id`` 是前端本地消息 id（user_message.client_id 原样回传）；
+    - 助手消息：``client_id`` 是 reply 的 ``message_id``。
+    """
+
+    client_id: str = ""
+    db_id: int
+    role: str
+
+
+class MessageDeletedData(EventData):
+    """单条消息删除结果（工作模式）；ok=false 表示 id 不属于当前会话/已不存在。"""
+
+    id: int
+    ok: bool = True
+
+
 class ReasoningData(EventData):
     """推理模型（如 deepseek-reasoner）的思考过程增量。
 
@@ -430,6 +460,28 @@ class NoticeData(EventData):
     level: Literal["info", "warn", "error"] = "info"
 
 
+class SourceItemData(EventData):
+    """联网搜索的一条来源（工作窗引用悬浮卡片用，2026-10-18）。
+
+    与正文分离：正文只有 ``[n]`` 角标，标题/摘要/站点/日期由后端从搜索结果
+    结构化带回，前端按 URL 匹配后展示悬浮卡片。
+    """
+
+    index: int = 0
+    title: str = ""
+    url: str
+    snippet: str = ""
+    site_name: str = ""
+    date: str = ""
+
+
+class SourcesData(EventData):
+    """一轮回复用到的搜索来源（不进入正文/TTS）。"""
+
+    message_id: str
+    items: list[SourceItemData] = Field(default_factory=list)
+
+
 class HistoryData(EventData):
     """历史回填。"""
 
@@ -509,6 +561,7 @@ CLIENT_EVENT_MODELS: dict[str, type[EventData]] = {
     "get_profile": GetProfileData,
     "note_assistant_message": NoteAssistantMessageData,
     "load_history": LoadHistoryData,
+    "delete_message": DeleteMessageData,
     "behavior_done": BehaviorDoneData,
     "env_update": EnvUpdateData,
     "get_reminders": GetRemindersData,
@@ -528,6 +581,8 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "state": StateData,
     "behavior": BehaviorData,
     "reply_start": ReplyStartData,
+    "message_saved": MessageSavedData,
+    "message_deleted": MessageDeletedData,
     "reasoning": ReasoningData,
     "token": TokenData,
     "sentence": SentenceData,
@@ -541,6 +596,7 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "notebook_items": NotebookItemsData,
     "notebook_result": NotebookResultData,
     "notice": NoticeData,
+    "sources": SourcesData,
     "history": HistoryData,
     "config": ConfigData,
     "profile": ProfileData,

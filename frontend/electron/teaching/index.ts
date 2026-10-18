@@ -388,6 +388,12 @@ function createBoardWindow(initial: Rect): BrowserWindow {
     if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  // 正文里的 [n] 引用/来源链接是同一窗口跳转——拦下交给系统浏览器，避免黑板被导航走
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url === win.webContents.getURL()) return
+    event.preventDefault()
+    if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url)
+  })
 
   attachBoardEvents(win)
   loadBoardPage(win)

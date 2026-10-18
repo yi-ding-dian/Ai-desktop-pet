@@ -306,15 +306,12 @@ export default function Composer({
           type="button"
           className={`work-mode${search ? ' work-mode-on' : ''}`}
           aria-pressed={search}
-          title={think ? '深度思考开启时本轮暂不使用联网工具' : '需要事实信息时优先联网核实'}
+          title="需要事实信息时优先联网核实"
           onClick={() => onSearchChange(!search)}
         >
           <SearchIcon />
           智能搜索
         </button>
-        {think && search ? (
-          <span className="work-modes-hint">深度思考时暂不联网</span>
-        ) : null}
       </div>
     </div>
   )

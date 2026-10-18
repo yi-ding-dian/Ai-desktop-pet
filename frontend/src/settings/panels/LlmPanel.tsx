@@ -115,17 +115,6 @@ export default function LlmPanel({
       </Field>
 
       <Field
-        label="深度思考模型"
-        hint="工作模式「深度思考」开关使用；留空时 DeepSeek 端点自动用 deepseek-reasoner，其他端点回退到上面的模型。"
-      >
-        <TextField
-          value={form.llmThinkModel}
-          onValueChange={(v) => setField('llmThinkModel', v)}
-          placeholder="如 deepseek-reasoner（留空 = 自动）"
-        />
-      </Field>
-
-      <Field
         label="API Key"
         hint={
           <>

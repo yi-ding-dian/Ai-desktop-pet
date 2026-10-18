@@ -159,3 +159,33 @@ def test_session_works_without_store(tmp_path) -> None:
     session = SessionManager().start("mem-only")
     session.append_message("user", "hi")
     assert [m.content for m in session.recent_messages()] == ["hi"]
+
+
+# ---------------------------------------------------------------- 单条删除（工作模式，2026-10-18）
+
+
+def test_delete_message_scoped_to_session(tmp_path) -> None:
+    """只按 session_id + id 精确删；跨会话 id 拒绝。"""
+    conn, store = open_store(tmp_path)
+    first = store.append_message("s1", "user", "a")
+    other = store.append_message("s2", "user", "b")
+
+    assert store.delete_message("s1", first) is True
+    assert store.delete_message("s1", other) is False
+
+    assert [m["content"] for m in store.recent_messages("s1")] == []
+    assert [m["content"] for m in store.recent_messages("s2")] == ["b"]
+
+
+def test_session_reload_history_after_delete(tmp_path) -> None:
+    """删库行后重载内存上下文，模型下一轮不再看到被删消息。"""
+    conn, store = open_store(tmp_path)
+    sessions = SessionManager(store)
+    session = sessions.start("s1")
+    user_id = session.append_message("user", "问题")
+    session.append_message("assistant", "回答")
+
+    assert [m.content for m in session.recent_messages()] == ["问题", "回答"]
+    assert store.delete_message("s1", user_id) is True
+    session.reload_history()
+    assert [m.content for m in session.recent_messages()] == ["回答"]

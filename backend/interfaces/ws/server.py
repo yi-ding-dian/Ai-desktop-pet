@@ -56,6 +56,12 @@ class ConnectionContext:
     async def reply_start(self, message_id: str) -> None:
         await self.send_event("reply_start", {"message_id": message_id})
 
+    async def message_saved(self, client_id: str, db_id: int, role: str) -> None:
+        """ReplySink 端口：消息已落库，把 DB 行 id 回给前端（工作模式单条删除）。"""
+        await self.send_event(
+            "message_saved", {"client_id": client_id, "db_id": db_id, "role": role}
+        )
+
     async def reasoning(self, message_id: str, text: str) -> None:
         """ReplySink 端口：推理模型思考过程增量（工作模式折叠展示）。"""
         await self.send_event("reasoning", {"message_id": message_id, "text": text})
@@ -96,6 +102,10 @@ class ConnectionContext:
         不进入回复正文、不进历史、不参与 TTS；前端在聊天面板上方短暂展示。
         """
         await self.send_event("notice", {"code": code, "message": message, "level": level})
+
+    async def sources(self, message_id: str, items: list[dict]) -> None:
+        """ReplySink 端口：本轮搜索来源的结构化信息（工作窗悬浮卡片用）。"""
+        await self.send_event("sources", {"message_id": message_id, "items": items})
 
     async def error(self, code: str, message: str) -> None:
         """ReplySink 端口：把流水线的业务错误（如 LlmError / TTS_FAILED）推给前端。"""

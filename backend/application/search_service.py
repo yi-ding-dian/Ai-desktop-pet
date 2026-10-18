@@ -103,6 +103,18 @@ class SearchService:
             "model_content": format_search_for_model(
                 query, outcome.results, original_question=user_text or None
             ),
+            # 给工作窗的引用悬浮卡片：与正文分离的结构化来源（按 URL 匹配）
+            "sources": [
+                {
+                    "index": index,
+                    "title": item.title.strip(),
+                    "url": item.url.strip(),
+                    "snippet": (item.summary or item.snippet or "").strip()[:300],
+                    "site_name": (item.site_name or "").strip(),
+                    "date": (item.date or "").strip(),
+                }
+                for index, item in enumerate(outcome.results, start=1)
+            ],
         }
 
     async def fetch_from_tool(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -140,4 +152,14 @@ class SearchService:
                 content=outcome.content,
                 truncated=outcome.truncated,
             ),
+            "sources": [
+                {
+                    "index": 1,
+                    "title": title,
+                    "url": url,
+                    "snippet": outcome.content.strip()[:300],
+                    "site_name": "",
+                    "date": "",
+                }
+            ],
         }
