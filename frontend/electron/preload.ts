@@ -24,6 +24,7 @@ import {
   type DeletePathResult,
   type OpenResult,
   type PetBridgeApi,
+  type PetSayLinePayload,
   type PickedFile,
   type ReminderListActionPayload,
   type ReminderListOpenPayload,
@@ -185,6 +186,17 @@ const api: PetBridgeApi = {
       ipcRenderer.on(IPC_EVENTS.PET_FX_REACTION, listener)
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.PET_FX_REACTION, listener)
+      }
+    }
+  },
+
+  lifecycle: {
+    onSay(cb: (payload: PetSayLinePayload) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, payload: PetSayLinePayload): void =>
+        cb(payload)
+      ipcRenderer.on(IPC_EVENTS.PET_SAY_LINE, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.PET_SAY_LINE, listener)
       }
     }
   },

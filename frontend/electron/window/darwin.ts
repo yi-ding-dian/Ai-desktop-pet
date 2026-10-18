@@ -10,7 +10,7 @@
  *  ③ 分发必须 Apple 开发者账号签名 + 公证。
  */
 import { BrowserWindow, screen } from 'electron'
-import { PET_WINDOW_SIZE } from './index'
+import { PET_WINDOW_SIZE, initialPetPosition } from './index'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
 import { createEasedMover, readGeometry } from './move'
 import { isWindowMoveLocked } from './move-lock'
@@ -36,11 +36,11 @@ export function createDarwinWindow(opts: PetWindowOptions): PlatformWindow {
     }
   })
 
-  const workArea = screen.getPrimaryDisplay().workArea
-  win.setPosition(
-    Math.round(workArea.x + (workArea.width - opts.width) / 2),
-    Math.round(workArea.y + workArea.height - opts.height - 48)
-  )
+  const pos = initialPetPosition(screen.getPrimaryDisplay().workArea, {
+    width: opts.width,
+    height: opts.height
+  })
+  win.setPosition(pos.x, pos.y)
 
   let dragOrigin: { start: Point; bounds: Rect } | null = null
   /** 缓动移动器（P3 行为引擎：walk 的窗口移动） */

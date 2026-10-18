@@ -31,6 +31,7 @@ import {
   ChatPanel,
   setupSpeechBubble,
   dismissSpeechBubble,
+  speakLifecycleLine,
   setupChatHistory,
   getChatHistory,
   emotionEmoji,
@@ -192,6 +193,20 @@ export default function App(): ReactElement {
     () => setupSpeechBubble(wsClient, { shouldSuppress: () => speechSuppressedRef.current }),
     [wsClient]
   )
+
+  // ---- 生命周期台词（2026-10-18）：启动落地"我来了~" / 退出捕获前"再见啦~" ----
+  // 主进程 ball-animation 域负责时序；这里只把台词交给说话气泡（退出时强制展示，流式回复让位）。
+  useEffect(() => {
+    try {
+      const off = getPetBridge().lifecycle?.onSay?.(({ text, ttlMs, kind }) => {
+        speakLifecycleLine(text, { ttlMs, force: kind === 'farewell' })
+      })
+      return () => off?.()
+    } catch {
+      // 旧 preload / 浏览器直开调试：无 lifecycle 桥，静默跳过（不影响启动与退出）
+      return
+    }
+  }, [])
 
   // ---- 提醒接线（reminders 域，2026-10-18）：后端 proactive{kind:'reminder'} → 气泡 + 系统通知 ----
   // 气泡一定会出（与语音开关无关）；教学/向导/隐藏/流式中排队，恢复后补气泡

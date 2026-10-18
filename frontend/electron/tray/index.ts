@@ -365,8 +365,18 @@ export function destroyTrayMenu(): void {
  * @param win 宠物窗口（菜单/单击对它做 show/hide）
  * @returns Tray 实例；创建失败返回 null（不阻塞应用启动）。调用方必须持有引用。
  */
-export function createTray(win: BrowserWindow): Tray | null {
+export function createTray(
+  win: BrowserWindow,
+  opts: {
+    /**
+     * 用户显式退出（托盘菜单「退出」）：由 main 编排"告别动画 → 后端清理 → 真正退出"。
+     * 不传时退回 app.quit()（旧行为：无告别动画）。
+     */
+    requestQuit?: () => void
+  } = {}
+): Tray | null {
   petWin = win
+  const requestQuit = opts.requestQuit ?? ((): void => app.quit())
 
   let tray: Tray
   try {
@@ -448,8 +458,8 @@ export function createTray(win: BrowserWindow): Tray | null {
     { type: 'separator' },
     {
       label: '退出',
-      // 走既有退出清理链路：app.quit → before-quit 拦截 → backendManager.stop() → 真正退出
-      click: () => app.quit()
+      // 显式退出：main 编排"告别动画 → 后端清理 → 真正退出"（2026-10-18）
+      click: () => requestQuit()
     }
   ]
 
@@ -486,7 +496,8 @@ export function createTray(win: BrowserWindow): Tray | null {
           openSettings()
           break
         case 'quit':
-          app.quit()
+          // 显式退出：main 编排"告别动画 → 后端清理 → 真正退出"（2026-10-18）
+          requestQuit()
           break
       }
     })

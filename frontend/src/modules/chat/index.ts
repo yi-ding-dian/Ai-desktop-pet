@@ -8,6 +8,7 @@ export {
   dismissSpeechBubble,
   speakLocalNotice,
   speakReminder,
+  speakLifecycleLine,
   type SpeechBubbleOptions
 } from './speech'
 export { setupChatHistory, getChatHistory, clearChatHistory, type ChatRecord } from './history'

@@ -23,13 +23,21 @@
  * - **锁**：同一时刻只允许一个动画（隐藏/显示动画中再次触发显/隐直接忽略）；
  *   **移动（relocate，设置向导）例外**——入位/回位不可静默丢失：先等锁空闲（上限见
  *   BALL_ANIMATION_CONFIG.relocateBusyWaitMs），超时才放弃；
- * - **退出不播动画**：本域不参与 app.quit 链路（before-quit 后窗口直接销毁）；
+ * - **生命周期演出（2026-10-18）**：启动时球从**屏幕上方外**沿弧线俯冲下来 → 释放落地 → 说"我来了~"；
+ *   托盘"退出"时先说"再见啦~" → 原地凝聚捕获 → 球载宠**沿弧线向上飞出屏幕** → 真正退出。
+ *   其余退出路径（系统关机 / window-all-closed / 设置页重启）仍不播动画（before-quit 后直接销毁）；
  * - **兜底**：等待 动画页就绪有超时；整个流程有 totalTimeoutMs 看门狗；异常/超时一律走
  *   try/catch/finally 保证结果语义（隐藏 = 一定 hide；显示 = 一定 show 且归位）。
  */
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'node:path'
-import { IPC_EVENTS, IPC_BALL_ANIMATION, type BallAnimationCommand, type BallAnimationPetReactionPayload } from '../ipc/channels'
+import {
+  IPC_EVENTS,
+  IPC_BALL_ANIMATION,
+  type BallAnimationCommand,
+  type BallAnimationPetReactionPayload,
+  type PetSayLinePayload
+} from '../ipc/channels'
 import { BALL_ANIMATION_CONFIG } from './config'
 import { locateTrayAnchor } from './anchor'
 import { setWindowMoveLock } from '../window/move-lock'
@@ -122,6 +130,11 @@ function easeInOutCubic(u: number): number {
 /** 缓动：easeOutCubic（快速冲出、缓慢收尾——显示方向"放大归位"用） */
 function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3)
+}
+
+/** 缓动：easeInCubic（缓慢起手、加速离场——退出告别"飞出屏幕"用） */
+function easeInCubic(t: number): number {
+  return t * t * t
 }
 
 /**
@@ -273,6 +286,15 @@ function sendPetReaction(win: BrowserWindow, kind: BallAnimationPetReactionPaylo
   win.webContents.send(IPC_EVENTS.PET_FX_REACTION, payload)
 }
 
+/**
+ * 让宠物说一句生命周期台词（启动问候 / 退出告别）：渲染侧经说话气泡展示。
+ * 台词固定本地文案——不经过后端，启动/退出时序完全可预期。
+ */
+function sendPetSay(win: BrowserWindow, payload: PetSayLinePayload): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return
+  win.webContents.send(IPC_EVENTS.PET_SAY_LINE, payload)
+}
+
 /** 应用退出时销毁球窗（走 will-quit；正常退出路径不播动画、也不等待动画） */
 export function destroyBallAnimation(): void {
   if (ballWin && !ballWin.isDestroyed()) ballWin.destroy()
@@ -319,21 +341,25 @@ function animateWindowBounds(
   })
 }
 
-/** 球窗沿拱线从 from 飞到 to（照参考：easeInOut 三次 × 二次贝塞尔拱线） */
+/**
+ * 球窗沿拱线从 from 飞到 to（照参考：二次贝塞尔拱线）。
+ * @param ease 进度缓动：默认 easeInOutCubic；退出告别传 easeInCubic（加速离场）
+ */
 function flyBallArc(
   ball: BrowserWindow,
   from: Point,
   to: Point,
   wa: Rect,
   durationMs: number,
-  ctx: FlowContext
+  ctx: FlowContext,
+  ease: (p: number) => number = easeInOutCubic
 ): Promise<void> {
   const path = makeArcPath(from, to, wa)
   const size = BALL_ANIMATION_CONFIG.ballWindowSize
   return animateWindowBounds(
     ball,
     durationMs,
-    easeInOutCubic,
+    ease,
     (e) => boundsAround(path(e), size, size),
     ctx
   )
@@ -556,6 +582,126 @@ async function showFlow(
   // ③ 球淡出收窗
   await fadeBallOut(ball, ctx)
   stamp('显示动画完成')
+}
+
+// ------------------------------------------------------------------ 生命周期演出（启动 / 退出，2026-10-18）
+
+/**
+ * 预热球窗与动画页（app.whenReady 时调用，与宠物窗创建并行）：
+ * 首次冷启动的入场演出不必再等动画页加载，缩短短暂的黑屏窗口。
+ * 幂等；总开关关闭时不做任何事。
+ */
+export function prewarmBallAnimation(): void {
+  if (!BALL_ANIMATION_CONFIG.ENABLED) return
+  try {
+    ensureBallWindow()
+  } catch (err) {
+    // 预热失败绝不能影响启动：入场演出会按"动画页未就绪"降级为直接显示
+    console.warn('[ball-animation] 预热球窗失败（启动演出将降级为直接显示）：', err)
+  }
+}
+
+/**
+ * 启动流程（应用冷启动的"出场"）：① 球载着宠物剪影从**屏幕上方外**沿弧线俯冲到落点中心 →
+ * ② 宠物窗在落点以缩小态出现 → 爆闪释放 + 放大归位（落地 Q 弹）→ ③ 球淡出 →
+ * ④ 停顿 greetingDelayMs 后说"我来了~"。
+ * 与 showFlow 的唯一差别：起点是屏幕上的天空（而非托盘锚点），且开场带一句问候。
+ */
+async function launchFlow(
+  win: BrowserWindow,
+  ball: BrowserWindow,
+  wa: Rect,
+  home: Rect,
+  ctx: FlowContext
+): Promise<void> {
+  const t0 = Date.now()
+  const stamp = (msg: string): void => console.log(`[ball-animation] t=${Date.now() - t0}ms ${msg}`)
+
+  const homeCenter = centerOf(home)
+  // 屏外起点：球窗中心在工作区上方外一个球径处（窗口整体不可见）；水平左偏形成俯冲弧线
+  const anchor: Point = {
+    x: homeCenter.x + BALL_ANIMATION_CONFIG.launchStartDxPx,
+    y: wa.y - BALL_ANIMATION_CONFIG.ballWindowSize
+  }
+  stamp(`启动动画开始：落点 ${rectStr(home)}，屏外起点 ${ptStr(anchor)}`)
+
+  // ① 球（载宠物剪影）沿拱线飞入落点
+  await flyBallFromAnchor(ball, anchor, homeCenter, wa, true, ctx)
+  assertLive(ctx)
+  stamp(`球飞抵落点（flight ${BALL_ANIMATION_CONFIG.flightMs}ms）`)
+
+  // ② 释放：宠物窗在落点以缩小态出现 → 爆闪 + 放大归位
+  await releasePetAt(win, ball, home, ctx)
+  assertLive(ctx)
+  if (!win.isDestroyed()) win.setBounds(home) // 精确归位（与 showFlow 同款收口）
+  stamp(`放大归位完成（${rectStr(win.getBounds())}）`)
+
+  // ③ 球淡出收窗
+  await fadeBallOut(ball, ctx)
+
+  // ④ 站定后开口问候（本地文案；气泡展示失败也不影响启动）
+  await sleep(BALL_ANIMATION_CONFIG.greetingDelayMs, ctx)
+  if (!win.isDestroyed()) {
+    sendPetSay(win, {
+      text: BALL_ANIMATION_CONFIG.greetingText,
+      ttlMs: BALL_ANIMATION_CONFIG.greetingTtlMs,
+      kind: 'greeting'
+    })
+    stamp('启动问候已下发')
+  }
+}
+
+/**
+ * 退出告别流程（仅托盘"退出"）：① 球在宠物处原地凝聚 → ② 捕获爆闪（宠物缩小 + 挣扎）→
+ * ③ 宠物窗隐藏，球载着剪影**沿弧线向上飞出屏幕**（朝更近的一侧边缘拱起，easeIn 加速离场）→
+ * ④ 收窗（调用方随后真正退出）。"再见啦~"由 runFarewellAnimation 在捕获前下发。
+ */
+async function farewellFlow(
+  win: BrowserWindow,
+  ball: BrowserWindow,
+  wa: Rect,
+  petCenter: Point,
+  ctx: FlowContext
+): Promise<void> {
+  const t0 = Date.now()
+  const stamp = (msg: string): void => console.log(`[ball-animation] t=${Date.now() - t0}ms ${msg}`)
+
+  // ① 球在宠物处原地凝聚
+  ball.setBounds(
+    boundsAround(petCenter, BALL_ANIMATION_CONFIG.ballWindowSize, BALL_ANIMATION_CONFIG.ballWindowSize)
+  )
+  sendCommand(ball, { type: 'spawn', durationMs: BALL_ANIMATION_CONFIG.relocateSpawnMs })
+  await sleep(BALL_ANIMATION_CONFIG.relocateSpawnMs, ctx)
+  assertLive(ctx)
+  stamp(`球凝聚完成（原地 ${BALL_ANIMATION_CONFIG.relocateSpawnMs}ms）`)
+
+  // ② 捕获爆闪：宠物原地缩小（只改几何，不 hide）
+  await capturePetAt(win, ball, petCenter, ctx)
+  assertLive(ctx)
+  stamp(`捕获完成（宠物缩至 ${BALL_ANIMATION_CONFIG.shrinkScale}×）`)
+
+  // ③ 宠物窗隐藏，球载宠沿弧线向上飞出屏幕：朝更近的一侧边缘拱起，弧线更明显
+  if (!win.isDestroyed()) win.hide()
+  const dir = petCenter.x <= wa.x + wa.width / 2 ? 1 : -1
+  const driftX = petCenter.x + dir * BALL_ANIMATION_CONFIG.farewellArcDriftPx
+  const target: Point = {
+    // 水平位置夹在工作区内（只做弧线拱起，不横穿出屏）
+    x: Math.min(wa.x + wa.width - 40, Math.max(wa.x + 40, driftX)),
+    // 球窗中心在屏幕上方外一个球径处：窗口整体出屏，收尾干净
+    y: wa.y - BALL_ANIMATION_CONFIG.ballWindowSize
+  }
+  sendCommand(ball, { type: 'flight', cargo: true })
+  await flyBallArc(
+    ball,
+    petCenter,
+    target,
+    wa,
+    BALL_ANIMATION_CONFIG.farewellFlyMs,
+    ctx,
+    easeInCubic
+  )
+  assertLive(ctx)
+  stamp(`飞出屏幕（fly ${BALL_ANIMATION_CONFIG.farewellFlyMs}ms，目标 ${ptStr(target)}）`)
 }
 
 // ------------------------------------------------------------------ 移动流程（设置向导 §7.6.6）
@@ -827,6 +973,143 @@ export function runShowAnimation(win: BrowserWindow): Promise<void> {
     if (stashedBounds && !win.isDestroyed()) win.setBounds(stashedBounds)
     win.showInactive()
   })
+}
+
+/** 降级启动：直接显示 + 停顿后问候（动画页未就绪/异常/总开关关闭时使用） */
+async function showAndGreet(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed()) return
+  win.showInactive()
+  const ctx: FlowContext = { aborted: false }
+  await sleep(BALL_ANIMATION_CONFIG.greetingDelayMs, ctx)
+  if (!win.isDestroyed()) {
+    sendPetSay(win, {
+      text: BALL_ANIMATION_CONFIG.greetingText,
+      ttlMs: BALL_ANIMATION_CONFIG.greetingTtlMs,
+      kind: 'greeting'
+    })
+  }
+}
+
+/**
+ * 启动流程（应用冷启动；main 在宠物窗 ready-to-show 时调用）：
+ * 球从屏幕上方外沿弧线俯冲下来 → 落地释放 → 淡出 → 说"我来了~"。
+ * 兜底语义与 runFlow 一致：动画页未就绪/异常/超时一律直接显示（问候照常）。
+ */
+export async function runLaunchAnimation(win: BrowserWindow): Promise<void> {
+  if (!win || win.isDestroyed()) return
+  if (!BALL_ANIMATION_CONFIG.ENABLED) {
+    void showAndGreet(win)
+    return
+  }
+  if (busy) {
+    // 理论上不会发生（启动时没有其它动画）；防御性地直接显示，避免宠物看不见
+    console.warn('[ball-animation] 启动动画：已有动画进行中，直接显示')
+    void showAndGreet(win)
+    return
+  }
+  busy = true
+  setWindowMoveLock(true)
+  const ctx: FlowContext = { aborted: false }
+  const watchdog = setTimeout(() => {
+    ctx.aborted = true
+    console.warn(`[ball-animation] 启动动画超时（>${BALL_ANIMATION_CONFIG.totalTimeoutMs}ms），看门狗中止`)
+  }, BALL_ANIMATION_CONFIG.totalTimeoutMs)
+  try {
+    const home = atDesignSize(win.getBounds())
+    const ball = ensureBallWindow()
+    // 启动专用短超时：宁可放弃飞入直接显示，也不让冷启动黑屏等太久
+    const ready = await waitFxReady(BALL_ANIMATION_CONFIG.launchReadyTimeoutMs)
+    if (!ready) {
+      console.warn(
+        `[ball-animation] 动画页未就绪（>${BALL_ANIMATION_CONFIG.launchReadyTimeoutMs}ms），本次启动降级为直接显示`
+      )
+      await showAndGreet(win)
+      return
+    }
+    sendCommand(ball, { type: 'reset' })
+    ball.moveTop() // 与宠物同为 screen-saver 层：显示前 raise 自保
+    ball.showInactive()
+    const wa = screen.getDisplayMatching(home).workArea
+    await launchFlow(win, ball, wa, home, ctx)
+  } catch (err) {
+    console.error('[ball-animation] 启动动画异常，兜底直接显示：', err)
+    await showAndGreet(win)
+  } finally {
+    clearTimeout(watchdog)
+    if (!win.isDestroyed() && !win.isVisible()) win.showInactive()
+    if (ballWin && !ballWin.isDestroyed() && ballWin.isVisible()) ballWin.hide()
+    setWindowMoveLock(false)
+    busy = false
+  }
+}
+
+/**
+ * 退出告别（仅托盘"退出"显式调用；**不**挂在 before-quit 上——系统关机等路径保持即时退出）：
+ * 说"再见啦~" → 球原地凝聚 → 捕获 → 球载宠沿弧线向上飞出屏幕。
+ *
+ * 结果语义：返回时宠物窗一定已隐藏（动画页未就绪/异常/超时同样先 hide 再返回），
+ * 调用方随后 awaited 后端清理并 app.quit()。宠物本来就隐藏（在托盘里）时不播，直接返回。
+ * 在途动画（如正在显示/隐藏）先等其收尾（上限 farewellBusyWaitMs），超时则跳过告别。
+ */
+export async function runFarewellAnimation(win: BrowserWindow): Promise<void> {
+  if (!win || win.isDestroyed()) return
+  if (!BALL_ANIMATION_CONFIG.ENABLED) return
+  if (!win.isVisible()) {
+    console.log('[ball-animation] 退出告别：宠物当前隐藏，跳过动画')
+    return
+  }
+  const free = await waitBusyFree(BALL_ANIMATION_CONFIG.farewellBusyWaitMs)
+  if (!free) {
+    console.warn(
+      `[ball-animation] 在途动画超过 ${BALL_ANIMATION_CONFIG.farewellBusyWaitMs}ms 未收尾，跳过退出告别`
+    )
+    return
+  }
+  if (win.isDestroyed() || !win.isVisible()) return
+
+  // ① 先说再见（渲染侧走说话气泡）；球窗创建/就绪与"把话说完"并行，压低总时长
+  sendPetSay(win, {
+    text: BALL_ANIMATION_CONFIG.farewellText,
+    ttlMs: BALL_ANIMATION_CONFIG.farewellTtlMs,
+    kind: 'farewell'
+  })
+
+  busy = true
+  setWindowMoveLock(true)
+  const ctx: FlowContext = { aborted: false }
+  const watchdog = setTimeout(() => {
+    ctx.aborted = true
+    console.warn(`[ball-animation] 退出告别超时（>${BALL_ANIMATION_CONFIG.totalTimeoutMs}ms），看门狗中止`)
+  }, BALL_ANIMATION_CONFIG.totalTimeoutMs)
+  try {
+    const home = atDesignSize(win.getBounds())
+    const wa = screen.getDisplayMatching(home).workArea
+    const ball = ensureBallWindow()
+    const [ready] = await Promise.all([
+      waitFxReady(BALL_ANIMATION_CONFIG.readyTimeoutMs),
+      sleep(BALL_ANIMATION_CONFIG.farewellSayMs, ctx)
+    ])
+    if (!ready) {
+      console.warn(
+        `[ball-animation] 动画页未就绪（>${BALL_ANIMATION_CONFIG.readyTimeoutMs}ms），本次退出降级为直接隐藏`
+      )
+      if (!win.isDestroyed()) win.hide()
+      return
+    }
+    sendCommand(ball, { type: 'reset' })
+    ball.moveTop()
+    ball.showInactive()
+    await farewellFlow(win, ball, wa, centerOf(home), ctx)
+  } catch (err) {
+    console.error('[ball-animation] 退出告别异常，兜底直接隐藏：', err)
+    if (!win.isDestroyed()) win.hide()
+  } finally {
+    clearTimeout(watchdog)
+    if (!win.isDestroyed() && win.isVisible()) win.hide()
+    if (ballWin && !ballWin.isDestroyed() && ballWin.isVisible()) ballWin.hide()
+    setWindowMoveLock(false)
+    busy = false
+  }
 }
 
 /** 等待动画锁空闲（relocate 专用；100ms 粒度轮询，超时返回 false） */

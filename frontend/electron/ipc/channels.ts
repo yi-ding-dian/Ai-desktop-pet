@@ -110,7 +110,9 @@ export const IPC_EVENTS = {
   /** 气泡说话生命周期（主 → 宠物窗；payload: BubbleSpeechEventPayload；提醒气泡关闭/已读时更新未读列表） */
   BUBBLE_SPEECH_EVENT: 'bubble:speech-event',
   /** 提醒列表动作（主 → 宠物窗；payload: ReminderListActionPayload；列表点条目/全部已读时回传） */
-  REMINDER_LIST_ACTION: 'reminder-list:action-request'
+  REMINDER_LIST_ACTION: 'reminder-list:action-request',
+  /** 生命周期台词（主 → 宠物窗；payload: PetSayLinePayload；启动"我来了~"/退出"再见啦~"经说话气泡展示） */
+  PET_SAY_LINE: 'pet:say-line'
 } as const
 
 /** 通道名：魔法球捕获动画（ball-animation 域：主进程 ↔ fx 动画页） */
@@ -142,6 +144,20 @@ export type BallAnimationCommand =
 export interface BallAnimationPetReactionPayload {
   /** captured = 被魔法球抓住（隐藏动画）；released = 被放回原位（显示动画） */
   kind: 'captured' | 'released'
+}
+
+/**
+ * 生命周期台词载荷（主 → 宠物窗口渲染进程，2026-10-18）：
+ * 启动落地后说"我来了~"、退出捕获前说"再见啦~"——**本地固定文案**，不经过后端 LLM/TTS。
+ * 时序完全由主进程（ball-animation 域）编排，渲染侧只负责经说话气泡展示。
+ */
+export interface PetSayLinePayload {
+  /** 台词正文（本地固定文案） */
+  text: string
+  /** 气泡停留时长（ms；主进程按退出流程的等待时长给出） */
+  ttlMs: number
+  /** greeting = 启动问候；farewell = 退出告别（强制展示：正在流式回复也会被打断让位） */
+  kind: 'greeting' | 'farewell'
 }
 
 // ------------------------------------------------------------------ 气泡系统（气泡窗域）
@@ -563,6 +579,14 @@ export interface PetBridgeApi {
     onCommand(cb: (cmd: BallAnimationCommand) => void): () => void
     /** 宠物窗口专用：订阅"被抓/被放"反应事件（隐藏/显示动画触发）；返回取消订阅函数 */
     onPetReaction(cb: (payload: BallAnimationPetReactionPayload) => void): () => void
+  }
+  /**
+   * 应用生命周期演出（2026-10-18）：启动落地问候 / 退出告别。
+   * 只发宠物窗口；台词固定本地文案，渲染侧收到后经说话气泡展示（不依赖后端）。
+   */
+  lifecycle: {
+    /** 订阅生命周期台词（payload: PetSayLinePayload）；返回取消订阅函数 */
+    onSay(cb: (payload: PetSayLinePayload) => void): () => void
   }
   /**
    * 教学模式（P5，设计文档 §7.5）：讲台 + 黑板形态。

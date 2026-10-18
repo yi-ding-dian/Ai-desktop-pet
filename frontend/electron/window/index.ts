@@ -42,6 +42,23 @@ export interface Size {
  */
 export const PET_WINDOW_SIZE: Size = { width: 400, height: 400 }
 
+/**
+ * 宠物窗初始落点边距（DIP；2026-10-18 用户定稿）。
+ * 初始位置 = 主屏工作区**右下角**（用户截图标记约在屏幕右侧 ~80%、底部）：
+ * 启动演出从屏幕上方弧线飞入后落在这里；右缘留 150px 避开托盘/桌面小组件，
+ * 底部沿用 48px 站立边距。三平台共用本函数——初始位置是产品行为，不应随平台漂移。
+ */
+export const PET_INITIAL_MARGIN_RIGHT = 150
+export const PET_INITIAL_MARGIN_BOTTOM = 48
+
+/** 计算宠物窗初始落点（主屏工作区右下角；窗口实现共用） */
+export function initialPetPosition(workArea: Rect, size: Size): Point {
+  return {
+    x: Math.round(workArea.x + workArea.width - size.width - PET_INITIAL_MARGIN_RIGHT),
+    y: Math.round(workArea.y + workArea.height - size.height - PET_INITIAL_MARGIN_BOTTOM)
+  }
+}
+
 /** 窗口几何快照（屏幕坐标，DIP）：位置 + 尺寸 + 所在显示器工作区 */
 export interface WindowGeometry {
   pos: Point

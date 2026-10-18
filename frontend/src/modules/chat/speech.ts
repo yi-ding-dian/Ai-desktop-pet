@@ -114,6 +114,35 @@ export function speakReminder(
 }
 
 /**
+ * 生命周期台词（启动"我来了~" / 退出"再见啦~"，2026-10-18）：走同一条说话气泡通道，
+ * 但优先级更高——不受常驻回复抑制；force（退出告别）时先打断正在流式的回复，
+ * 保证告别一定显示。ttl 交给气泡域（悬浮/选区/右键菜单期间会暂停自动收起）。
+ */
+export function speakLifecycleLine(
+  text: string,
+  opts?: { ttlMs?: number; force?: boolean }
+): boolean {
+  const bridge = bubbleBridge()
+  if (!bridge || typeof bridge.sayBegin !== 'function') return false
+  if (speechActive) {
+    if (!opts?.force) return false
+    // 打断流式回复：本轮后续 token 因 speechActive=false 自然忽略（flush 回调同样检查）
+    bridge.sayEnd(true)
+    speechActive = false
+  }
+  clearTransientTimer()
+  if (typeof bridge.setNextSpeechTtl === 'function') {
+    bridge.setNextSpeechTtl(opts?.ttlMs ?? 3_000)
+  }
+  bridge.sayBegin()
+  bridge.sayText(text)
+  bridge.sayEnd(false)
+  // 不写 speechLatest：生命周期台词是**临时**的（不占住"常驻回复"槽位），
+  // 之后本地短提示仍可正常复用气泡。
+  return true
+}
+
+/**
  * 接线说话气泡驱动（App 在挂载时调用一次）。返回取消订阅函数。
  */
 export function setupSpeechBubble(client: WsClient, options: SpeechBubbleOptions): () => void {

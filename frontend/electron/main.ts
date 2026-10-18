@@ -13,7 +13,14 @@ import { createClickThrough, type ClickThrough } from './window/click-through'
 import { resolveCursorSource } from './window/cursor-source'
 import { backendManager } from './backend-process'
 import { createTray, destroyTrayMenu } from './tray'
-import { runHideAnimation, runShowAnimation, destroyBallAnimation } from './ball-animation'
+import {
+  runHideAnimation,
+  runShowAnimation,
+  runLaunchAnimation,
+  runFarewellAnimation,
+  prewarmBallAnimation,
+  destroyBallAnimation
+} from './ball-animation'
 import { runAnchorSelfTest } from './ball-animation/anchor'
 import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
 import { destroySettings, initSettings } from './settings'
@@ -68,9 +75,11 @@ function createPetWindow(): PlatformWindow {
     return { action: 'deny' }
   })
 
+  // 启动演出（2026-10-18）：不直接 show——球从屏幕上方外沿弧线俯冲下来 → 落地释放 → 说"我来了~"。
+  // 兜底在 ball-animation 域内：动画页未就绪/异常/超时一律直接显示（宠物一定看得见）。
   window.once('ready-to-show', () => {
-    window.show()
-    console.log('[main] 宠物窗口已显示')
+    console.log('[main] 宠物窗口就绪 → 启动演出')
+    void runLaunchAnimation(window)
   })
   window.on('closed', () => {
     pet = null
@@ -161,6 +170,9 @@ if (!app.requestSingleInstanceLock()) {
     const anchorSelfTest = process.env['PET_ANCHOR_SELFTEST']
     if (anchorSelfTest) void runAnchorSelfTest(anchorSelfTest)
 
+    // 预热魔法球窗/动画页：与宠物窗创建并行，冷启动入场演出不必再等动画页加载
+    prewarmBallAnimation()
+
     pet = createPetWindow()
     const petWin = pet.window
 
@@ -194,7 +206,8 @@ if (!app.requestSingleInstanceLock()) {
       void runHideAnimation(petWin)
     })
     // 系统托盘：常驻入口（显示/隐藏、教学模式、退出）；窗口显隐状态驱动其菜单文案
-    tray = createTray(petWin)
+    // 退出走显式编排：告别演出 + 后端清理并行，收尾后真正退出（2026-10-18）
+    tray = createTray(petWin, { requestQuit: () => void quitWithFarewell() })
     registerDebugShortcuts()
     // 教学模式（P5，设计文档 §7.5）编排中心：注册 IPC（托盘菜单/渲染面请求都进这里）；
     // 黑板窗口由它按需创建（进入教学模式前不存在）
@@ -229,26 +242,59 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   // 退出清理：先拦下退出，SIGTERM 后端子进程（3s 未退 SIGKILL），完成后真正退出（防僵尸）
-  let backendCleanupStarted = false
+  /** 后端停止 promise（只发起一次）：before-quit 与显式退出共用，避免重复 stop */
+  let backendStopPromise: Promise<void> | null = null
   /** 真实退出流程已发起（任何 app.quit 都会先经过 before-quit）——窗口 close 不再拦截 */
   let quitting = false
+  /** 显式退出（托盘）只播一次告别演出（连点防御） */
+  let farewellStarted = false
+
+  /** 发起后端清理（幂等；重复调用返回同一 promise） */
+  function stopBackendOnce(): Promise<void> {
+    if (!backendStopPromise) {
+      console.log('[main] 应用退出：清理后端子进程…')
+      backendStopPromise = backendManager
+        .stop()
+        .catch((err: unknown) => console.error('[main] 后端清理异常：', err))
+    }
+    return backendStopPromise
+  }
+
+  /**
+   * 显式退出（托盘菜单「退出」，2026-10-18）：告别演出与后端清理**并行**，
+   * 两者收尾后真正退出——用户看到"再见啦~ → 变球飞出屏幕"，后端也不留孤儿进程。
+   * 宠物已隐藏（在托盘里）/动画异常/超时都照常退出（runFarewellAnimation 内部兜底）。
+   */
+  async function quitWithFarewell(): Promise<void> {
+    if (farewellStarted) return
+    farewellStarted = true
+    console.log('[main] 托盘退出 → 告别演出')
+    const cleanup = stopBackendOnce()
+    try {
+      const w = pet?.window
+      if (w && !w.isDestroyed() && w.isVisible()) await runFarewellAnimation(w)
+    } catch (err) {
+      console.error('[main] 告别动画异常（继续退出）：', err)
+    }
+    await cleanup
+    quitting = true
+    app.quit()
+  }
+
   app.on('before-quit', (event) => {
     quitting = true
-    if (backendCleanupStarted) return
-    backendCleanupStarted = true
+    // 已由显式退出（或上一次拦截）发起清理：放行
+    if (backendStopPromise) return
     event.preventDefault()
-    console.log('[main] 应用退出：清理后端子进程…')
-    backendManager
-      .stop()
-      .catch((err: unknown) => console.error('[main] 后端清理异常：', err))
-      .finally(() => app.quit())
+    void stopBackendOnce().finally(() => app.quit())
   })
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll()
     tray?.destroy()
     tray = null
-    // 魔法球动画窗（若存在）随退出直接销毁——退出链路不播动画、不做等待
+    // 魔法球动画窗（若存在）随退出直接销毁——显式退出的告别演出已在 quitWithFarewell 播完；
+    // 其余退出路径本就不播动画，这里不做额外等待
     destroyBallAnimation()
     // 黑板窗口（若存在）同样直接销毁（教学模式编排中心复位为 normal）
     destroyTeaching()

@@ -23,7 +23,7 @@
  *    不影响既有降级路径（degraded 分支照旧）。
  */
 import { BrowserWindow, screen } from 'electron'
-import { PET_WINDOW_SIZE } from './index'
+import { PET_WINDOW_SIZE, initialPetPosition } from './index'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
 import { createEasedMover, readGeometry } from './move'
 import { isWindowMoveLocked } from './move-lock'
@@ -70,12 +70,12 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
   // 各自在显示前 moveTop 自保（见 ball-animation/bubble 域）；宠物自身不主动 raise（后显示的球/气泡在它上面）。
   win.setAlwaysOnTop(true, 'screen-saver')
 
-  // 初始位置：主屏工作区底部居中（桌宠站立位，留 48px 边距）
-  const workArea = screen.getPrimaryDisplay().workArea
-  win.setPosition(
-    Math.round(workArea.x + (workArea.width - opts.width) / 2),
-    Math.round(workArea.y + workArea.height - opts.height - 48)
-  )
+  // 初始位置：主屏工作区右下角（启动演出从屏幕上方弧线飞入后的落点，2026-10-18）
+  const pos = initialPetPosition(screen.getPrimaryDisplay().workArea, {
+    width: opts.width,
+    height: opts.height
+  })
+  win.setPosition(pos.x, pos.y)
 
   /** 当前是否处于穿透态（true = 可交互区以外的鼠标事件放行给桌面） */
   let clickThrough = true
