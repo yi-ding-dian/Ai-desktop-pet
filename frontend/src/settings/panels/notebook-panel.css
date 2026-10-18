@@ -162,8 +162,27 @@
 
 .notebook-table {
   width: 100%;
+  min-width: 560px;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 13px;
+}
+
+/* 列宽：内容列吃掉剩余宽度；其余列固定，长内容只在内容列内省略 */
+.notebook-col-name {
+  width: 104px;
+}
+
+.notebook-col-kind {
+  width: 60px;
+}
+
+.notebook-col-time {
+  width: 104px;
+}
+
+.notebook-col-ops {
+  width: 164px;
 }
 
 .notebook-table th {
@@ -188,7 +207,9 @@
 
 .notebook-name {
   font-weight: 600;
-  min-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .notebook-kind {
@@ -197,17 +218,27 @@
 }
 
 .notebook-value {
-  max-width: 420px;
-  word-break: break-all;
+  overflow: hidden;
+}
+
+/* 内容固定单行：放不下时在末尾显示 ...（完整值见 td 的 title 悬停提示） */
+.notebook-value-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .notebook-value-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--ui-fg-dim);
 }
 
 .notebook-warn {
-  display: inline-block;
-  margin-left: 6px;
+  flex: none;
   color: var(--ui-danger);
   white-space: nowrap;
 }
@@ -216,10 +247,6 @@
   color: var(--ui-fg-faint);
   white-space: nowrap;
   font-size: 12px;
-}
-
-.notebook-ops {
-  min-width: 150px;
 }
 
 .notebook-actions {
@@ -244,13 +271,21 @@
   font-size: 12px;
 }
 
+/* 改名：整行编辑，避免名字列过窄塞不下输入框 + 按钮 */
 .notebook-rename {
   display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.notebook-rename-label {
+  color: var(--ui-fg-dim);
+  white-space: nowrap;
 }
 
 .notebook-rename .set-input {
+  flex: 1 1 200px;
   min-width: 100px;
 }
 

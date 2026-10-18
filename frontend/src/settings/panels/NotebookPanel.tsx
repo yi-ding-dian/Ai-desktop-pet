@@ -175,6 +175,13 @@ export default function NotebookPanel(): ReactElement {
       ) : (
         <div className="notebook-table-wrap">
           <table className="notebook-table">
+            <colgroup>
+              <col className="notebook-col-name" />
+              <col className="notebook-col-kind" />
+              <col />
+              <col className="notebook-col-time" />
+              <col className="notebook-col-ops" />
+            </colgroup>
             <thead>
               <tr>
                 <th>名字</th>
@@ -187,9 +194,12 @@ export default function NotebookPanel(): ReactElement {
             <tbody>
               {filteredItems.map((item) => (
                 <tr key={item.id}>
-                  <td className="notebook-name">
-                    {editingId === item.id ? (
+                  {editingId === item.id ? (
+                    <td colSpan={5}>
                       <div className="notebook-rename">
+                        <span className="notebook-rename-label">
+                          重命名「{item.name}」
+                        </span>
                         <TextField
                           value={editingName}
                           onValueChange={setEditingName}
@@ -212,104 +222,116 @@ export default function NotebookPanel(): ReactElement {
                           取消
                         </button>
                       </div>
-                    ) : (
-                      item.name
-                    )}
-                  </td>
-                  <td className="notebook-kind">{kindLabel(item)}</td>
-                  <td className="notebook-value" title={item.value}>
-                    <span className="notebook-value-text">{item.value}</span>
-                    {item.kind === 'path' && !item.path_exists ? (
-                      <span className="notebook-warn">⚠ 路径不存在</span>
-                    ) : null}
-                  </td>
-                  <td className="notebook-time">{formatTime(item.updated_at)}</td>
-                  <td className="notebook-ops">
-                    <div className="notebook-actions">
-                      {item.kind !== 'text' ? (
-                        <button
-                          type="button"
-                          className="notebook-btn notebook-btn-sm"
-                          disabled={
-                            item.kind === 'path' && !item.path_exists
-                          }
-                          onClick={() => ctrl.openItem(item)}
-                        >
-                          打开
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="notebook-btn notebook-btn-sm"
-                        onClick={() => {
-                          setEditingId(item.id)
-                          setEditingName(item.name)
-                          setConfirmDeleteId(null)
-                        }}
-                      >
-                        改名
-                      </button>
-                      <button
-                        type="button"
-                        className="notebook-btn notebook-btn-sm notebook-btn-danger"
-                        onClick={() => {
-                          setConfirmDeleteId(item.id)
-                          setEditingId(null)
-                        }}
-                      >
-                        删除
-                      </button>
-                    </div>
-                    {confirmDeleteId === item.id ? (
-                      <div className="notebook-delete-confirm">
-                        <span className="notebook-delete-title">
-                          确定要删除吗？
-                        </span>
-                        {item.kind === 'path' ? (
-                          <>
+                    </td>
+                  ) : (
+                    <>
+                      <td className="notebook-name" title={item.name}>
+                        {item.name}
+                      </td>
+                      <td className="notebook-kind">{kindLabel(item)}</td>
+                      <td className="notebook-value" title={item.value}>
+                        <div className="notebook-value-line">
+                          <span className="notebook-value-text">
+                            {item.value}
+                          </span>
+                          {item.kind === 'path' && !item.path_exists ? (
+                            <span className="notebook-warn">
+                              ⚠ 路径不存在
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="notebook-time">
+                        {formatTime(item.updated_at)}
+                      </td>
+                      <td className="notebook-ops">
+                        <div className="notebook-actions">
+                          {item.kind !== 'text' ? (
                             <button
                               type="button"
                               className="notebook-btn notebook-btn-sm"
-                              onClick={() => {
-                                ctrl.deleteRecord([item.name])
-                                setConfirmDeleteId(null)
-                              }}
+                              disabled={
+                                item.kind === 'path' && !item.path_exists
+                              }
+                              onClick={() => ctrl.openItem(item)}
                             >
-                              只删记录
+                              打开
                             </button>
-                            <button
-                              type="button"
-                              className="notebook-btn notebook-btn-sm notebook-btn-danger"
-                              onClick={() => {
-                                ctrl.deleteFile(item)
-                                setConfirmDeleteId(null)
-                              }}
-                            >
-                              删除文件（回收站）
-                            </button>
-                          </>
-                        ) : (
+                          ) : null}
+                          <button
+                            type="button"
+                            className="notebook-btn notebook-btn-sm"
+                            onClick={() => {
+                              setEditingId(item.id)
+                              setEditingName(item.name)
+                              setConfirmDeleteId(null)
+                            }}
+                          >
+                            改名
+                          </button>
                           <button
                             type="button"
                             className="notebook-btn notebook-btn-sm notebook-btn-danger"
                             onClick={() => {
-                              ctrl.deleteRecord([item.name])
-                              setConfirmDeleteId(null)
+                              setConfirmDeleteId(item.id)
+                              setEditingId(null)
                             }}
                           >
-                            删除记录
+                            删除
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          className="notebook-btn notebook-btn-sm"
-                          onClick={() => setConfirmDeleteId(null)}
-                        >
-                          取消
-                        </button>
-                      </div>
-                    ) : null}
-                  </td>
+                        </div>
+                        {confirmDeleteId === item.id ? (
+                          <div className="notebook-delete-confirm">
+                            <span className="notebook-delete-title">
+                              确定要删除吗？
+                            </span>
+                            {item.kind === 'path' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="notebook-btn notebook-btn-sm"
+                                  onClick={() => {
+                                    ctrl.deleteRecord([item.name])
+                                    setConfirmDeleteId(null)
+                                  }}
+                                >
+                                  只删记录
+                                </button>
+                                <button
+                                  type="button"
+                                  className="notebook-btn notebook-btn-sm notebook-btn-danger"
+                                  onClick={() => {
+                                    ctrl.deleteFile(item)
+                                    setConfirmDeleteId(null)
+                                  }}
+                                >
+                                  删除文件（回收站）
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                className="notebook-btn notebook-btn-sm notebook-btn-danger"
+                                onClick={() => {
+                                  ctrl.deleteRecord([item.name])
+                                  setConfirmDeleteId(null)
+                                }}
+                              >
+                                删除记录
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="notebook-btn notebook-btn-sm"
+                              onClick={() => setConfirmDeleteId(null)}
+                            >
+                              取消
+                            </button>
+                          </div>
+                        ) : null}
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>

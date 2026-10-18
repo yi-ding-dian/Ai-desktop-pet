@@ -2,7 +2,7 @@
  * 设置窗口域（P4 前置，设计文档 §7.6）——独立设置窗口的生命周期 + 应用级 IPC + 向导编排。
  *
  * 职责边界（高内聚：与设置窗口有关的一切都在本目录）：
- *  - 窗口生命周期：单例（已打开 → 聚焦；关闭即清引用，下次打开重建）、约 640×560 居中、
+ *  - 窗口生命周期：单例（已打开 → 聚焦；关闭即清引用，下次打开重建）、约 760×560 居中、
  *    **系统标题栏常规窗口**（frame:true、可拖动/最小化、任务栏可见）——设置是工具型界面，
  *    用户预期是正常窗口；刻意**不**照抄宠物窗/黑板窗的「无边框 + 透明 + 置顶 + skipTaskbar +
  *    Linux type:'toolbar'」悬浮窗技术（那是给「不该出现在任务栏的桌宠层」用的）；
@@ -36,8 +36,8 @@ import type { Rect } from '../window'
 
 const isDev = !app.isPackaged
 
-/** 设置窗口尺寸（逻辑像素；§7.6.1「约 640×560 居中打开」） */
-const SETTINGS_WINDOW_WIDTH = 640
+/** 设置窗口尺寸（逻辑像素；§7.6.1；2026-10-18 用户定：默认约 760×560，内容区更宽） */
+const SETTINGS_WINDOW_WIDTH = 760
 const SETTINGS_WINDOW_HEIGHT = 560
 /** 窗口标题（主进程为权威：page-title-updated 被拦截，防渲染页 <title> 覆盖契约文案） */
 const SETTINGS_WINDOW_TITLE = '设置 · AI 桌面宠物'
