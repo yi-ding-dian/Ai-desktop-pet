@@ -15,6 +15,8 @@
 
 > **各平台包必须在各平台上打**：PyInstaller 不支持交叉编译，后端 `backend`/`backend.exe` 只能在目标平台上构建，所以 Linux 上打不出 Windows 包（反之亦然）。electron-builder 那一半倒是可以交叉，但没有后端产物的包是跑不起来的残缺包——别走这条路。
 
+> **打包脚本的防护（2026-10-18）**：`build.bat` / `build.sh` 在动手前统一检查——node/npm/npx 是否可用、应用是否还在运行（dev Electron 或安装版/便携版；文件被占用会导致打包失败）、`frontend/node_modules` 与 electron-builder 是否完整；PyInstaller 跑完后还会校验后端产物是否真的生成。首次 `npm install` 的 Electron 运行时下载默认走 npmmirror（想用官方源先自行 `set`/`export` 同名 `ELECTRON_MIRROR`）。
+
 | 产物（落在 `deploy/release/`，已 gitignore） | 平台 | 大小（实测） |
 |---|---|---|
 | `ai-desktop-pet-<版本>-<arch>.AppImage` | Linux | 128 MB（122 MiB）——免安装单文件，双击即跑 |

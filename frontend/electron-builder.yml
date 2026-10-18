@@ -53,7 +53,7 @@ win:
     - nsis
     - portable
   # 与 Linux 侧同一命名约定：文件名 ASCII（ai-desktop-pet-），界面名称保持中文（productName）
-  # 注意：Windows 产物按架构分目录落 release/ 根下，见 deploy/build.ps1 的产物收集
+  # 产物由 electron-builder 直接落到 deploy/release/（build.bat 结束后列出 exe）
   artifactName: ai-desktop-pet-${version}-${arch}.${ext}
   # 无代码签名证书：electron-builder 会对 exe 做「资源编辑」（写图标/版本信息）而非签名，
   # 若本机杀软把 PyInstaller 产物误报为木马，属已知问题（设计文档 §10 #6，后期代码签名解决）

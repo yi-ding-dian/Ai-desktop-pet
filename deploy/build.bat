@@ -32,16 +32,51 @@ set ELECTRON_BUILDER_COMPRESSION_LEVEL=%LEVEL%
 
 rem --------------------------------------------
 rem  国内网络：electron-builder 首次运行要从 GitHub 下 winCodeSign / nsis 工具包（会卡死），
-rem  未显式指定镜像时走 npmmirror。想用官方源就自己先 set 同名变量。
+rem  Electron 运行时二进制（npm install 时下载）同样容易静默卡住——两者未显式指定镜像时
+rem  都走 npmmirror。想用官方源就自己先 set 同名变量。
 rem --------------------------------------------
 if not defined ELECTRON_BUILDER_BINARIES_MIRROR (
   set "ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/"
+)
+if not defined ELECTRON_MIRROR (
+  set "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/"
 )
 
 echo ============================================
 echo  AI 桌面宠物 Windows 打包（压缩级别 %LEVEL%）
 echo ============================================
 echo.
+
+rem --------------------------------------------
+rem  工具链与运行态预检：缺 Node 直接报错；应用运行中禁止打包（文件被占用会让
+rem  electron-builder 失败，运行中的 dev 实例也会读写 frontend\out）。
+rem --------------------------------------------
+where node >nul 2>nul
+if errorlevel 1 (
+  echo [错误] 未找到 node：请先安装 Node.js 并加入 PATH
+  goto :fail
+)
+where npm >nul 2>nul
+if errorlevel 1 (
+  echo [错误] 未找到 npm：请先安装 Node.js（含 npm）并加入 PATH
+  goto :fail
+)
+where npx >nul 2>nul
+if errorlevel 1 (
+  echo [错误] 未找到 npx：请先安装 Node.js（含 npx）并加入 PATH
+  goto :fail
+)
+
+tasklist /FO CSV 2>nul | "%SystemRoot%\System32\findstr.exe" /I /C:"ai-desktop-pet" /C:"AI 桌面宠物.exe" >nul
+if not errorlevel 1 (
+  echo [错误] 检测到 AI 桌面宠物正在运行（安装版/便携版），请先从托盘菜单退出再打包。
+  goto :fail
+)
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "if (Get-Process electron -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*Ai-desktop-pet*' }) { exit 1 }"
+if errorlevel 1 (
+  echo [错误] 检测到开发态 Electron 正在运行（npm run dev），请先停掉再打包。
+  goto :fail
+)
 
 if not exist "frontend\node_modules" (
   echo [1/4] 首次打包，先装前端依赖 npm install ...
@@ -51,6 +86,11 @@ if not exist "frontend\node_modules" (
   popd
 ) else (
   echo [1/4] 前端依赖已存在，跳过安装
+)
+if not exist "frontend\node_modules\.bin\electron-builder.cmd" (
+  echo [错误] 缺少 electron-builder（npm install 可能未完成）
+  echo        删掉 frontend\node_modules 后重新运行本脚本，让依赖完整安装。
+  goto :fail
 )
 
 if not exist "backend\.venv\Scripts\pyinstaller.exe" (

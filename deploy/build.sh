@@ -7,6 +7,11 @@ set -euo pipefail
 # 脚本在 deploy/ 下，先回到项目根（pyinstaller / npm 都要求项目根为工作目录）
 cd "$(dirname "$0")/.."
 
+# 国内网络：Electron 运行时 / electron-builder 工具包默认走 npmmirror（首次打包会下载，
+# 官方源在部分网络下会静默卡住）。想用官方源先自行 export 同名变量。
+export ELECTRON_MIRROR="${ELECTRON_MIRROR:-https://npmmirror.com/mirrors/electron/}"
+export ELECTRON_BUILDER_BINARIES_MIRROR="${ELECTRON_BUILDER_BINARIES_MIRROR:-https://npmmirror.com/mirrors/electron-builder-binaries/}"
+
 WITH_DEB=0
 for arg in "$@"; do
   case "$arg" in
@@ -16,6 +21,21 @@ for arg in "$@"; do
 done
 
 echo "== 0/4 前置检查 =="
+
+# 工具链预检：缺 node/npm/npx 直接报错，不再跑到一半才失败
+for cmd in node npm npx; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "[错误] 未找到 $cmd：请先安装 Node.js（含 npm/npx）并加入 PATH" >&2
+    exit 1
+  fi
+done
+
+# 应用运行中禁止打包：electron-builder 会读写 frontend/out 与资源目录，
+# 运行中的实例还会占住产物文件（Linux 上表现是改名/删除失败）。
+if pgrep -f "node_modules/electron/dist/electron" >/dev/null 2>&1 || pgrep -x ai-desktop-pet >/dev/null 2>&1; then
+  echo "[错误] 检测到 AI 桌面宠物正在运行（开发态或已安装实例），请先退出再打包。" >&2
+  exit 1
+fi
 
 # dev 应用与 electron-vite build 共用 frontend/out/，会互相污染（见 README「坑」）
 if pgrep -f "[e]lectron-vite dev" >/dev/null; then
@@ -31,6 +51,10 @@ fi
 if [ ! -x frontend/node_modules/.bin/electron-builder ]; then
   echo "· 首次打包：安装 electron-builder（npm install）…"
   (cd frontend && npm install)
+fi
+if [ ! -x frontend/node_modules/.bin/electron-builder ]; then
+  echo "[错误] npm install 后仍找不到 electron-builder（检查网络/镜像与 package.json）" >&2
+  exit 1
 fi
 
 # —— 后端打包解释器选择 ——
@@ -59,6 +83,10 @@ rm -rf frontend/resources/backend
   --distpath frontend/resources \
   --workpath deploy/.pyinstaller-build \
   deploy/backend.spec
+if [ ! -x frontend/resources/backend/backend ]; then
+  echo "[错误] PyInstaller 未产出 frontend/resources/backend/backend（检查上方日志）" >&2
+  exit 1
+fi
 
 echo "== 2/4 electron-vite build（前端）=="
 (cd frontend && npm run build)
