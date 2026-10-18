@@ -1,0 +1,29 @@
+/* ============================================================================
+ * 窗口 UI 套件（shared/ui）——所有窗口复用的样式与外壳组件。
+ *
+ * 本文件只是清单：只允许 @import，不写任何规则（CSS 规定 @import 必须在其它规则之前）。
+ * 各渲染入口的样式文件在**顶部先 import theme，再 import 本文件**：
+ *
+ *   @import '../shared/theme/theme.css';
+ *   @import '../shared/ui/ui.css';
+ *
+ * 层次（参考 svn-git 的 style.css 分域：tokens → base → 布局 → 控件 → 表面 → 弹层 → 动效）：
+ *   base      —— .pui-* 作用域内的字体/reset/滚动条/焦点环（不碰 html/body 背景）
+ *   layout    —— 应用根/无边框窗口/标题栏/缩放热区/侧栏/导航/工具栏/分区
+ *   controls  —— 按钮/图标按钮/字段/输入/下拉/开关
+ *   surfaces  —— 面板/列表/空态/加载/提示条
+ *   modal     —— 遮罩/弹窗/拖拽热区
+ *   motion    —— keyframes 与 reduced-motion
+ *
+ * 约定：
+ *  - 类名前缀 .pui-（pet UI）；元素 pui-块-元素；变体 pui-块-变体；状态 pui-is-*；
+ *  - 只做视觉的控件用类名；React 组件只封装共享行为（见 components/）；
+ *  - 不得设置 html/body/#root 的背景或 overflow——透明窗由各入口自己负责。
+ * ========================================================================= */
+
+@import './styles/base.css';
+@import './styles/layout.css';
+@import './styles/controls.css';
+@import './styles/surfaces.css';
+@import './styles/modal.css';
+@import './styles/motion.css';

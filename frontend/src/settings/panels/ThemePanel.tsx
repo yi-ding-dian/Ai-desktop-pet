@@ -11,6 +11,7 @@
  * 实时预览，自动恢复正式主题（放弃未保存的草稿色）。
  */
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from 'react'
+import { Button } from '../../shared/ui'
 import Section from '../components/section'
 import { TextField } from '../components/fields'
 import {
@@ -279,10 +280,10 @@ export default function ThemePanel(): ReactElement {
       <div className="set-theme-group">自定义配色</div>
       {draft === null ? (
         <div className="set-theme-custom-entry">
-          <button type="button" className="set-btn" onClick={openCustom} data-testid="theme-custom-open">
+          <Button onClick={openCustom} data-testid="theme-custom-open">
             基于当前主题调整…
-          </button>
-          <span className="set-field-hint">
+          </Button>
+          <span className="pui-field-hint">
             调 4 个核心色（背景 / 面板 / 文字 / 强调），其余配色自动派生；改动实时预览，满意后命名保存。
           </span>
         </div>
@@ -301,30 +302,26 @@ export default function ThemePanel(): ReactElement {
               <span className="set-color-hex">{toHex(draft[field.key])}</span>
             </label>
           ))}
-          <div className="set-row">
+          <div className="pui-row">
             <TextField
               value={name}
               onValueChange={setName}
               placeholder="给这套配色起个名字（如「暮色」）"
             />
-            <button
-              type="button"
-              className="set-btn"
+            <Button
               disabled={!name.trim()}
               onClick={saveCustom}
               data-testid="theme-custom-save"
             >
               保存为主题
-            </button>
-            <button type="button" className="set-btn" onClick={closeCustom}>
-              收起
-            </button>
+            </Button>
+            <Button onClick={closeCustom}>收起</Button>
           </div>
-          <span className="set-field-hint">改动实时预览；保存后出现在「我的主题」，可随时应用或删除。</span>
+          <span className="pui-field-hint">改动实时预览；保存后出现在「我的主题」，可随时应用或删除。</span>
         </div>
       )}
 
-      <p className="set-field-hint">仅影响界面观感；宠物本体的 3D 模型不受影响。</p>
+      <p className="pui-field-hint">仅影响界面观感；宠物本体的 3D 模型不受影响。</p>
     </Section>
   )
 }

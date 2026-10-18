@@ -1,0 +1,117 @@
+/* ============================================================================
+ * 套件基础层：字体、作用域内 reset、滚动条、焦点环。
+ *
+ * 重要：本文件**不设置** html/body/#root 的背景与 overflow——宠物窗/黑板/气泡/提醒
+ * 都是透明窗，任何全局背景都会破坏透明；各入口保留自己的透明规则。
+ * 所有规则都挂在 .pui-app / .pui-window 作用域下，未接入套件的窗口不受影响。
+ * ========================================================================= */
+
+.pui-app,
+.pui-window {
+  box-sizing: border-box;
+  color: var(--ui-fg);
+  font-family: var(--ui-font-sans);
+  /* 刻意不设根字号/行高：各窗口的正文排版（如黑板 Markdown 16px）保持迁移前的继承值；
+     套件控件各自声明字号（按钮 13 / 输入 13 / 标签 12.5）。 */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 套件控件统一 border-box（只作用于套件类，避免改变未迁移窗口的既有盒模型） */
+.pui-app :where(
+    .pui-btn,
+    .pui-icon-btn,
+    .pui-input,
+    .pui-select,
+    .pui-switch,
+    .pui-panel,
+    .pui-notice,
+    .pui-modal,
+    .pui-titlebar,
+    .pui-toolbar,
+    .pui-sidebar
+  ),
+.pui-window :where(
+    .pui-btn,
+    .pui-icon-btn,
+    .pui-input,
+    .pui-select,
+    .pui-switch,
+    .pui-panel,
+    .pui-notice,
+    .pui-modal,
+    .pui-titlebar,
+    .pui-toolbar,
+    .pui-sidebar
+  ) {
+  box-sizing: border-box;
+}
+
+/* 表单控件继承界面字体（Chromium 默认是系统控件字体） */
+.pui-app :where(button, input, select, textarea),
+.pui-window :where(button, input, select, textarea) {
+  font: inherit;
+}
+
+/* 可滚动区域：与设置窗/黑板现有观感一致（8px 细滚动条） */
+.pui-scroll {
+  overflow: auto;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-scrollbar) transparent;
+}
+
+.pui-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.pui-scroll::-webkit-scrollbar-thumb {
+  background: var(--ui-scrollbar);
+  border-radius: 4px;
+}
+
+.pui-scroll::-webkit-scrollbar-track,
+.pui-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 键盘焦点：统一强调色环；鼠标点击不显示 */
+.pui-app :focus-visible,
+.pui-window :focus-visible,
+.pui-modal-mask :focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+/* 输入框/下拉有自己的 focus 处理（边框 + 弱光环），不再叠加通用 outline */
+.pui-input:focus-visible,
+.pui-select:focus-visible {
+  outline: none;
+}
+
+/* 文本可选中区域（表单/正文）；普通 UI 文字默认不可选 */
+.pui-selectable,
+.pui-app textarea,
+.pui-window textarea,
+.pui-app input,
+.pui-window input {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* 工具类 */
+.pui-hidden {
+  display: none !important;
+}
+
+.pui-dim {
+  color: var(--ui-fg-dim);
+}
+
+.pui-faint {
+  color: var(--ui-fg-faint);
+}
+
+.pui-mono {
+  font-family: var(--ui-font-mono);
+}

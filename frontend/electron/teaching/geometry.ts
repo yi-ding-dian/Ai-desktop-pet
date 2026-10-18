@@ -6,18 +6,30 @@
  *
  * 形态速览（以宠物窗口所在显示器的工作区 wa 为基准）：
  *   展开态：宽 = min(round(wa.width × 55%), 1000)，高 = wa.height − 120，右距 20，垂直居中；
+ *   拖拽态（2026-10-18）：四边/四角可拖改尺寸（只动被拖的边），标题栏可拖移位；
  *   折叠态：24 × 140 贴右缘（右距 8），垂直居中；
  *   屏外态：整窗落在 wa 右缘之外（滑入起点 / 滑出终点）；
  *   讲台位：宠物窗口（400×400）到工作区左下角——左距 40、下距 40。
  */
 import type { Point, Rect } from '../window'
+import {
+  clampFramelessRect,
+  moveFramelessRect,
+  resizeFramelessRect,
+  type FramelessResizeTarget,
+  type FramelessSizeLimits
+} from '../window/frameless-geometry'
 
 /** 展开态：宽 = 工作区宽 × 本比例（再受 BOARD_MAX_WIDTH 夹取；拖宽记忆值优先，仍受夹取） */
 export const BOARD_WIDTH_RATIO = 0.55
 /** 展开态：宽度上限（px；默认形态用——拖宽上限另按工作区实算） */
 export const BOARD_MAX_WIDTH = 1000
-/** 展开态：宽度下限（px）——用户拖黑板左缘时不得窄于此（太窄看不了板书） */
+/** 展开态/拖拽：宽度下限（px）——太窄看不了板书（2026-10-18 四边可拖后仍保留） */
 export const BOARD_MIN_WIDTH = 500
+/** 拖拽：高度下限（px）——保住顶栏 + 至少几行板书 + 输入条 */
+export const BOARD_MIN_HEIGHT = 300
+/** 拖拽：黑板任一边与工作区边缘的最小留白（px；拖出屏幕后仍能抓回来） */
+export const BOARD_EDGE_MARGIN = 10
 /** 展开态：高度 = 工作区高 − 本值（上下各留白的合计语义，见 §7.5.2） */
 export const BOARD_HEIGHT_INSET = 120
 /** 展开态：距工作区右缘（px） */
@@ -45,12 +57,14 @@ export const PODIUM_GAP = 8
  */
 export const PODIUM_FOOT_LINE_Y = 225
 
-/** 展开态矩形（工作区 → 屏幕坐标）
- *  @param widthOverride 用户拖过的宽度记忆（px）；非空时优先，仍受 [BOARD_MIN_WIDTH, 工作区宽−右距] 夹取 */
-export function expandedBounds(wa: Rect, widthOverride?: number): Rect {
+/**
+ * 展开态**默认**矩形（工作区 → 屏幕坐标；用户拖过的形态记忆由调用方优先，
+ * 见 teaching/index.ts 的 currentExpandedBounds + clampBoardRect）。
+ */
+export function expandedBounds(wa: Rect): Rect {
   const base = Math.min(Math.round(wa.width * BOARD_WIDTH_RATIO), BOARD_MAX_WIDTH)
   const maxWidth = Math.max(BOARD_MIN_WIDTH, wa.width - BOARD_MARGIN_RIGHT)
-  const width = Math.round(Math.min(Math.max(widthOverride ?? base, BOARD_MIN_WIDTH), maxWidth))
+  const width = Math.round(Math.min(Math.max(base, BOARD_MIN_WIDTH), maxWidth))
   const height = Math.max(1, wa.height - BOARD_HEIGHT_INSET)
   return {
     x: wa.x + wa.width - width - BOARD_MARGIN_RIGHT,
@@ -58,6 +72,37 @@ export function expandedBounds(wa: Rect, widthOverride?: number): Rect {
     width,
     height
   }
+}
+
+/**
+ * 黑板的尺寸/边距约束（通用拖动缩放引擎的板级绑定）。
+ * 语义：只改被拖动的边、对边固定；不小于 500×300，任一边留 10px 在工作区内。
+ * 具体几何实现在 `electron/window/frameless-geometry.ts`（所有无边框窗口共用；
+ * fractional DPI 的"只信请求值"约定也在那里）。
+ */
+const BOARD_LIMITS: FramelessSizeLimits = {
+  minWidth: BOARD_MIN_WIDTH,
+  minHeight: BOARD_MIN_HEIGHT,
+  edgeMargin: BOARD_EDGE_MARGIN
+}
+
+/** 黑板拖动改尺寸（四边/四角；薄包装，见 frameless-geometry.resizeFramelessRect） */
+export function resizedBoardRect(
+  cur: Rect,
+  target: FramelessResizeTarget,
+  wa: Rect
+): Rect | null {
+  return resizeFramelessRect(cur, target, wa, BOARD_LIMITS)
+}
+
+/** 平移后的黑板矩形（标题栏拖动；薄包装，见 frameless-geometry.moveFramelessRect） */
+export function movedBoardRect(cur: Rect, dx: number, dy: number, wa: Rect): Rect | null {
+  return moveFramelessRect(cur, dx, dy, wa, BOARD_LIMITS)
+}
+
+/** 把矩形夹进工作区（恢复形态记忆用；薄包装，见 frameless-geometry.clampFramelessRect） */
+export function clampBoardRect(rect: Rect, wa: Rect): Rect {
+  return clampFramelessRect(rect, wa, BOARD_LIMITS)
 }
 
 /** 折叠态矩形（右缘贴边小角标，垂直居中） */

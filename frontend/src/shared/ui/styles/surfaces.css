@@ -1,0 +1,196 @@
+/* ============================================================================
+ * 套件表面层：面板 / 列表行 / 空态 / 加载 / 提示条。
+ * ========================================================================= */
+
+/* ---------------------------------------------------------------- 面板 */
+
+.pui-panel {
+  border: 1px solid var(--ui-border-soft);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-panel);
+}
+
+.pui-panel-inset {
+  background: var(--ui-panel-faint);
+}
+
+.pui-panel-overlay {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-overlay-strong);
+  box-shadow: var(--ui-shadow);
+}
+
+/* 黑板板体：深/浅主题专属底 + 大圆角（与迁移前的 .board-body 一致） */
+.pui-panel-board {
+  overflow: hidden;
+  border-color: var(--ui-border-soft);
+  border-radius: var(--ui-radius-2xl);
+  background: var(--board-bg);
+  box-shadow: var(--ui-shadow);
+}
+
+.pui-panel-header {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ui-border-soft);
+  font-size: var(--ui-font-size-sm);
+  font-weight: 600;
+}
+
+.pui-panel-body {
+  padding: 12px 14px;
+}
+
+/* ---------------------------------------------------------------- 列表 */
+
+.pui-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pui-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-fg);
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.pui-list-item:hover {
+  background: var(--ui-hover);
+}
+
+.pui-list-item.pui-is-active {
+  background: var(--ui-panel-strong);
+  color: var(--ui-accent);
+}
+
+.pui-list-item.pui-is-disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pui-list-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- 空态 */
+
+.pui-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 16px;
+  color: var(--ui-fg-dim);
+  font-size: var(--ui-font-size-sm);
+  text-align: center;
+}
+
+.pui-empty-fill {
+  min-height: 100%;
+  height: 100%;
+}
+
+.pui-empty-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.pui-empty-title {
+  color: var(--ui-fg-dim);
+  font-size: var(--ui-font-size-md);
+}
+
+.pui-empty-hint {
+  color: var(--ui-fg-faint);
+  font-size: var(--ui-font-size-xs);
+}
+
+/* ---------------------------------------------------------------- 加载 */
+
+.pui-spinner {
+  display: inline-block;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--ui-border);
+  border-top-color: var(--ui-accent);
+  border-radius: 50%;
+  animation: pui-spin 0.8s linear infinite;
+}
+
+.pui-spinner-sm {
+  width: 13px;
+  height: 13px;
+  border-width: 1.5px;
+}
+
+.pui-spinner-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 1em;
+}
+
+.pui-spinner-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ui-fg-dim);
+  animation: pui-dot 1.2s ease-in-out infinite;
+}
+
+.pui-spinner-dots span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.pui-spinner-dots span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+/* ---------------------------------------------------------------- 提示条 */
+
+.pui-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-font-size-sm);
+  line-height: 1.5;
+}
+
+.pui-notice-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pui-notice-info {
+  background: color-mix(in srgb, var(--ui-link) 10%, transparent);
+  color: var(--ui-link);
+}
+
+.pui-notice-success {
+  background: color-mix(in srgb, var(--ui-success) 12%, transparent);
+  color: var(--ui-success);
+}
+
+.pui-notice-warning {
+  background: color-mix(in srgb, var(--ui-warm) 12%, transparent);
+  color: var(--ui-warm);
+}
+
+.pui-notice-error {
+  background: color-mix(in srgb, var(--ui-danger) 12%, transparent);
+  color: var(--ui-danger);
+}

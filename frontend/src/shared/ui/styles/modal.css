@@ -1,0 +1,109 @@
+/* ============================================================================
+ * 套件弹层：遮罩 + 弹窗 + 八向拖拽热区（复用 layout.css 的 .pui-resize）。
+ *
+ * 本轮只交付样式与组件（ModalShell/ResizableModal），暂未接入任何窗口；
+ * 下一阶段由设置页「自定义配色」编辑器和确认框接入。
+ * 说明：遮罩点击默认不关闭（防误触），关闭走 × / Esc —— 由组件实现。
+ * ========================================================================= */
+
+.pui-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(1, 4, 9, 0.5);
+}
+
+/* 弹窗叠弹窗：内层遮罩不再压暗一次（仍保留全屏 flex 居中） */
+.pui-modal-mask .pui-modal-mask {
+  background: transparent;
+}
+
+.pui-modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 520px;
+  max-width: 92vw;
+  max-height: 86vh;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  box-shadow: var(--ui-shadow);
+  animation: pui-pop-in var(--ui-duration-base) var(--ui-ease-standard) both;
+}
+
+.pui-modal-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--ui-border-soft);
+  font-size: var(--ui-font-size-title);
+  font-weight: 600;
+}
+
+.pui-modal-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pui-modal-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.pui-modal-desc {
+  margin: 12px 18px 0;
+  color: var(--ui-fg-dim);
+  font-size: var(--ui-font-size-sm);
+  line-height: 1.55;
+}
+
+.pui-modal-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 16px 18px;
+  overflow: auto;
+}
+
+.pui-modal-footer {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--ui-border-soft);
+}
+
+.pui-modal-xl {
+  width: 720px;
+}
+
+.pui-modal-sm {
+  width: 400px;
+}
+
+/* 可调整大小的弹窗：热区叠在弹窗边缘（复用通用 .pui-resize） */
+.pui-modal-resizable .pui-resize {
+  z-index: 6;
+}
+
+.pui-modal-resizable:hover .pui-resize::after {
+  opacity: 0.16;
+}
+
+.pui-modal-resizable .pui-resize:hover::after {
+  opacity: 0.55;
+}

@@ -29,6 +29,7 @@ import { destroyReminderList, initReminderList } from './reminder-list'
 import { destroyFileSelection, initFileSelection } from './files'
 import { applyWindowsAppIdentity } from './platform'
 import { PET_WINDOW_SIZE, type PlatformWindow } from './window'
+import { initFramelessWindows } from './window/frameless'
 
 /** 调试快捷键（避开常见组合，选用 F9–F11 + Ctrl+Shift） */
 const SHORTCUTS = {
@@ -169,6 +170,9 @@ if (!app.requestSingleInstanceLock()) {
     // =/path/shot.png → 对该截图跑模板匹配；不影响正常流程）
     const anchorSelfTest = process.env['PET_ANCHOR_SELFTEST']
     if (anchorSelfTest) void runAnchorSelfTest(anchorSelfTest)
+
+    // 无边框窗口通用拖动/缩放 IPC（窗口 UI 套件；黑板等窗口 attachFrameless 后生效）
+    initFramelessWindows()
 
     // 预热魔法球窗/动画页：与宠物窗创建并行，冷启动入场演出不必再等动画页加载
     prewarmBallAnimation()

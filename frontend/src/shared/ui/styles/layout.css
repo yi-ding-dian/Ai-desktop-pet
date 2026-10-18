@@ -1,0 +1,363 @@
+/* ============================================================================
+ * 套件布局层：应用根 / 无边框窗口 / 标题栏 / 八向缩放热区 / 侧栏 / 导航 / 工具栏 / 分区。
+ *
+ * 两种容器：
+ *  - .pui-app    不透明应用根（如设置窗，系统原生标题栏）
+ *  - .pui-window 无边框窗口表面（如黑板），背景由变体决定
+ * ========================================================================= */
+
+/* ---------------------------------------------------------------- 应用根 / 窗口 */
+
+.pui-app {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ui-bg);
+}
+
+.pui-window {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+/* 窗口表面变体（默认透明：适配透明窗，由使用方叠加变体） */
+.pui-window-solid {
+  background: var(--ui-bg);
+}
+
+.pui-window-overlay {
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-overlay-strong);
+  box-shadow: var(--ui-shadow);
+}
+
+.pui-window-board {
+  overflow: hidden;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: var(--ui-radius-2xl);
+  background: var(--board-bg);
+  box-shadow: var(--ui-shadow);
+}
+
+/* ---------------------------------------------------------------- 标题栏 */
+
+.pui-titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 10px 8px 16px;
+  border-bottom: 1px solid var(--ui-border-soft);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pui-titlebar-leading {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--ui-accent);
+}
+
+.pui-titlebar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--ui-font-size-sm);
+  letter-spacing: 0.3em;
+  color: var(--ui-fg-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pui-titlebar-subtitle {
+  flex: none;
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-fg-faint);
+}
+
+.pui-titlebar-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 窗口主体：滚动/伸缩区 */
+.pui-window-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pui-window-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--ui-border-soft);
+}
+
+/* ---------------------------------------------------------------- 八向缩放热区（窗口与弹窗共用） */
+
+.pui-resize {
+  position: absolute;
+  z-index: 50;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pui-resize-n,
+.pui-resize-s {
+  right: 12px;
+  left: 12px;
+  height: 8px;
+}
+
+.pui-resize-n {
+  top: 0;
+  cursor: n-resize;
+}
+
+.pui-resize-s {
+  bottom: 0;
+  cursor: s-resize;
+}
+
+.pui-resize-w,
+.pui-resize-e {
+  top: 12px;
+  bottom: 12px;
+  width: 8px;
+}
+
+.pui-resize-w {
+  left: 0;
+  cursor: w-resize;
+}
+
+.pui-resize-e {
+  right: 0;
+  cursor: e-resize;
+}
+
+.pui-resize-nw,
+.pui-resize-ne,
+.pui-resize-sw,
+.pui-resize-se {
+  width: 12px;
+  height: 12px;
+}
+
+.pui-resize-nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.pui-resize-se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.pui-resize-ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.pui-resize-sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+/* hover 时淡入细高亮条（不常显，鼠标靠近才浮现） */
+.pui-resize::after {
+  content: '';
+  position: absolute;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ui-fg) 32%, transparent);
+  opacity: 0;
+  transition: opacity var(--ui-duration-fast) var(--ui-ease-standard);
+  pointer-events: none;
+}
+
+.pui-resize-n::after,
+.pui-resize-s::after {
+  right: 20%;
+  left: 20%;
+  height: 3px;
+}
+
+.pui-resize-n::after {
+  top: 1px;
+}
+
+.pui-resize-s::after {
+  bottom: 1px;
+}
+
+.pui-resize-w::after,
+.pui-resize-e::after {
+  top: 20%;
+  bottom: 20%;
+  width: 3px;
+}
+
+.pui-resize-w::after {
+  left: 1px;
+}
+
+.pui-resize-e::after {
+  right: 1px;
+}
+
+.pui-resize:hover::after {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------- 侧栏 + 导航 */
+
+.pui-sidebar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 132px;
+  padding: 14px 8px 10px;
+  border-right: 1px solid var(--ui-border-soft);
+  background: var(--ui-bg-soft);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pui-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pui-sidebar-footer {
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.pui-nav-title {
+  padding: 2px 10px 10px;
+  font-size: var(--ui-font-size-xs);
+  letter-spacing: 0.3em;
+  color: var(--ui-fg-dim);
+}
+
+.pui-nav-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-fg-dim);
+  font-size: var(--ui-font-size-md);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease-standard),
+    color var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.pui-nav-item:hover {
+  background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
+.pui-nav-item.pui-is-active {
+  background: var(--ui-panel-strong);
+  color: var(--ui-accent);
+  font-weight: 600;
+}
+
+.pui-nav-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------- 工具栏 / 分区 */
+
+.pui-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--ui-border-soft);
+  background: var(--ui-bg-soft);
+}
+
+.pui-toolbar-between {
+  justify-content: space-between;
+}
+
+.pui-toolbar-end {
+  justify-content: flex-end;
+}
+
+.pui-spacer {
+  flex: 1 1 auto;
+}
+
+.pui-sep {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  background: var(--ui-border-soft);
+}
+
+.pui-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.pui-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.pui-section-actions {
+  flex: none;
+}
+
+.pui-section-title {
+  margin: 0;
+  font-size: var(--ui-font-size-title);
+  font-weight: 600;
+  color: var(--ui-fg);
+}
+
+.pui-section-desc {
+  margin: 6px 0 0;
+  font-size: var(--ui-font-size-sm);
+  line-height: 1.55;
+  color: var(--ui-fg-dim);
+}
+
+.pui-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}

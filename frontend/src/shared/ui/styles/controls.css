@@ -1,0 +1,305 @@
+/* ============================================================================
+ * 套件控件层：按钮 / 图标按钮 / 字段 / 输入框 / 下拉 / 开关 / 行布局。
+ *
+ * 数值对齐原设置窗（.set-*）与黑板输入条：按钮 8×14、主按钮 8×22、输入 8×10、
+ * 开关 36×20 —— 迁移后除圆角统一微调 1px 外观感不变。
+ * ========================================================================= */
+
+/* ---------------------------------------------------------------- 按钮 */
+
+.pui-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-panel);
+  color: var(--ui-fg);
+  font-size: var(--ui-font-size-md);
+  font-family: var(--ui-font-sans);
+  line-height: 1.2;
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease-standard),
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    opacity var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.pui-btn:hover:not(:disabled) {
+  background: var(--ui-hover);
+}
+
+.pui-btn:active:not(:disabled) {
+  background: var(--ui-panel-strong);
+}
+
+.pui-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pui-btn-primary {
+  padding: 8px 22px;
+  border-color: var(--ui-accent);
+  background: var(--ui-accent);
+  color: var(--ui-accent-fg);
+  font-size: var(--ui-font-size-lg);
+  font-weight: 600;
+}
+
+.pui-btn-primary:hover:not(:disabled) {
+  background: var(--ui-accent-strong);
+  border-color: var(--ui-accent-strong);
+}
+
+.pui-btn-primary:active:not(:disabled) {
+  background: var(--ui-accent-strong);
+}
+
+.pui-btn-danger {
+  border-color: color-mix(in srgb, var(--ui-danger) 55%, transparent);
+  color: var(--ui-danger);
+}
+
+.pui-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ui-danger) 12%, transparent);
+}
+
+.pui-btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ui-fg-dim);
+}
+
+.pui-btn-ghost:hover:not(:disabled) {
+  background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
+.pui-btn-sm {
+  padding: 4px 10px;
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-font-size-sm);
+}
+
+/* 图标按钮：无底色，悬停才浮现（关闭/删除/工具条） */
+.pui-icon-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-fg-dim);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease-standard),
+    color var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.pui-icon-btn:hover:not(:disabled) {
+  background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
+.pui-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pui-icon-btn-danger:hover:not(:disabled) {
+  color: var(--ui-danger);
+  background: color-mix(in srgb, var(--ui-danger) 12%, transparent);
+}
+
+/* 筛选胶囊（分段筛选/标签选择） */
+.pui-chip {
+  padding: 4px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-panel-faint);
+  color: var(--ui-fg-dim);
+  font-size: var(--ui-font-size-sm);
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease-standard),
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    color var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.pui-chip:hover {
+  background: var(--ui-hover);
+}
+
+.pui-chip.pui-is-active {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+/* ---------------------------------------------------------------- 行 / 字段 */
+
+.pui-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pui-row-top {
+  align-items: flex-start;
+}
+
+.pui-row > .pui-input,
+.pui-row > .pui-select,
+.pui-row > .pui-input-static {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pui-field-label {
+  font-size: var(--ui-font-size-sm);
+  font-weight: 500;
+  color: var(--ui-fg-dim);
+}
+
+.pui-field-hint {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ui-fg-faint);
+}
+
+.pui-field-error {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ui-danger);
+}
+
+/* ---------------------------------------------------------------- 输入 / 下拉 */
+
+.pui-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-input-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-input-bg);
+  color: var(--ui-fg);
+  font-size: var(--ui-font-size-md);
+  font-family: var(--ui-font-sans);
+  outline: none;
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.pui-input::placeholder {
+  color: var(--ui-fg-faint);
+}
+
+.pui-input:focus {
+  border-color: var(--ui-accent);
+  box-shadow: var(--ui-focus-ring);
+}
+
+.pui-input:disabled {
+  opacity: 0.55;
+}
+
+.pui-select {
+  cursor: pointer;
+}
+
+/* 深色下原生下拉项的底色（Chromium 支持） */
+.pui-select option {
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+}
+
+/* 只读展示位（API Key 掩码等） */
+.pui-input-static {
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-panel);
+  color: var(--ui-fg-dim);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- 开关 */
+
+.pui-switch {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-panel-strong);
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.pui-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ui-fg-dim);
+  transition:
+    transform var(--ui-duration-base) var(--ui-ease-standard),
+    background var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.pui-switch.pui-is-on {
+  background: var(--ui-accent);
+}
+
+.pui-switch.pui-is-on .pui-switch-knob {
+  background: var(--ui-accent-fg);
+  transform: translateX(16px);
+}
+
+.pui-switch:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pui-switch-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pui-switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pui-is-disabled {
+  opacity: 0.55;
+}

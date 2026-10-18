@@ -9,6 +9,7 @@
  * - 「删除文件（回收站）」走主进程原生确认框，确认后才移入回收站（可恢复）。
  */
 import { useMemo, useState, type ReactElement } from 'react'
+import { EmptyState, IconButton, Notice } from '../../shared/ui'
 import Section from '../components/section'
 import { SelectField, TextField } from '../components/fields'
 import {
@@ -102,7 +103,7 @@ export default function NotebookPanel(): ReactElement {
             <button
               key={item.id}
               type="button"
-              className={`notebook-filter${ctrl.filter === item.id ? ' active' : ''}`}
+              className={`pui-chip${ctrl.filter === item.id ? ' pui-is-active' : ''}`}
               onClick={() => ctrl.setFilter(item.id)}
             >
               {item.label}
@@ -112,7 +113,7 @@ export default function NotebookPanel(): ReactElement {
         </div>
         <button
           type="button"
-          className="notebook-btn"
+          className="pui-btn"
           disabled={!connected || ctrl.loading}
           onClick={ctrl.refresh}
         >
@@ -144,7 +145,7 @@ export default function NotebookPanel(): ReactElement {
         />
         <button
           type="button"
-          className="notebook-btn notebook-btn-primary"
+          className="pui-btn pui-btn-primary"
           disabled={!canAdd}
           onClick={handleAdd}
         >
@@ -153,25 +154,25 @@ export default function NotebookPanel(): ReactElement {
       </div>
 
       {ctrl.notice ? (
-        <div className={`notebook-notice notebook-notice-${ctrl.notice.kind}`}>
-          <span className="notebook-notice-text">{ctrl.notice.text}</span>
-          <button
-            type="button"
-            className="notebook-notice-close"
-            aria-label="关闭提示"
-            onClick={ctrl.dismissNotice}
-          >
-            ×
-          </button>
-        </div>
+        <Notice
+          kind={ctrl.notice.kind}
+          action={
+            <IconButton label="关闭提示" onClick={ctrl.dismissNotice}>
+              ×
+            </IconButton>
+          }
+        >
+          {ctrl.notice.text}
+        </Notice>
       ) : null}
 
       {ctrl.loading && filteredItems.length === 0 ? (
-        <div className="notebook-empty">正在读取记忆本…</div>
+        <EmptyState title="正在读取记忆本…" />
       ) : filteredItems.length === 0 ? (
-        <div className="notebook-empty">
-          记忆本里还没有这类条目。跟小兔说「记住这个链接叫…」就会出现在这里。
-        </div>
+        <EmptyState
+          title="记忆本里还没有这类条目"
+          hint="跟小兔说「记住这个链接叫…」就会出现在这里。"
+        />
       ) : (
         <div className="notebook-table-wrap">
           <table className="notebook-table">
@@ -206,7 +207,7 @@ export default function NotebookPanel(): ReactElement {
                         />
                         <button
                           type="button"
-                          className="notebook-btn notebook-btn-sm notebook-btn-primary"
+                          className="pui-btn pui-btn-sm pui-btn-primary"
                           onClick={() => {
                             ctrl.renameItem(item.name, editingName)
                             setEditingId(null)
@@ -216,7 +217,7 @@ export default function NotebookPanel(): ReactElement {
                         </button>
                         <button
                           type="button"
-                          className="notebook-btn notebook-btn-sm"
+                          className="pui-btn pui-btn-sm"
                           onClick={() => setEditingId(null)}
                         >
                           取消
@@ -249,7 +250,7 @@ export default function NotebookPanel(): ReactElement {
                           {item.kind !== 'text' ? (
                             <button
                               type="button"
-                              className="notebook-btn notebook-btn-sm"
+                              className="pui-btn pui-btn-sm"
                               disabled={
                                 item.kind === 'path' && !item.path_exists
                               }
@@ -260,7 +261,7 @@ export default function NotebookPanel(): ReactElement {
                           ) : null}
                           <button
                             type="button"
-                            className="notebook-btn notebook-btn-sm"
+                            className="pui-btn pui-btn-sm"
                             onClick={() => {
                               setEditingId(item.id)
                               setEditingName(item.name)
@@ -271,7 +272,7 @@ export default function NotebookPanel(): ReactElement {
                           </button>
                           <button
                             type="button"
-                            className="notebook-btn notebook-btn-sm notebook-btn-danger"
+                            className="pui-btn pui-btn-sm pui-btn-danger"
                             onClick={() => {
                               setConfirmDeleteId(item.id)
                               setEditingId(null)
@@ -289,7 +290,7 @@ export default function NotebookPanel(): ReactElement {
                               <>
                                 <button
                                   type="button"
-                                  className="notebook-btn notebook-btn-sm"
+                                  className="pui-btn pui-btn-sm"
                                   onClick={() => {
                                     ctrl.deleteRecord([item.name])
                                     setConfirmDeleteId(null)
@@ -299,7 +300,7 @@ export default function NotebookPanel(): ReactElement {
                                 </button>
                                 <button
                                   type="button"
-                                  className="notebook-btn notebook-btn-sm notebook-btn-danger"
+                                  className="pui-btn pui-btn-sm pui-btn-danger"
                                   onClick={() => {
                                     ctrl.deleteFile(item)
                                     setConfirmDeleteId(null)
@@ -311,7 +312,7 @@ export default function NotebookPanel(): ReactElement {
                             ) : (
                               <button
                                 type="button"
-                                className="notebook-btn notebook-btn-sm notebook-btn-danger"
+                                className="pui-btn pui-btn-sm pui-btn-danger"
                                 onClick={() => {
                                   ctrl.deleteRecord([item.name])
                                   setConfirmDeleteId(null)
@@ -322,7 +323,7 @@ export default function NotebookPanel(): ReactElement {
                             )}
                             <button
                               type="button"
-                              className="notebook-btn notebook-btn-sm"
+                              className="pui-btn pui-btn-sm"
                               onClick={() => setConfirmDeleteId(null)}
                             >
                               取消

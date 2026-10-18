@@ -1,0 +1,103 @@
+/* ============================================================================
+ * 套件动效层：通用 keyframes + 可直接套用的 .pui-anim-* 工具类。
+ * 语义动效（气泡尾巴、黑板跳转高亮等）留在各业务域 CSS，不进这里。
+ * ========================================================================= */
+
+@keyframes pui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pui-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pui-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pui-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pui-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pui-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-4px);
+  }
+  40% {
+    transform: translateX(4px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+.pui-anim-fade-in {
+  animation: pui-fade-in var(--ui-duration-base) var(--ui-ease-standard) both;
+}
+
+.pui-anim-pop-in {
+  animation: pui-pop-in var(--ui-duration-base) var(--ui-ease-emphasized) both;
+}
+
+.pui-anim-slide-up {
+  animation: pui-slide-up var(--ui-duration-base) var(--ui-ease-standard) both;
+}
+
+.pui-anim-shake {
+  animation: pui-shake 0.36s var(--ui-ease-standard) both;
+}
+
+/* 减少动效偏好：保留加载指示（否则看不出在忙），其余入场/强调动画直接落位 */
+@media (prefers-reduced-motion: reduce) {
+  .pui-anim-fade-in,
+  .pui-anim-pop-in,
+  .pui-anim-slide-up,
+  .pui-anim-shake {
+    animation: none;
+  }
+
+  .pui-spinner {
+    animation-duration: 2s;
+  }
+}

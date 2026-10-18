@@ -31,8 +31,11 @@ import {
   type TeachingStatePayload
 } from '../ipc/channels'
 import {
+  BOARD_EDGE_MARGIN,
+  BOARD_MIN_HEIGHT,
   BOARD_MIN_WIDTH,
   PODIUM_PET_SIZE,
+  clampBoardRect,
   expandedBounds,
   foldedBounds,
   offscreenRight,
@@ -41,6 +44,11 @@ import {
 import { runRelocateAnimation } from '../ball-animation'
 import { PET_WINDOW_SIZE } from '../window'
 import type { Rect } from '../window'
+import {
+  applyFramelessBounds,
+  attachFrameless,
+  framelessBounds
+} from '../window/frameless'
 
 const isDev = !app.isPackaged
 
@@ -70,8 +78,17 @@ let boardReady = false
 let pendingInbox: TeachingBoardInbox[] = []
 /** 状态机当前态 */
 let mode: TeachingMode = 'normal'
-/** 黑板宽度记忆（用户拖过黑板左缘；null = 未拖过 → 用默认比例；enter/unfold/重建统一经 currentExpandedBounds，会话级有效） */
-let boardWidthOverride: number | null = null
+/**
+ * 黑板形态记忆（用户拖动过四边/四角或标题栏移位；null = 未拖过 → 用默认布局）。
+ * 本次运行内有效：enter / unfold / 黑板重建都经 currentExpandedBounds 还原，
+ * 换屏/分辨率变化时由 clampBoardRect 夹回工作区（不会丢到屏幕外）。
+ */
+let boardRectOverride: Rect | null = null
+/**
+ * 黑板窗在通用无边框引擎里的注册句柄（窗口重建/销毁时 detach）。
+ * 拖动/缩放、请求值 bounds 记账、工作区夹取都由 `window/frameless` 统一负责。
+ */
+let boardDetach: (() => void) | null = null
 /** 操作序列号：每次 enter/exit/fold/unfold 自增；动画后用它判断本操作是否仍有效 */
 let opSeq = 0
 /** 本次教学会话内的黑板重建计数（enter 时清零） */
@@ -132,9 +149,37 @@ function boardWorkArea(): Rect {
   return petWorkArea()
 }
 
-/** 展开态当前目标矩形（含用户拖过的宽度记忆；enter/unfold/重建三处统一入口） */
+/**
+ * 展开态当前目标矩形（含用户拖动过的形态记忆；enter/unfold/重建三处统一入口）。
+ * 有记忆 → 夹回当前工作区（换屏/分辨率变化后仍可见）；无记忆 → 默认布局。
+ */
 function currentExpandedBounds(wa: Rect): Rect {
-  return expandedBounds(wa, boardWidthOverride ?? undefined)
+  return boardRectOverride ? clampBoardRect(boardRectOverride, wa) : expandedBounds(wa)
+}
+
+/** 讲台位跟随：黑板的左下角变了（拖边/移位）→ 宠物同帧 setBounds 跟手（尺寸用设计常量） */
+function followPodium(boardRect: Rect): void {
+  const pet = petWin
+  if (!pet || pet.isDestroyed() || !pet.isVisible()) return
+  const p = podiumPoint(boardRect)
+  // 尺寸用设计常量：拖动高频触发，回喂 getBounds 的舍入宽高会让宠物窗每次 +1px
+  // （见 window/index.ts PET_WINDOW_SIZE）
+  pet.setBounds({
+    x: p.x,
+    y: p.y,
+    width: PET_WINDOW_SIZE.width,
+    height: PET_WINDOW_SIZE.height
+  })
+}
+
+/** 写黑板 bounds 的唯一收口（委托通用无边框引擎：请求值记账 + setBounds） */
+function applyBoardBounds(win: BrowserWindow, next: Rect): void {
+  applyFramelessBounds(win, next)
+}
+
+/** 读黑板当前**请求** bounds（委托通用引擎；不直接读 getBounds 的舍入宽高） */
+function readBoardBounds(win: BrowserWindow): Rect {
+  return framelessBounds(win)
 }
 
 /**
@@ -184,7 +229,7 @@ function buildPayload(reason: string): TeachingStatePayload {
   }
   if (mode === 'expanded' && boardWin && !boardWin.isDestroyed()) {
     // 讲台位 = 黑板窗左下角外侧（2026-10-16 定稿）；黑板不可用时不发（渲染侧"无 podium 不走位"）
-    payload.podium = podiumPoint(boardWin.getBounds())
+    payload.podium = podiumPoint(readBoardBounds(boardWin))
   }
   return payload
 }
@@ -245,11 +290,11 @@ function animateBoard(to: Rect, durationMs: number): Promise<void> {
   const win = boardWin
   if (!win || win.isDestroyed()) return Promise.resolve()
   const seq = ++animSeq
-  const from = win.getBounds()
+  const from = readBoardBounds(win)
   const same =
     from.x === to.x && from.y === to.y && from.width === to.width && from.height === to.height
   if (durationMs <= 0 || same) {
-    win.setBounds(to)
+    applyBoardBounds(win, to)
     return Promise.resolve()
   }
   return new Promise((resolve) => {
@@ -262,7 +307,7 @@ function animateBoard(to: Rect, durationMs: number): Promise<void> {
       }
       const p = Math.min(1, (Date.now() - t0) / durationMs)
       const e = easeInOutQuad(p)
-      win.setBounds({
+      applyBoardBounds(win, {
         x: Math.round(from.x + (to.x - from.x) * e),
         y: Math.round(from.y + (to.y - from.y) * e),
         width: Math.round(from.width + (to.width - from.width) * e),
@@ -311,6 +356,23 @@ function createBoardWindow(initial: Rect): BrowserWindow {
       nodeIntegration: false,
       // 板书流式渲染期间不能被离屏节流（同宠物窗）
       backgroundThrottling: false
+    }
+  })
+
+  // 纳入通用无边框引擎（请求值记账 + 四边/四角缩放 + 标题栏拖动）：
+  // - canInteract：仅展开态接受用户手势（折叠/退出等状态下的拖动忽略）；
+  // - onBoundsChanged：只由**用户手势**触发（动画走 applyBoardBounds，不覆盖形态记忆），
+  //   写本次运行的形态记忆并让宠物同帧跟到讲台位。
+  boardDetach?.()
+  boardDetach = attachFrameless(win, {
+    initialBounds: initial,
+    minWidth: BOARD_MIN_WIDTH,
+    minHeight: BOARD_MIN_HEIGHT,
+    edgeMargin: BOARD_EDGE_MARGIN,
+    canInteract: () => mode === 'expanded',
+    onBoundsChanged: (rect) => {
+      boardRectOverride = rect
+      followPodium(rect)
     }
   })
 
@@ -386,6 +448,8 @@ function destroyBoardWindow(): void {
   boardWin = null
   boardReady = false
   pendingInbox = []
+  boardDetach?.()
+  boardDetach = null
   if (win && !win.isDestroyed()) win.destroy()
 }
 
@@ -474,7 +538,7 @@ export async function enterTeaching(reason: TeachingEnterReason): Promise<void> 
     // 防御：极端时序下残留的旧黑板先清掉（正常路径此处应为 null）
     if (boardWin && !boardWin.isDestroyed()) destroyBoardWindow()
     const board = ensureBoardWindow(wa, target)
-    board.setBounds(offscreenRight(wa, target))
+    applyBoardBounds(board, offscreenRight(wa, target))
     board.showInactive()
     await animateBoard(target, SLIDE_MS)
     if (seq !== opSeq) return // 滑入期间被 exit 等接管：不广播陈旧状态
@@ -546,7 +610,7 @@ export async function exitTeaching(reason: string): Promise<void> {
     return
   }
   sendInbox({ type: 'visibility', action: 'exit' })
-  await animateBoard(offscreenRight(boardWorkArea(), board.getBounds()), SLIDE_MS)
+  await animateBoard(offscreenRight(boardWorkArea(), readBoardBounds(board)), SLIDE_MS)
   // 滑出期间被新 enter 接管：让新操作独占黑板，不做销毁、不回位、不广播陈旧 normal
   if (seq !== opSeq) return
   destroyBoardWindow()
@@ -610,35 +674,9 @@ export function initTeaching(pet: BrowserWindow): void {
     foldBoardByDrag()
   })
 
-  // 黑板左缘拖动改宽（黑板面，2026-10-16 用户定稿）：夹取范围 → 黑板 setBounds（**右缘固定**）
-  // → 宠物（展开态在位时）**同帧跟随**（直接 setBounds 跟手，不播动画；渲染侧 geo 自读窗口位置）
-  ipcMain.on(IPC.TEACHING_BOARD_RESIZE, (event, width: unknown) => {
-    if (!isBoardSender(event.sender)) return
-    const w = boardWin
-    if (!w || w.isDestroyed() || mode !== 'expanded') return
-    const target = typeof width === 'number' && Number.isFinite(width) ? width : 0
-    const cur = w.getBounds()
-    const right = cur.x + cur.width // 右缘固定（拖动中恒等）
-    const wa = petWorkArea()
-    const maxW = Math.max(BOARD_MIN_WIDTH, right - wa.x - 10) // 左缘至少留 10px 在工作区内
-    const newW = Math.round(Math.min(Math.max(target, BOARD_MIN_WIDTH), maxW))
-    if (newW === cur.width) return
-    boardWidthOverride = newW // 宽度记忆（下次进教学沿用）
-    const next = { x: right - newW, y: cur.y, width: newW, height: cur.height }
-    w.setBounds(next)
-    const pet = petWin
-    if (pet && !pet.isDestroyed() && pet.isVisible()) {
-      const p = podiumPoint(next)
-      // 尺寸用设计常量（黑板拖动改宽会高频触发；回喂 getBounds 的舍入宽高会让宠物窗
-      // 每次 +1px，见 window/index.ts PET_WINDOW_SIZE）
-      pet.setBounds({
-        x: p.x,
-        y: p.y,
-        width: PET_WINDOW_SIZE.width,
-        height: PET_WINDOW_SIZE.height
-      })
-    }
-  })
+  // 黑板四边/四角缩放与标题栏拖动已迁到通用无边框引擎（electron/window/frameless.ts）：
+  // 黑板在 createBoardWindow 时 attachFrameless，渲染侧经 bridge.frameless.move/resize 上报。
+  // 形态记忆与讲台跟随由 onBoundsChanged 回调完成（见 createBoardWindow）。
 
   ipcMain.handle(IPC.TEACHING_GET_STATE, () => buildPayload('query'))
 

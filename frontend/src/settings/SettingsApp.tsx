@@ -6,6 +6,7 @@
  * 「记忆本」面板自带 WS 连接与数据流（useNotebookController），不混入配置保存状态。
  */
 import { useEffect, useState, type ReactElement } from 'react'
+import { Button, NavList, Sidebar, Toolbar } from '../shared/ui'
 import { useSettingsController, type SettingsController } from './hooks/useSettingsController'
 import LlmPanel from './panels/LlmPanel'
 import SearchPanel from './panels/SearchPanel'
@@ -140,7 +141,7 @@ export default function SettingsApp(): ReactElement {
   const canSave = ctrl.dirty && !ctrl.saving && ctrl.connection === 'connected'
 
   return (
-    <div className="settings-root">
+    <div className="pui-app settings-root">
       {ctrl.guideMode ? (
         <div className="set-welcome" data-testid="guide-welcome">
           <span className="set-welcome-text">
@@ -161,38 +162,27 @@ export default function SettingsApp(): ReactElement {
         </div>
       ) : null}
       <div className="settings-main">
-        <nav className="settings-nav" aria-label="设置分区">
-          <div className="settings-nav-title">设置</div>
-          {PANELS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={`settings-nav-item${tab === p.id ? ' active' : ''}`}
-              aria-current={tab === p.id ? 'page' : undefined}
-              onClick={() => setTab(p.id)}
-            >
-              {p.label}
-            </button>
-          ))}
-        </nav>
-        <div className="settings-content" data-testid="settings-content">
+        <Sidebar title="设置" className="settings-nav">
+          <NavList items={PANELS} value={tab} onChange={setTab} ariaLabel="设置分区" />
+        </Sidebar>
+        <div className="settings-content pui-scroll" data-testid="settings-content">
           {panel}
         </div>
       </div>
-      <footer className="settings-footer">
+      <Toolbar align="between" className="settings-footer">
         <span className={`set-status set-status-${status.kind}`} data-testid="settings-status">
           {status.text}
         </span>
-        <button
-          type="button"
-          className="set-btn-primary"
+        <Button
+          variant="primary"
           data-testid="settings-save"
           disabled={!canSave}
+          loading={ctrl.saving}
           onClick={ctrl.save}
         >
           {ctrl.saving ? '保存中…' : '保存'}
-        </button>
-      </footer>
+        </Button>
+      </Toolbar>
     </div>
   )
 }

@@ -7,6 +7,7 @@
  * ========================================================================= */
 
 @import '../shared/theme/theme.css';
+@import '../shared/ui/ui.css';
 
 html,
 body,
@@ -17,7 +18,7 @@ body,
   height: 100%;
   background: transparent;
   overflow: hidden;
-  font-family: system-ui, 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif;
+  font-family: var(--ui-font-sans);
   color: var(--ui-fg);
 }
 
@@ -27,100 +28,35 @@ body,
   height: 100vh;
 }
 
-/* ---------------------------------------------------------------- 板体（展开态） */
+/* ---------------------------------------------------------------- 顶栏（展开态） */
 
-.board-body {
-  position: absolute;
-  inset: 0;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  background: var(--board-bg);
-  border: 1px solid var(--ui-border-soft);
-  border-radius: 20px;
-  overflow: hidden;
-  box-shadow: var(--ui-shadow);
-}
-
-/* 顶栏：小标题 + 右上角 ×（下课） */
-.board-header {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+/* 板体表面（圆角/底色/阴影）由套件 .pui-window-board 提供；这里只保留黑板专属尺寸 */
+.board-titlebar {
+  min-height: 0;
   padding: 10px 12px 10px 20px;
-  border-bottom: 1px solid var(--ui-border-soft);
 }
-
-.board-title {
-  font-size: 12px;
-  letter-spacing: 0.32em;
-  color: var(--ui-fg-dim);
-  user-select: none;
-}
-
+/* 下课按钮：尺寸比套件默认图标按钮略大（保留原观感） */
 .board-close {
-  flex: none;
   width: 28px;
   height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ui-fg-dim);
   font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
 }
 
-.board-close:hover {
-  background: var(--ui-hover);
-  color: var(--ui-danger);
-}
-
-/* 内容滚动区 */
+/* 内容滚动区（滚动条样式由套件的 .pui-scroll 提供） */
 .board-scroll {
   flex: 1 1 auto;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 6px 24px 22px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ui-scrollbar) transparent;
   scroll-behavior: auto;
 }
 
-.board-scroll::-webkit-scrollbar {
-  width: 8px;
-}
-
-.board-scroll::-webkit-scrollbar-thumb {
-  background: var(--ui-scrollbar);
-  border-radius: 4px;
-}
-
-.board-scroll::-webkit-scrollbar-thumb:hover {
-  background: var(--ui-scrollbar);
-}
-
-/* 空板欢迎态 */
-.board-empty {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  color: var(--ui-fg-dim);
-  user-select: none;
-}
-
-.board-empty-emoji {
-  font-size: 30px;
+/* 空板欢迎态：套件 EmptyState + 黑板专属光晕/字号 */
+.board-scroll .pui-empty-icon {
   filter: drop-shadow(0 0 14px rgba(167, 139, 250, 0.55));
 }
 
-.board-empty-text {
+.board-scroll .pui-empty-title {
   font-size: 14px;
   letter-spacing: 0.06em;
 }
@@ -398,51 +334,23 @@ body,
   background: var(--ui-panel-faint);
 }
 
+/* 输入框/发送按钮：套件基础样式 + 黑板输入条专属尺寸（比设置页输入更宽松） */
 .board-input {
   flex: 1 1 auto;
+  width: auto;
   min-width: 0;
-  box-sizing: border-box;
   padding: 9px 13px;
-  border: 1px solid var(--ui-input-border);
-  border-radius: 10px;
-  background: var(--ui-input-bg);
-  color: var(--ui-fg);
-  font-size: 14px;
-  font-family: inherit;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.board-input::placeholder {
-  color: var(--ui-fg-faint);
-}
-
-.board-input:focus {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-accent-soft);
+  font-size: var(--ui-font-size-lg);
 }
 
 .board-send {
-  flex: none;
   padding: 0 16px;
-  border: none;
-  border-radius: 10px;
-  background: var(--ui-accent);
-  color: var(--ui-accent-fg);
+  border-color: var(--ui-accent);
   font-size: 13.5px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
-}
-
-.board-send:hover:not(:disabled) {
-  background: var(--ui-accent-strong);
 }
 
 .board-send:disabled {
   opacity: 0.38;
-  cursor: default;
 }
 
 /* ---------------------------------------------------------------- 折叠态角标（窗口 24×140，页面铺满） */
@@ -558,41 +466,4 @@ body,
   font-weight: 600;
 }
 
-/* ---------------------------------------------------------------- 左缘拖动热区（改宽度，2026-10-16） */
-
-/*
- * 黑板左缘 10px 全高热区：cursor 变 w-resize 提示可拖；hover 时淡入一条细高亮条
- * （灵动不生硬——不常显、鼠标靠近才浮现）。仅展开态渲染（折叠态角标视图不含本元素）。
- * 拖动跟手由主进程完成（右缘固定 + 宠物同帧跟随），本元素只管"起手"。
- */
-.board-resize-handle {
-  position: fixed;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 10px;
-  cursor: w-resize;
-  z-index: 50;
-  /* 圆角内收：板体圆角 20——热区顶部/底部略收避免盖住圆角外区域 */
-  border-radius: 20px 0 0 20px;
-  user-select: none;
-  touch-action: none;
-}
-
-.board-resize-handle::after {
-  content: '';
-  position: absolute;
-  left: 1px;
-  top: 18px;
-  bottom: 18px;
-  width: 3px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--ui-fg) 32%, transparent);
-  opacity: 0;
-  transition: opacity 0.18s ease;
-  pointer-events: none;
-}
-
-.board-resize-handle:hover::after {
-  opacity: 1;
-}
+/* 四边/四角缩放热区：由套件 .pui-resize-*（WindowResizeHandles）提供，本文件不再重复定义 */

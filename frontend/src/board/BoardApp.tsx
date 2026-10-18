@@ -16,9 +16,20 @@
  * 折叠 ≠ 下课：折叠前记录滚动锚点，展开且内容未变时原位恢复。
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { KeyboardEvent } from 'react'
 import { getPetBridge } from '../shared/pet-bridge'
 import type { PetBridgeApi, TeachingBoardInbox, TeachingMirrorEvent } from '../../electron/ipc/channels'
+import {
+  Button,
+  EmptyState,
+  IconButton,
+  Input,
+  WindowFrame,
+  WindowResizeHandles,
+  WindowTitleBar,
+  useFramelessMove,
+  useFramelessResize
+} from '../shared/ui'
 import { renderMarkdownSafe } from './markdown'
 
 // ------------------------------------------------------------------ bridge 容错访问
@@ -357,31 +368,13 @@ export default function BoardApp(): JSX.Element {
     teaching()?.requestUnfold?.()
   }
 
-  /**
-   * 黑板左缘拖动改宽（2026-10-16 用户定稿）：往左拖变宽，**右缘固定**（主进程保证）。
-   * 用"鼠标 screenX 的位移"算目标宽度（不读窗口位置——拖动中本窗左缘正跟着鼠标走、
-   * screenX 异步更新不可靠）；拖动中每事件上报，主进程 setBounds + 宠物同帧跟随即"跟手"。
-   */
-  const onResizeStart = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    const t = teaching()
-    if (!t?.resizeBoard) return
-    e.preventDefault()
-    const startMouseX = e.screenX
-    const startWidth = window.innerWidth
-    const onMove = (ev: PointerEvent): void => {
-      // 往左拖（screenX 变小）→ 宽度变大 → 左缘左移 ✓
-      t.resizeBoard(startWidth + (startMouseX - ev.screenX))
-    }
-    const onUp = (): void => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }
+  // 窗口拖动/缩放（2026-10-18 套件统一实现）：手势换算与 IPC 在 shared/ui hooks，
+  // 夹取范围、请求值记账、形态记忆与宠物讲台跟随在主进程 window/frameless。
+  const { onPointerDown: onTitleBarPointerDown } = useFramelessMove()
+  const { onResizeStart } = useFramelessResize()
 
   return (
-    <div className="board-root">
+    <WindowFrame variant={folded ? 'plain' : 'board'} className="board-root">
       {folded ? (
         // 折叠角标：div[role=button]（刻意不用 <button>——Chromium 131 之前 button 不能作为
         // flex 容器布局子元素，Electron 33（Chromium 130）下图标与竖排文字会横排/塌陷；
@@ -403,34 +396,29 @@ export default function BoardApp(): JSX.Element {
           <span className="board-badge-label">板书</span>
         </div>
       ) : (
-        <div className="board-body">
-          {/* 左缘拖动热区（改黑板宽度；仅展开态渲染——折叠态不渲染）：主进程夹取范围 + 宠物同帧跟随 */}
-          <div
-            className="board-resize-handle"
-            role="separator"
-            aria-label="拖动调整黑板宽度"
-            onPointerDown={onResizeStart}
+        <>
+          {/* 四边/四角改尺寸热区（仅展开态渲染）：通用引擎夹取范围 + 未拖的边固定 + 宠物同帧跟随 */}
+          <WindowResizeHandles onResizeStart={onResizeStart} />
+          {/* 标题栏 = 窗口拖动区（拖动移动黑板；右上角 × 不参与——hook 默认忽略 button） */}
+          <WindowTitleBar
+            className="board-titlebar"
+            title="板书"
+            dragHandlers={{ onPointerDown: onTitleBarPointerDown }}
+            actions={
+              <IconButton
+                danger
+                className="board-close"
+                label="下课（结束教学）"
+                onClick={() => teaching()?.exit?.()}
+              >
+                ×
+              </IconButton>
+            }
           />
-          <header className="board-header">
-            <span className="board-title">板书</span>
-            <button
-              type="button"
-              className="board-close"
-              title="下课（结束教学）"
-              onClick={() => teaching()?.exit?.()}
-            >
-              ×
-            </button>
-          </header>
 
-          <div className="board-scroll" ref={scrollRef} onScroll={updateNearBottom}>
+          <div className="board-scroll pui-scroll" ref={scrollRef} onScroll={updateNearBottom}>
             {items.length === 0 ? (
-              <div className="board-empty">
-                <div className="board-empty-emoji" aria-hidden="true">
-                  ✨
-                </div>
-                <div className="board-empty-text">问我点什么吧，我来讲解</div>
-              </div>
+              <EmptyState fill icon="✨" title="问我点什么吧，我来讲解" />
             ) : (
               items.map((it) =>
                 it.kind === 'question' ? (
@@ -443,23 +431,25 @@ export default function BoardApp(): JSX.Element {
           </div>
 
           <footer className="board-composer">
-            <input
+            <Input
               className="board-input"
-              type="text"
               value={draft}
               placeholder="问点什么…"
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(e) => setDraft(e.target.value)}
+              onValueChange={setDraft}
               onKeyDown={onInputKeyDown}
             />
-            <button type="button" className="board-send" disabled={!draft.trim()} onClick={submit}>
+            <Button
+              variant="primary"
+              className="board-send"
+              disabled={!draft.trim()}
+              onClick={submit}
+            >
               发送
-            </button>
+            </Button>
           </footer>
-        </div>
+        </>
       )}
-    </div>
+    </WindowFrame>
   )
 }
 

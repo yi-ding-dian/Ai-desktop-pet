@@ -183,7 +183,7 @@ body,
 }
 
 .chat-notice-warn {
-  color: var(--ui-warm, #e6a23c);
+  color: var(--ui-warm);
 }
 
 .chat-notice-error {

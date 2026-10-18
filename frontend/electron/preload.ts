@@ -22,6 +22,8 @@ import {
   type BallAnimationCommand,
   type BallAnimationPetReactionPayload,
   type DeletePathResult,
+  type FramelessMovePayload,
+  type FramelessResizePayload,
   type OpenResult,
   type PetBridgeApi,
   type PetSayLinePayload,
@@ -123,6 +125,18 @@ const api: PetBridgeApi = {
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.PET_POINTER_POS, listener)
       }
+    }
+  },
+
+  // 无边框窗口通用拖动/缩放（shared/ui 的 WindowTitleBar / WindowResizeHandles 调用；
+  // 仅 attachFrameless 注册过的窗口生效）
+  frameless: {
+    move(payload: FramelessMovePayload): void {
+      ipcRenderer.send(IPC.WINDOW_CHROME_MOVE, payload)
+    },
+
+    resize(payload: FramelessResizePayload): void {
+      ipcRenderer.send(IPC.WINDOW_CHROME_RESIZE, payload)
     }
   },
 
@@ -237,10 +251,6 @@ const api: PetBridgeApi = {
 
     requestSend(text: string): void {
       ipcRenderer.send(IPC.TEACHING_REQUEST_SEND, text)
-    },
-
-    resizeBoard(width: number): void {
-      ipcRenderer.send(IPC.TEACHING_BOARD_RESIZE, width)
     },
 
     onSendRequest(cb: (payload: { text: string }) => void): () => void {

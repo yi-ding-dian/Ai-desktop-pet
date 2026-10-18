@@ -1,8 +1,10 @@
 /**
- * 设置页表单原语（settings 域 components 层）：受控、无业务逻辑，供各分区复用。
- * 视觉全部走 settings.css 的 .set-* 类（消费 shared/theme 变量）。
+ * 设置页表单原语（settings 域 components 层）：**薄封装 shared/ui 套件**。
+ * 对外导出与属性保持不变，各分区无需感知套件类名；视觉/交互统一由套件维护
+ * （.pui-field / .pui-input / .pui-select / .pui-switch）。
  */
 import type { ReactElement, ReactNode } from 'react'
+import { Field as UiField, Input, Select, SwitchRow as UiSwitchRow } from '../../shared/ui'
 
 interface FieldProps {
   label: string
@@ -16,12 +18,9 @@ interface FieldProps {
 /** 字段块：标签 + 控件 + 说明/错误 */
 export function Field({ label, hint, error, children }: FieldProps): ReactElement {
   return (
-    <div className="set-field">
-      <span className="set-field-label">{label}</span>
+    <UiField label={label} hint={hint} error={error}>
       {children}
-      {hint ? <span className="set-field-hint">{hint}</span> : null}
-      {error ? <span className="set-field-error">{error}</span> : null}
-    </div>
+    </UiField>
   )
 }
 
@@ -50,18 +49,15 @@ export function TextField({
   step
 }: TextFieldProps): ReactElement {
   return (
-    <input
-      className="set-input"
-      type={type}
+    <Input
       value={value}
+      onValueChange={onValueChange}
       placeholder={placeholder}
+      type={type}
       disabled={disabled}
       min={min}
       max={max}
       step={step}
-      spellCheck={false}
-      autoComplete="off"
-      onChange={(e) => onValueChange(e.target.value)}
     />
   )
 }
@@ -76,18 +72,7 @@ interface SelectFieldProps {
 /** 下拉框（受控） */
 export function SelectField({ value, onValueChange, options, disabled }: SelectFieldProps): ReactElement {
   return (
-    <select
-      className="set-input set-select"
-      value={value}
-      disabled={disabled}
-      onChange={(e) => onValueChange(e.target.value)}
-    >
-      {options.map((opt) => (
-        <option key={opt.value} value={opt.value}>
-          {opt.label}
-        </option>
-      ))}
-    </select>
+    <Select value={value} onValueChange={onValueChange} options={options} disabled={disabled} />
   )
 }
 
@@ -100,24 +85,20 @@ interface SwitchRowProps {
 }
 
 /** 开关行：说明在左、拨动开关在右 */
-export function SwitchRow({ label, hint, checked, onCheckedChange, disabled }: SwitchRowProps): ReactElement {
+export function SwitchRow({
+  label,
+  hint,
+  checked,
+  onCheckedChange,
+  disabled
+}: SwitchRowProps): ReactElement {
   return (
-    <div className={`set-switch-row${disabled ? ' set-disabled' : ''}`}>
-      <span className="set-switch-text">
-        <span className="set-field-label">{label}</span>
-        {hint ? <span className="set-field-hint">{hint}</span> : null}
-      </span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        aria-label={label}
-        className={`set-switch${checked ? ' set-switch-on' : ''}`}
-        disabled={disabled}
-        onClick={() => onCheckedChange(!checked)}
-      >
-        <span className="set-switch-knob" />
-      </button>
-    </div>
+    <UiSwitchRow
+      label={label}
+      hint={hint}
+      checked={checked}
+      onCheckedChange={onCheckedChange}
+      disabled={disabled}
+    />
   )
 }

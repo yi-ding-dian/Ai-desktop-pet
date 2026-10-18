@@ -27,6 +27,10 @@ export const IPC = {
   WINDOW_GET_GEOMETRY: 'window:get-geometry',
   /** 查询宠物窗是否可见（invoke → boolean；提醒在隐藏时转系统通知，2026-10-18） */
   WINDOW_IS_VISIBLE: 'window:is-visible',
+  /** 无边框窗口：标题栏拖动移位（payload: FramelessMovePayload；start/move/end 三阶段） */
+  WINDOW_CHROME_MOVE: 'window:chrome-move',
+  /** 无边框窗口：四边/四角拖动改尺寸（payload: FramelessResizePayload；只动被拖的边） */
+  WINDOW_CHROME_RESIZE: 'window:chrome-resize',
   /** 查询系统空闲秒数（invoke → number；powerMonitor.getSystemIdleTime） */
   SYSTEM_GET_IDLE_SECONDS: 'system:get-idle-seconds',
   /** 显示系统通知（payload: {title, body}；提醒在宠物隐藏/教学/向导中补发，2026-10-18） */
@@ -57,8 +61,6 @@ export const IPC = {
   TEACHING_REQUEST_UNFOLD: 'teaching:request-unfold',
   /** 教学模式：黑板渲染就绪（主进程收到后下发首批数据） */
   TEACHING_READY: 'teaching:ready',
-  /** 教学模式：黑板左缘拖动改宽（payload: number 目标宽度px；主进程夹取范围 → 黑板 setBounds（右缘固定）+ 宠物同帧跟随；仅展开态有效） */
-  TEACHING_BOARD_RESIZE: 'teaching:board-resize',
   /** 教学模式：查询状态（invoke → TeachingStatePayload） */
   TEACHING_GET_STATE: 'teaching:get-state',
   /** 空气让路（§5.1 增补）：渲染侧回报光标处命中判定（payload: {solid: boolean}；false=空气 → 主进程输入让路） */
@@ -422,6 +424,7 @@ export type TeachingBoardInbox =
   /** expand = 卷出恢复；fold = 折叠成角标；exit = 退出教学模式（滑出收起） */
   | { type: 'visibility'; action: 'expand' | 'fold' | 'exit' }
 
+
 // ------------------------------------------------------------------ 设置向导宠物（P4，设计文档 §7.6.6）与自绘托盘菜单（§7.6.4）
 
 /** 设置窗显示状态（主 → 宠物窗；驱动向导 UI——飞位动画由主进程 ball-animation 域编排，宠物面只做响应） */
@@ -461,6 +464,30 @@ export interface BackendSnapshot extends BackendStatusPayload {
   token?: string
   pid?: number
   appVersion: string
+}
+
+/**
+ * 无边框窗口拖动移位（渲染 → 主）：start 时主进程快照窗口矩形，
+ * move 携带**相对手势起点**的累计位移（每帧都是绝对值，不累积误差），end 收尾。
+ */
+export interface FramelessMovePayload {
+  phase: 'start' | 'move' | 'end'
+  /** 相对手势起点的累计位移（DIP）；phase=start/end 时可为 0 */
+  dx: number
+  dy: number
+}
+
+/**
+ * 无边框窗口拖动改尺寸（渲染 → 主）：只改**拖动的边**，对边固定。
+ * 渲染侧用 pointerdown 时的 innerWidth/innerHeight 加鼠标位移算出目标尺寸。
+ */
+export interface FramelessResizePayload {
+  width: number
+  height: number
+  left: boolean
+  right: boolean
+  top: boolean
+  bottom: boolean
 }
 
 /** 窗口调试状态快照（渲染侧状态栏展示） */
@@ -548,6 +575,17 @@ export interface PetBridgeApi {
     /** 空气让路：订阅主进程推送的光标窗口内坐标（仅让路态轮询推送；null=光标不在窗口内）；返回取消订阅函数 */
     onPointerPos(cb: (pos: { x: number; y: number } | null) => void): () => void
   }
+  /**
+   * 无边框窗口通用拖动/缩放（2026-10-18 窗口 UI 套件）：
+   * 只有主进程 `attachFrameless` 注册过的窗口（当前为黑板）生效；未注册窗口的调用被忽略。
+   * 视觉热区/标题栏由 shared/ui 的 WindowTitleBar / WindowResizeHandles 提供。
+   */
+  frameless: {
+    /** 标题栏拖动移位（start → move* → end） */
+    move(payload: FramelessMovePayload): void
+    /** 四边/四角拖动改尺寸（拖动中高频上报目标尺寸 + 拖动的边） */
+    resize(payload: FramelessResizePayload): void
+  }
   /** 系统状态（env_update 上报依据） */
   system: {
     /** 系统空闲秒数（用户多久没有键鼠操作） */
@@ -611,8 +649,6 @@ export interface PetBridgeApi {
     notifyDragStart(): void
     /** 黑板面：输入条发送（主进程路由给宠物窗口执行 WS 发送） */
     requestSend(text: string): void
-    /** 黑板面：左缘拖动改宽（拖动中高频上报目标宽度；主进程夹取范围、右缘固定、宠物同帧跟随） */
-    resizeBoard(width: number): void
     /** 宠物面：订阅"黑板输入条发送请求"（黑板打字 → 主进程路由 → 宠物面执行 WS 发送）；返回取消订阅函数 */
     onSendRequest(cb: (payload: { text: string }) => void): () => void
     /** 黑板面：角标点击请求恢复展开 */

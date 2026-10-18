@@ -107,8 +107,6 @@ export const THEME_VAR_KEYS: readonly string[] = [
   '--ui-code-fg',
   '--chat-user-bg',
   '--chat-user-fg',
-  '--chat-assistant-bg',
-  '--chat-assistant-fg',
   '--chat-error-bg',
   '--chat-error-fg',
   '--chat-input-bg',
@@ -181,8 +179,6 @@ export function deriveThemeVars(colors: ThemeColors): Record<string, string> {
     // —— 聊天（宠物窗气泡；按基调固定观感，不随预设微调） ——
     '--chat-user-bg': dark ? 'rgba(64, 158, 255, 0.92)' : 'rgba(37, 99, 235, 0.95)',
     '--chat-user-fg': '#ffffff',
-    '--chat-assistant-bg': dark ? 'rgba(255, 255, 255, 0.92)' : '#ffffff',
-    '--chat-assistant-fg': dark ? '#222222' : text,
     '--chat-error-bg': dark ? 'rgba(220, 80, 80, 0.94)' : 'rgba(203, 54, 54, 0.95)',
     '--chat-error-fg': '#ffffff',
     '--chat-input-bg': dark ? 'rgba(255, 255, 255, 0.92)' : '#ffffff',

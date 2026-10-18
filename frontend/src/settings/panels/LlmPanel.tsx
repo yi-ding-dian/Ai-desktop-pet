@@ -12,6 +12,7 @@
  * - 引导模式（guide）：服务商字段高亮提示（"① 选择服务商"）。
  */
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import { Button } from '../../shared/ui'
 import Section from '../components/section'
 import { Field, SelectField, TextField } from '../components/fields'
 import { findProvider, LLM_PROVIDER_PRESETS, matchProviderId } from '../form/llm-providers'
@@ -136,47 +137,43 @@ export default function LlmPanel({
         }
       >
         {editingKey ? (
-          <div className="set-row">
+          <div className="pui-row">
             <TextField
               type="password"
               value={form.llmKeyInput}
               onValueChange={(v) => setField('llmKeyInput', v)}
               placeholder="输入新的 API Key（sk-…）"
             />
-            <button
-              type="button"
-              className="set-btn"
+            <Button
               onClick={() => {
                 setEditingKey(false)
                 setField('llmKeyInput', '')
               }}
             >
               取消
-            </button>
+            </Button>
           </div>
         ) : (
-          <div className="set-row">
-            <span className="set-key-mask" title="已保存的 Key（掩码展示）">
+          <div className="pui-row">
+            <span className="pui-input-static" title="已保存的 Key（掩码展示）">
               {form.llmKeyMasked || '（未配置）'}
             </span>
-            <button
-              type="button"
-              className="set-btn"
+            <Button
               onClick={() => {
                 setEditingKey(true)
                 setField('llmKeyInput', '')
               }}
             >
               更新
-            </button>
+            </Button>
           </div>
         )}
       </Field>
 
-      <div className="set-row set-row-top">
-        <button type="button" className="set-btn" onClick={onTest} disabled={testing}>
+      <div className="pui-row pui-row-top">
+        <Button onClick={onTest} disabled={testing}>
           {testing ? '测试中…' : '测试连接'}
-        </button>
+        </Button>
         {testResult ? (
           <span className={`set-test-result ${testResult.ok ? 'ok' : 'fail'}`}>
             {testResult.ok ? '✅ ' : '❌ '}
