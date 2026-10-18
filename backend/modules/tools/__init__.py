@@ -9,7 +9,13 @@
 """
 
 from backend.modules.tools.builtin import build_default_registry
-from backend.modules.tools.directives import match_directive
+from backend.modules.tools.directives import match_directive, match_forced_tool
 from backend.modules.tools.registry import ToolRegistry, ToolSpec
 
-__all__ = ["ToolRegistry", "ToolSpec", "build_default_registry", "match_directive"]
+__all__ = [
+    "ToolRegistry",
+    "ToolSpec",
+    "build_default_registry",
+    "match_directive",
+    "match_forced_tool",
+]

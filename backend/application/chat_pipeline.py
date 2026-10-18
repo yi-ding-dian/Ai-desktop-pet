@@ -71,7 +71,12 @@ from backend.modules.files import (
 from backend.modules.llm.prompts import build_system_prompt
 from backend.modules.llm.provider import ChatMessage, LLMProvider
 from backend.modules.memory.format import build_memory_block
-from backend.modules.tools import ToolRegistry, ToolSpec, match_directive
+from backend.modules.tools import (
+    ToolRegistry,
+    ToolSpec,
+    match_directive,
+    match_forced_tool,
+)
 from backend.modules.voice.splitter import SentenceSplitter
 from backend.shared.errors import LlmError, LlmErrorCode
 
@@ -218,6 +223,10 @@ class ChatPipeline:
         # 模型路径在流末解析；tool_acc 为模型分片按 index 的归组累积。
         tool_calls_to_emit: list[tuple[str, str, dict[str, Any]]] = []
         tool_acc: dict[int, dict[str, Any]] = {}
+        #: 本轮强制指定的工具（match_forced_tool；仅提醒意图），用于失败兜底与日志
+        forced_tool: str | None = None
+        #: 强制工具未真正返回（网关忽略 tool_choice）——回复后给用户一条警示 notice
+        forced_tool_missed = False
 
         # 语音链路（仅装配且未降级时启用）：干净文本 → splitter 切句 →
         # sentence 事件 + TTS 串行队列（合成完推二进制帧，§3.5）
@@ -361,9 +370,22 @@ class ChatPipeline:
                     else await self._build_messages(session, user_text=user_text)
                 )
                 use_tools = self._tools is not None and not _tools_unsupported
+                # 提醒意图（动作 + 明确时间）强制 tool_choice：模型偶发“只回一句
+                # 提醒你、不真正调用工具”，用户以为设上了、到点却没有任何提醒
+                # （2026-10-18 真机复现）。强制指定后模型必须返回该工具调用。
+                if use_tools and self._tools is not None:
+                    candidate = match_forced_tool(user_text)
+                    if candidate is not None and self._tools.get(candidate) is not None:
+                        forced_tool = candidate
                 request_opts: dict[str, Any] = {}
                 if use_tools:
                     request_opts["tools"] = self._tools.to_openai_tools()
+                    if forced_tool is not None:
+                        request_opts["tool_choice"] = {
+                            "type": "function",
+                            "function": {"name": forced_tool},
+                        }
+                        logger.info("提醒意图明确，强制调用工具：{}", forced_tool)
 
                 async def consume_stream(**opts: Any) -> None:
                     """消费一次 LLM 流（首次请求与降级重放共用同一实现，防两处走样）。"""
@@ -393,38 +415,72 @@ class ChatPipeline:
                             if delta.arguments:
                                 acc["arguments"] += delta.arguments
 
-                try:
-                    await consume_stream(**request_opts)
-                except LlmError as exc:
-                    if (
+                async def consume_with_fallback() -> LlmError | None:
+                    """首次请求 + 降级重放，返回最终失败（成功返回 None）。
+
+                    降级顺序：
+                    1. LLM_BAD_REQUEST 且本轮无产出：先摘 ``tool_choice`` 保留 tools
+                       （部分网关支持 tools 但不支持强制指定）；
+                    2. 仍被拒：置进程级标记、摘除 tools 重放（旧逻辑）；
+                    3. 重放再败：以第一次错误收尾（对用户更有指向性）。
+                    """
+                    first_error: LlmError | None = None
+                    try:
+                        await consume_stream(**request_opts)
+                        return None
+                    except LlmError as first:
+                        first_error = first
+                        error = first
+                    if not (
                         use_tools
-                        and exc.code == LlmErrorCode.LLM_BAD_REQUEST
+                        and error.code == LlmErrorCode.LLM_BAD_REQUEST
                         and not clean_parts
                         and not tool_acc
                     ):
-                        # 降级（§4.7）：疑似网关/模型不支持 tools——摘除后重放本轮；
-                        # 置进程级标记，后续轮直接不带 tools（快通道不受影响）。
+                        return error
+                    if "tool_choice" in request_opts:
                         logger.warning(
-                            "工具请求被拒（{}），疑似网关/模型不支持 tools；"
-                            "摘除 tools 重放本轮：{}",
-                            exc.code,
-                            exc.message,
+                            "tool_choice 被拒（{}），摘除后保留 tools 重试：{}",
+                            error.code,
+                            error.message,
                         )
-                        _mark_tools_unsupported()
+                        request_opts.pop("tool_choice", None)
                         try:
-                            await consume_stream()  # 重放：不带 tools
+                            await consume_stream(**request_opts)
+                            return None
                         except LlmError as retry_exc:
-                            # 重放再败：以第一次错误收尾（对用户更有指向性）
-                            logger.warning(
-                                "摘除 tools 重放仍失败（{}）：{}",
-                                retry_exc.code,
-                                retry_exc.message,
-                            )
-                            llm_error = exc
-                    else:
-                        # 失败已业务化、已脱敏；先把缓冲收尾，再统一走失败收尾（下方）
-                        llm_error = exc
-                        logger.warning("LLM 请求失败（{}）：{}", exc.code, exc.message)
+                            if not (
+                                retry_exc.code == LlmErrorCode.LLM_BAD_REQUEST
+                                and not clean_parts
+                                and not tool_acc
+                            ):
+                                return retry_exc
+                            error = retry_exc
+                    logger.warning(
+                        "工具请求被拒（{}），疑似网关/模型不支持 tools；"
+                        "摘除 tools 重放本轮：{}",
+                        error.code,
+                        error.message,
+                    )
+                    _mark_tools_unsupported()
+                    request_opts.pop("tools", None)
+                    try:
+                        await consume_stream(**request_opts)
+                        return None
+                    except LlmError as retry_exc:
+                        logger.warning(
+                            "摘除 tools 重放仍失败（{}）：{}",
+                            retry_exc.code,
+                            retry_exc.message,
+                        )
+                        return first_error
+
+                llm_error = await consume_with_fallback()
+                if llm_error is not None:
+                    # 失败已业务化、已脱敏；先把缓冲收尾，再统一走失败收尾（下方）
+                    logger.warning(
+                        "LLM 请求失败（{}）：{}", llm_error.code, llm_error.message
+                    )
 
             # 流结束（含失败）：残留半标签按普通文本吐出（§4.2）
             flushed_emotion = await self._emit(
@@ -438,6 +494,15 @@ class ChatPipeline:
             # 模型只调工具、没产出正文（真机实测会发生）→ 用工具 ack 补一句，
             # 走 token / 分句路径（前端可见、TTS 可播报），避免用户端静默。
             tool_calls_to_emit.extend(self._collect_tool_calls(tool_acc))
+            forced_tool_missed = forced_tool is not None and not any(
+                name == forced_tool for _, name, _ in tool_calls_to_emit
+            )
+            if forced_tool_missed:
+                # 兜底：网关忽略 tool_choice 时，模型可能已经说了“好，提醒你”
+                # 但实际什么也没创建——必须让用户看到真实结果，不能静默失败。
+                logger.warning(
+                    "已强制 tool_choice={}，但模型仍未返回该工具调用", forced_tool
+                )
             # 执行方分流（2026-10-18）：backend 型工具（提醒）在 reply_end 前执行，
             # 结果稍后以确定性 notice 推送；frontend 型（open_settings）保持原样，
             # reply_end 之后经 tool_call 下发。执行结果也决定"无正文时补哪句话"。
@@ -482,6 +547,13 @@ class ChatPipeline:
                     str(result.get("code") or f"{tool_name}_result"),
                     str(result.get("message") or "已经办好啦～"),
                     "info" if result.get("ok") else "warn",
+                )
+            if forced_tool_missed and llm_error is None:
+                await self._send_notice(
+                    sink,
+                    "reminder_tool_missed",
+                    "这条提醒可能没设上：我这边没收到创建指令，再说一次好吗？",
+                    "warn",
                 )
             if llm_error is not None:
                 # 回复先定型，再报错说明原因（前端不会卡在 thinking）

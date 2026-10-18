@@ -24,13 +24,21 @@ export const EDGE_MARGIN = 8
 /** 完整面板最小/最大宽度（px）：头部“铃铛+提醒+时钟+计数”至少要 140，正文最多约 10 个汉字 */
 export const MIN_PANEL_WIDTH = 140
 export const MAX_PANEL_WIDTH = 220
-/** 完整面板最大高度（px；超出由列表内部滚动） */
-export const MAX_PANEL_HEIGHT = 320
+/**
+ * 完整面板最大高度（px；超出由列表内部滚动）。
+ * 480 让时钟视图 7~9 条可一次看全（向下展开、可盖住输入框）；再高内部滚动。
+ */
+export const MAX_PANEL_HEIGHT = 480
 /** 完整面板最小高度（px） */
 export const MIN_PANEL_HEIGHT = 80
 /** 紧凑条尺寸（px） */
 export const COMPACT_WIDTH = 104
 export const COMPACT_HEIGHT = 38
+/** 常驻灰灯小条尺寸（px；无未读、只有待提醒时） */
+export const BELL_ONLY_WIDTH = 104
+export const BELL_ONLY_HEIGHT = 38
+/** 灰灯小条中心距输入框顶边的高度（px；用户截图箭头高度：兔子下半身） */
+export const BELL_ONLY_CENTER_ABOVE_INPUT = 60
 /** 紧凑条判定：某一侧至少要有完整面板最小宽度才尝试完整面板 */
 const FULL_MIN_SPACE = 140
 /**
@@ -64,12 +72,17 @@ function clamp(value: number, lo: number, hi: number): number {
  * @param petBounds 宠物窗屏幕矩形
  * @param content   渲染侧上报的内容尺寸（首帧用预估值）
  * @param workArea  宠物所在显示器的工作区
+ * @param forceFull 紧凑条被点击展开时，即使空间不足也尽量展开
+ * @param anchorTop 非空 = **顶部固定、向下展开**（底部灰灯展开待提醒时）：
+ *   以该屏幕 y 为面板顶边，高度向下生长（可越过输入框顶边，由用户点击别处收回）；
+ *   null = 正常模式（底边踩在输入框上方，向上生长）
  */
 export function computeReminderListPlacement(
   petBounds: Rect,
   content: Size,
   workArea: Rect,
-  forceFull = false
+  forceFull = false,
+  anchorTop: number | null = null
 ): ReminderListPlacement {
   // 贴兔子视觉边缘（宠物窗左右各有透明留白），而不是窗边缘
   const visualLeft = petBounds.x + PET_VISUAL_INSET_X
@@ -94,6 +107,56 @@ export function computeReminderListPlacement(
     Math.min(MIN_PANEL_HEIGHT, heightLimit),
     heightLimit
   )
+
+  // 顶部固定、向下展开（灰灯展开待提醒）：不受“输入框顶边”限制，只夹进工作区。
+  // 展开高度最多 MAX_PANEL_HEIGHT，内容超出由列表内部滚动。
+  if (anchorTop !== null) {
+    // 与灰灯/普通面板同一套选边：右侧放得下完整面板就右侧，否则左侧放得下就左侧
+    const side: ReminderListSide =
+      rightSpace >= FULL_MIN_SPACE
+        ? 'right'
+        : leftSpace >= FULL_MIN_SPACE
+          ? 'left'
+          : rightSpace >= leftSpace
+            ? 'right'
+            : 'left'
+    const space = Math.max(72, side === 'right' ? rightSpace : leftSpace)
+    const width = clamp(fullWidth, Math.min(MIN_PANEL_WIDTH, space), space)
+    const expandedLimit = Math.min(
+      MAX_PANEL_HEIGHT,
+      workArea.height - EDGE_MARGIN * 2
+    )
+    const height = clamp(
+      Math.round(content.height) || MIN_PANEL_HEIGHT,
+      Math.min(MIN_PANEL_HEIGHT, expandedLimit),
+      expandedLimit
+    )
+    const x =
+      side === 'right'
+        ? clamp(
+            visualRight + LIST_GAP,
+            workArea.x + EDGE_MARGIN,
+            workArea.x + workArea.width - width - EDGE_MARGIN
+          )
+        : clamp(
+            visualLeft - LIST_GAP - width,
+            workArea.x + EDGE_MARGIN,
+            workArea.x + workArea.width - width - EDGE_MARGIN
+          )
+    const y = clamp(
+      anchorTop,
+      workArea.y + EDGE_MARGIN,
+      workArea.y + workArea.height - height - EDGE_MARGIN
+    )
+    return {
+      x: Math.round(x),
+      y: Math.round(y),
+      width: Math.round(width),
+      height,
+      side,
+      compact: false
+    }
+  }
 
   const canFullRight = rightSpace >= FULL_MIN_SPACE
   const canFullLeft = leftSpace >= FULL_MIN_SPACE
@@ -147,5 +210,57 @@ export function computeReminderListPlacement(
     height: COMPACT_HEIGHT,
     side,
     compact: true
+  }
+}
+
+/**
+ * 常驻灰灯小条摆放（无未读、但有待提醒时）：
+ * 右侧优先/左侧回退；垂直中心对齐用户截图的箭头高度（兔子下半身、
+ * 输入框上方约 60px），不再贴输入框底边。尺寸固定，不参与面板宽度/高度夹取。
+ * 点击后由宠物面切到 pendingExpanded，本函数让位给完整面板。
+ */
+export function computeReminderBellPlacement(
+  petBounds: Rect,
+  workArea: Rect
+): ReminderListPlacement {
+  const visualLeft = petBounds.x + PET_VISUAL_INSET_X
+  const visualRight = petBounds.x + petBounds.width - PET_VISUAL_INSET_X
+  const rightSpace = workArea.x + workArea.width - visualRight - LIST_GAP - EDGE_MARGIN
+  const leftSpace = visualLeft - workArea.x - LIST_GAP - EDGE_MARGIN
+  // 与完整面板使用同一套选边标准（FULL_MIN_SPACE=140）：灰灯和面板永远同侧，
+  // 不会出现“灰灯在右、点开后面板翻左”。右侧连完整面板都放不下时，灰灯也翻左。
+  const side: ReminderListSide =
+    rightSpace >= FULL_MIN_SPACE
+      ? 'right'
+      : leftSpace >= FULL_MIN_SPACE
+        ? 'left'
+        : rightSpace >= leftSpace
+          ? 'right'
+          : 'left'
+  const width = Math.min(
+    BELL_ONLY_WIDTH,
+    Math.max(72, side === 'right' ? rightSpace : leftSpace)
+  )
+  const x =
+    side === 'right'
+      ? Math.min(
+          visualRight + LIST_GAP,
+          workArea.x + workArea.width - width - EDGE_MARGIN
+        )
+      : Math.max(workArea.x + EDGE_MARGIN, visualLeft - LIST_GAP - width)
+  const centerY =
+    petBounds.y + PET_CHAT_INPUT_TOP_Y - BELL_ONLY_CENTER_ABOVE_INPUT
+  const y = clamp(
+    centerY - BELL_ONLY_HEIGHT / 2,
+    workArea.y + EDGE_MARGIN,
+    workArea.y + workArea.height - BELL_ONLY_HEIGHT - EDGE_MARGIN
+  )
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.round(width),
+    height: BELL_ONLY_HEIGHT,
+    side,
+    compact: false
   }
 }

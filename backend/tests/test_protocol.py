@@ -13,6 +13,7 @@ from backend.interfaces.ws.protocol import (
     CLIENT_EVENT_MODELS,
     SERVER_EVENT_MODELS,
     PROTOCOL_VERSION,
+    DeleteReminderItemData,
     HelloData,
     UserMessageData,
     make_audio_header,
@@ -64,6 +65,13 @@ def test_serialized_data_from_pydantic_model() -> None:
 def test_unknown_extra_envelope_field_ignored() -> None:
     parsed = parse_client_message(_raw("ping", {}, future_field=123))
     assert parsed.envelope.type == "ping"
+
+
+def test_delete_reminder_item_client_event_is_registered() -> None:
+    """新增客户端事件必须进 CLIENT_EVENT_MODELS，否则真机报 UNKNOWN_TYPE。"""
+    parsed = parse_client_message(_raw("delete_reminder_item", {"id": "e_1"}))
+    assert isinstance(parsed.data, DeleteReminderItemData)
+    assert parsed.data.id == "e_1"
 
 
 # ---------------------------------------------------------------- 错误分支
@@ -144,6 +152,7 @@ CLIENT_MIN_DATA: dict[str, dict] = {
     "get_reminders": {"limit": 20},
     "ack_reminders": {"ids": ["e1"]},
     "get_reminder_history": {},
+    "delete_reminder_item": {"id": "e1"},
     "audio_chunk": {},
 }
 

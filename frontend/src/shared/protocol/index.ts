@@ -104,10 +104,15 @@ export interface AckRemindersData {
   all?: boolean
 }
 
-/** 拉取某一天的全部提醒事件（已读 + 未读；缺省今天） */
+/** 拉取时钟视图（当天事件 + 所有未到期计划；缺省今天） */
 export interface GetReminderHistoryData {
   date?: string | null
   limit?: number
+}
+
+/** 删除时钟视图里的一项（id 为事件 id 或未到期计划 id） */
+export interface DeleteReminderItemData {
+  id: string
 }
 
 /** 提醒事件单项（proactive.items / reminders.items 共用，与 protocol.py ReminderItemData 对齐） */
@@ -121,6 +126,8 @@ export interface ReminderItemData {
   late: boolean
   /** 是否已读（今日视图里绿点/红点） */
   acknowledged: boolean
+  /** 尚未到期（时钟入口视图；灰灯，不可点已读；id 此时是 reminders.id） */
+  pending?: boolean
   /** 后端格式化好的用户可读时间（今天 09:00 / 10月18日 09:00） */
   time_text: string
 }
@@ -266,14 +273,20 @@ export interface ProactiveData {
 export interface RemindersData {
   items: ReminderItemData[]
   unread_count: number
+  /** 尚未到期的计划（灰灯；底部灰灯展开用） */
+  pending?: ReminderItemData[]
+  /** 尚未到期的提醒数（未读列表底部入口/角标用） */
+  pending_count?: number
 }
 
-/** 某一天的全部提醒事件（今日视图；已读 + 未读，时间正序） */
+/** 时钟入口视图：当天全部事件（已读 + 未读）+ 所有未到期计划，按到期时间正序 */
 export interface ReminderHistoryData {
   date: string
   items: ReminderItemData[]
   read_count: number
   unread_count: number
+  /** 未到期计划数（items 中 pending=true 的条数） */
+  pending_count?: number
 }
 
 /**
@@ -398,6 +411,7 @@ export interface ClientEventMap {
   get_reminders: GetRemindersData
   ack_reminders: AckRemindersData
   get_reminder_history: GetReminderHistoryData
+  delete_reminder_item: DeleteReminderItemData
   audio_chunk: AudioChunkData
 }
 

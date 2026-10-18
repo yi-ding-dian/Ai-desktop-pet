@@ -267,6 +267,17 @@ class ReminderStore:
             (_iso(due_at), reminder_id),
         )
 
+    def delete_reminder(self, reminder_id: str) -> bool:
+        """彻底删除一条提醒计划（含重复提醒的后续触发）；返回是否删到。
+
+        与 ``cancel`` 不同：状态直接消失，不会留在表里。历史事件不级联删除
+        （``reminder_events`` 保留已触发记录）。
+        """
+        cursor = self._conn.execute(
+            "DELETE FROM reminders WHERE id=?", (reminder_id,)
+        )
+        return bool(cursor.rowcount)
+
     def cancel(self, key: str, *, now: datetime | None = None) -> Reminder | None:
         """取消一条未触发的提醒：``key`` 先按 id 精确匹配，再按文本包含匹配。
 
@@ -349,6 +360,13 @@ class ReminderStore:
         if event is None:  # 防御性兜底（插入后读不到）
             raise ReminderError("提醒事件保存失败（写入后读取不到）")
         return event
+
+    def delete_event(self, event_id: str) -> bool:
+        """删除一条已触发事件（未读列表/历史中的那一项）；返回是否删到。"""
+        cursor = self._conn.execute(
+            "DELETE FROM reminder_events WHERE id=?", (event_id,)
+        )
+        return bool(cursor.rowcount)
 
     def get_event(self, event_id: str) -> ReminderEvent | None:
         row = self._conn.execute(

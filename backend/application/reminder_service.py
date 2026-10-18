@@ -246,15 +246,52 @@ class ReminderService:
             "reminder_id": reminder.id,
         }
 
+    # ---------------------------------------------------------------- 删除（时钟视图红 ×）
+
+    def delete_item(self, item_id: str) -> dict:
+        """按 id 删除时钟视图里的一项。
+
+        id 可能是 ``reminder_events.id``（已触发记录）或 ``reminders.id``
+        （未到期计划）；按实际存在类型删除。找不到返回 ok=False（前端刷新快照后
+        该项自然消失/保留）。
+        """
+        key = (item_id or "").strip()
+        if not key:
+            return {"ok": False, "code": "reminder_not_found", "message": "这条提醒已经不在了"}
+        if self._store.get_event(key) is not None:
+            self._store.delete_event(key)
+            logger.info("提醒事件已删除 id={}", key)
+            return {
+                "ok": True,
+                "code": "reminder_event_deleted",
+                "message": "已删除这条提醒记录",
+            }
+        if self._store.get(key) is not None:
+            self._store.delete_reminder(key)
+            logger.info("提醒计划已删除 id={}", key)
+            return {
+                "ok": True,
+                "code": "reminder_deleted",
+                "message": "已删除这条提醒",
+            }
+        return {"ok": False, "code": "reminder_not_found", "message": "这条提醒已经不在了"}
+
     # ---------------------------------------------------------------- 未读列表（WS get/ack）
 
     def list_unread(self, limit: int = 50) -> dict:
-        """未读提醒快照（前端列表/球标用）：最新在前，含用户可读时间文案。"""
+        """未读提醒快照（前端列表/球标用）：最新在前，含用户可读时间文案。
+
+        ``pending`` 是尚未到期的计划（不进入未读 items，供列表底部灰灯展开）；
+        ``pending_count`` 与其等长（2026-10-18）。
+        """
         now = self._now()
         events = self._store.list_unread(max(1, min(100, limit)))
+        pending = self._pending_reminders(now)
         return {
             "items": [self._event_payload(event, now) for event in events],
             "unread_count": self._store.count_unread(),
+            "pending": [self._pending_payload(reminder, now) for reminder in pending],
+            "pending_count": len(pending),
         }
 
     def acknowledge(self, ids: Sequence[str] | None = None, *, all_: bool = False) -> dict:
@@ -264,7 +301,13 @@ class ReminderService:
         return self.list_unread()
 
     def list_history(self, day: str | None = None, limit: int = 200) -> dict:
-        """某一天的全部提醒事件（已读 + 未读，按触发时间正序）——今日视图。"""
+        """某一天的全部提醒 + 尚未到期的提醒（按到期时间正序）——时钟入口视图。
+
+        当天已触发事件（已读 + 未读）与**所有**未到期计划合并返回；未到期项
+        ``pending=True``（灰灯），``read_count/unread_count`` 只统计事件，
+        ``pending_count`` 单独统计。合并后按 ``due_at`` 排序（用户要求“一样按
+        时间排序”），这样“今天 11:50”与“明天 09:00”不会因来源不同而乱序。
+        """
         now = self._now()
         day_value = now.date()
         if day:
@@ -272,15 +315,48 @@ class ReminderService:
                 day_value = date.fromisoformat(day)
             except ValueError:
                 logger.warning("提醒历史日期格式非法（{}），回退为今天", day)
-        events = self._store.list_for_day(day_value, now=now)[
-            : max(1, min(500, limit))
-        ]
-        read_count = sum(1 for event in events if event.acknowledged)
+        cap = max(1, min(500, limit))
+        events = self._store.list_for_day(day_value, now=now)
+        pending = self._pending_reminders(now)
+        items = [self._event_payload(event, now) for event in events]
+        items.extend(self._pending_payload(reminder, now) for reminder in pending)
+        items.sort(key=lambda item: datetime.fromisoformat(item["due_at"]))
+        items = items[:cap]
+        read_count = sum(
+            1 for item in items if not item["pending"] and item["acknowledged"]
+        )
+        pending_count = sum(1 for item in items if item["pending"])
         return {
             "date": day_value.isoformat(),
-            "items": [self._event_payload(event, now) for event in events],
+            "items": items,
             "read_count": read_count,
-            "unread_count": len(events) - read_count,
+            "unread_count": len(items) - read_count - pending_count,
+            "pending_count": pending_count,
+        }
+
+    def _pending_reminders(self, now: datetime, limit: int = 500) -> list[Reminder]:
+        """尚未到期（due > now）的计划，按到期时间正序；已过期待触发的仍留给 tick。"""
+        pending = [
+            reminder
+            for reminder in self._store.scheduled()
+            if reminder.due_datetime > now
+        ]
+        pending.sort(key=lambda item: item.due_datetime)
+        return pending[: max(1, limit)]
+
+    @staticmethod
+    def _pending_payload(reminder: Reminder, now: datetime) -> dict:
+        """未到期提醒的列表载荷：id 用 reminders.id（不是事件 id），不可回执已读。"""
+        return {
+            "id": reminder.id,
+            "reminder_id": reminder.id,
+            "text": reminder.text,
+            "due_at": reminder.due_at,
+            "fired_at": "",
+            "late": False,
+            "acknowledged": False,
+            "pending": True,
+            "time_text": format_due(reminder.due_datetime, now),
         }
 
     @staticmethod
@@ -293,6 +369,7 @@ class ReminderService:
             "fired_at": event.fired_at,
             "late": event.late,
             "acknowledged": event.acknowledged,
+            "pending": False,
             "time_text": format_due(event.due_datetime, now),
         }
 

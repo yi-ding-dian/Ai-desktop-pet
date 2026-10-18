@@ -6,11 +6,14 @@
  *     气泡 meta 标记为 reminder，悬浮条显示「知道了」。点「知道了」= 整批已读；
  *     不点/超时/被替换 → 主进程回传 closed，本域把整批并入右侧未读列表。
  *  2. **未读列表**（electron/reminder-list 独立窗，不在托盘）：宠物右侧优先、左侧回退、
- *     两侧都不够用紧凑条；列表最多显示最新 3 条 + 「待看 N 条」，点击展开全部。
+ *     两侧都不够用紧凑条；折叠显示最新 2 条，右上角数字可展开全部。
+ *  3. **时钟视图 + 灰灯**：时钟入口显示当天事件 + 所有未到期计划（灰点）；
+ *     未读列表底部灰灯点击后向下展开待提醒，点别处收起（2026-10-18）。
  *
  * 数据源：
- *  - 后端 `reminder_events` 是未读的事实来源；本域连接后 `get_reminders` 拉快照，
- *    气泡展示期间把该批事件从列表里**过滤掉**（activeIds），关闭后再显示；
+ *  - 后端 `reminder_events` 是未读的事实来源；`reminders` 表提供未到期计划；
+ *    本域连接后 `get_reminders` 拉快照（含 pending），气泡展示期间把该批事件从
+ *    列表里**过滤掉**（activeIds），关闭后再显示；
  *  - 列表点条目/全部知道了 → `ack_reminders`；后端回新快照；
  *  - 重启后未读自动恢复（不依赖前端内存）。
  *
@@ -102,7 +105,13 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
   // ---- 未读列表状态（后端快照 + 当前气泡中的批次过滤） ----
   let unread: ReminderItemData[] = []
   let unreadCount = 0
-  /** 列表视图：unread=未读；today=当天全部（已读 + 未读，标题右侧时钟入口切换） */
+  /** 尚未到期的计划（灰灯；底部灰灯展开时显示） */
+  let pendingReminders: ReminderItemData[] = []
+  /** 尚未到期的提醒数（时钟入口/列表底部灰灯入口） */
+  let pendingCount = 0
+  /** 底部灰灯是否展开（仅未读视图；点击面板外收起） */
+  let pendingExpanded = false
+  /** 列表视图：unread=未读；today=当天全部（已读 + 未读 + 未到期，标题右侧时钟入口切换） */
   let viewMode: 'unread' | 'today' = 'unread'
   let history: ReminderItemData[] = []
   let historyTotal = 0
@@ -135,7 +144,8 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
     if (!listBridgeNow) return
 
     if (viewMode === 'today') {
-      // 今日视图：已读 + 未读全列，时间正序（后端已排序）；不按 activeIds 过滤
+      // 时钟入口视图：已读 + 未读 + 未到期全列，按到期时间正序（后端已排序）；
+      // 不按 activeIds 过滤（pending 项没有事件 id，也不会被气泡占用）
       listBridgeNow.update({
         mode: 'today',
         items: history.map((item) => ({
@@ -143,9 +153,14 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
           text: item.text,
           timeText: item.time_text || '',
           late: item.late === true,
-          acknowledged: item.acknowledged === true
+          acknowledged: item.acknowledged === true,
+          pending: item.pending === true
         })),
         unreadCount: historyTotal,
+        pendingItems: [],
+        pendingExpanded: false,
+        pendingCount,
+        bellOnly: false,
         visible
       })
       return
@@ -158,6 +173,9 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
       0
     )
     const count = Math.max(0, unreadCount - activeInSnapshot)
+    // 没有未读、但还有待提醒：只显示一个常驻灰灯小球（不占大面板）；
+    // 点击后 pendingExpanded=true 展开成待提醒面板。
+    const bellOnly = count === 0 && pendingCount > 0 && !pendingExpanded
     listBridgeNow.update({
       mode: 'unread',
       items: shown.map((item) => ({
@@ -165,9 +183,21 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
         text: item.text,
         timeText: item.time_text || '',
         late: item.late === true,
-        acknowledged: false
+        acknowledged: false,
+        pending: false
       })),
+      pendingItems: pendingReminders.map((item) => ({
+        id: item.id,
+        text: item.text,
+        timeText: item.time_text || '',
+        late: item.late === true,
+        acknowledged: false,
+        pending: true
+      })),
+      pendingExpanded,
       unreadCount: count,
+      pendingCount,
+      bellOnly,
       visible
     })
   }
@@ -184,8 +214,12 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
   const ensurePoll = (): void => {
     if (pollTimer !== null || disposed) return
     pollTimer = window.setInterval(() => {
-      if (unreadCount > 0 || viewMode === 'today') schedulePublish()
-      else stopPoll()
+      // 未读/待提醒/时钟视图都需要持续判定教学、向导、宠物显隐
+      if (unreadCount > 0 || pendingCount > 0 || viewMode === 'today') {
+        schedulePublish()
+      } else {
+        stopPoll()
+      }
     }, LIST_VISIBLE_POLL_MS)
   }
 
@@ -200,8 +234,14 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
     unread = Array.isArray(data.items) ? data.items : []
     unreadCount =
       typeof data.unread_count === 'number' ? Math.max(0, data.unread_count) : unread.length
+    pendingReminders = Array.isArray(data.pending) ? data.pending : []
+    pendingCount =
+      typeof data.pending_count === 'number'
+        ? Math.max(0, data.pending_count)
+        : pendingReminders.length
+    if (pendingReminders.length === 0) pendingExpanded = false
     schedulePublish()
-    if (unreadCount > 0 || activeIds.size > 0) ensurePoll()
+    if (unreadCount > 0 || pendingCount > 0 || activeIds.size > 0) ensurePoll()
     else stopPoll()
   }
 
@@ -219,9 +259,13 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
 
   const applyHistory = (data: ReminderHistoryData): void => {
     history = Array.isArray(data.items) ? data.items : []
+    pendingCount =
+      typeof data.pending_count === 'number'
+        ? Math.max(0, data.pending_count)
+        : history.filter((item) => item.pending === true).length
     historyTotal = Math.max(
       history.length,
-      (data.read_count || 0) + (data.unread_count || 0)
+      (data.read_count || 0) + (data.unread_count || 0) + pendingCount
     )
     if (viewMode === 'today') schedulePublish()
     ensurePoll()
@@ -403,16 +447,37 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
   }
 
   const onListAction = (action: ReminderListActionPayload): void => {
+    if (action.type === 'pending-expand') {
+      if (pendingReminders.length > 0) {
+        pendingExpanded = true
+        schedulePublish()
+      }
+      return
+    }
+    if (action.type === 'pending-collapse') {
+      pendingExpanded = false
+      schedulePublish()
+      return
+    }
     if (action.type === 'history') {
+      pendingExpanded = false
       viewMode = 'today'
-      schedulePublish() // 先用现有历史立即切换（空则显示“今天还没有提醒”）
+      schedulePublish() // 先用现有历史立即切换（空则显示“还没有提醒”）
       refreshHistory()
       return
     }
     if (action.type === 'unread') {
+      pendingExpanded = false
       viewMode = 'unread'
       schedulePublish()
       refreshUnread()
+      return
+    }
+    if (action.type === 'delete') {
+      if (action.id) {
+        // 删除后后端回未读快照 + 时钟视图快照，两个视图自然收敛
+        client.send('delete_reminder_item', { id: action.id })
+      }
       return
     }
     if (action.type === 'ack') {
@@ -439,6 +504,17 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
     }),
     client.on('reminders', (data) => applySnapshot(data)),
     client.on('reminder_history', (data) => applyHistory(data)),
+    client.on('notice', (data) => {
+      // 聊天里新建/取消提醒：立即刷新未读快照（pending 列表/灰灯数字不用等下一轮）
+      if (
+        data.code === 'reminder_created' ||
+        data.code === 'reminder_cancelled' ||
+        data.code === 'reminder_error'
+      ) {
+        refreshUnread()
+        if (viewMode === 'today') refreshHistory()
+      }
+    }),
     client.on('config', (config) => {
       const value = (
         config as { reminders?: { os_notification_when_hidden?: unknown } }
@@ -487,9 +563,21 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
     unread = []
     history = []
     historyTotal = 0
+    pendingReminders = []
+    pendingCount = 0
+    pendingExpanded = false
     viewMode = 'unread'
     activeIds = new Set()
     notifiedBatches.clear()
-    listBridge()?.update({ mode: 'unread', items: [], unreadCount: 0, visible: false })
+    listBridge()?.update({
+      mode: 'unread',
+      items: [],
+      unreadCount: 0,
+      pendingItems: [],
+      pendingExpanded: false,
+      pendingCount: 0,
+      bellOnly: false,
+      visible: false
+    })
   }
 }

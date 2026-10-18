@@ -366,7 +366,39 @@ def test_unread_snapshot_and_acknowledge(store: ReminderStore) -> None:
     assert [item["id"] for item in updated["items"]] == [ids[1]]
 
     cleared = service.acknowledge(all_=True)
-    assert cleared == {"items": [], "unread_count": 0}
+    assert cleared == {
+        "items": [],
+        "unread_count": 0,
+        "pending": [],
+        "pending_count": 0,
+    }
+
+
+def test_delete_item_removes_event_or_pending_plan(store: ReminderStore) -> None:
+    """时钟视图红 ×：事件删除后未读清零；计划删除后 pending 清零。"""
+    store.create("关火", iso(NOW + timedelta(minutes=1)), now=NOW)
+    service = make_service(store)
+    sink = FakeSink()
+    service.set_connection(sink)
+    tick(service, now=NOW + timedelta(minutes=1, seconds=1))
+
+    event = service.list_unread()["items"][0]
+    deleted_event = service.delete_item(event["id"])
+    assert deleted_event["ok"] is True
+    assert deleted_event["code"] == "reminder_event_deleted"
+    assert store.get_event(event["id"]) is None
+    assert service.list_unread()["unread_count"] == 0
+
+    pending = store.create("明天交房租", iso(NOW + timedelta(days=1)), now=NOW)
+    deleted_plan = service.delete_item(pending.id)
+    assert deleted_plan["ok"] is True
+    assert deleted_plan["code"] == "reminder_deleted"
+    assert store.get(pending.id) is None
+    assert service.list_unread()["pending_count"] == 0
+
+    missing = service.delete_item("not-exists")
+    assert missing["ok"] is False
+    assert missing["code"] == "reminder_not_found"
 
 
 def test_history_includes_read_and_unread_for_the_day(store: ReminderStore) -> None:
@@ -394,7 +426,8 @@ def test_history_includes_read_and_unread_for_the_day(store: ReminderStore) -> N
     )
     assert sum(1 for item in history["items"] if item["acknowledged"]) == 1
 
-    # 再插一条昨天触发的事件（直接写事件，不经过 tick）
+    # 再插一条昨天触发的事件（直接写事件，不经过 tick）；标记 fired，
+    # 避免它作为“未到期计划”出现在新视图里（pending 有单独用例覆盖）
     other = store.create("昨天的事", iso(NOW + timedelta(days=1)), now=NOW)
     store.record_event(
         other,
@@ -403,9 +436,47 @@ def test_history_includes_read_and_unread_for_the_day(store: ReminderStore) -> N
         fired_at=NOW - timedelta(days=1),
         late=False,
     )
+    store.mark_fired(other.id, now=NOW)
     today = service.list_history(NOW.date().isoformat())
     assert len(today["items"]) == 2  # 昨天的没混进来
     assert all(item["reminder_id"] != other.id for item in today["items"])
+
+
+def test_history_includes_pending_reminders_with_gray_flag(store: ReminderStore) -> None:
+    """时钟入口视图：当天事件 + 所有未到期计划，按 due_at 正序，pending 灰灯。"""
+    store.create("关火", iso(NOW + timedelta(minutes=1)), now=NOW)
+    service = make_service(store)
+    sink = FakeSink()
+    service.set_connection(sink)
+    tick(service, now=NOW + timedelta(minutes=1, seconds=1))
+
+    later_today = store.create(
+        "下午喝水", iso(NOW + timedelta(hours=3)), now=NOW
+    )
+    tomorrow = store.create(
+        "明天交房租", iso(NOW + timedelta(days=1)), now=NOW
+    )
+
+    history = service.list_history(NOW.date().isoformat())
+    assert history["read_count"] == 0
+    assert history["unread_count"] == 1
+    assert history["pending_count"] == 2
+    pending = [item for item in history["items"] if item["pending"]]
+    assert [item["id"] for item in pending] == [later_today.id, tomorrow.id]
+    assert pending[0]["time_text"].startswith("今天 12:00")
+    assert pending[1]["time_text"].startswith("明天 09:00")
+
+    dues = [datetime.fromisoformat(item["due_at"]) for item in history["items"]]
+    assert dues == sorted(dues)
+
+    snapshot = service.list_unread()
+    assert snapshot["pending_count"] == 2
+    assert [item["id"] for item in snapshot["pending"]] == [
+        later_today.id,
+        tomorrow.id,
+    ]
+    assert all(item["pending"] for item in snapshot["pending"])
+    assert all(not item["pending"] for item in snapshot["items"])
 
 
 def test_tick_silent_quiet_hours_disables_voice_but_keeps_bubble(store: ReminderStore) -> None:

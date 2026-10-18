@@ -179,11 +179,14 @@ class OpenAICompatProvider:
         本域不 import 该域）非空时随请求发给模型，模型可能返回 tool_calls：
         分片以 ``Chunk.tool_delta`` 透传（与正文可同帧；模型可能只回 tool_calls
         不产出正文——解析层照样保真，兜底由调用方处理）。
+        ``tool_choice`` 仅在带 tools 时透传（OpenAI 协议格式；用于“提醒意图必须
+        真正调用工具”的强制指定，见 chat_pipeline）。
         未配置服务（base_url 空）先抛 LLM_NOT_CONFIGURED——明确引导，不走网络层模糊错误。
         """
         base_url = self._require_base_url()
         key = self._resolve_key()
         tools = opts.pop("tools", None)
+        tool_choice = opts.pop("tool_choice", None)
         request: dict[str, Any] = {
             "model": opts.pop("model", self._model),
             "messages": [_message_payload(m) for m in messages],
@@ -193,6 +196,8 @@ class OpenAICompatProvider:
         }
         if tools:
             request["tools"] = tools
+            if tool_choice is not None:
+                request["tool_choice"] = tool_choice
         try:
             client = self._open_client(key, base_url=base_url)
             async with client:  # 请求结束即关闭连接池

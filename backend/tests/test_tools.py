@@ -11,6 +11,7 @@ from backend.modules.tools import (
     ToolSpec,
     build_default_registry,
     match_directive,
+    match_forced_tool,
 )
 
 
@@ -180,3 +181,44 @@ def test_match_directive_hits(text: str) -> None:
 def test_match_directive_misses(text: str) -> None:
     """只提"设置"不构成指令（问内容/闲聊）——与能力清单的调用边界一致。"""
     assert match_directive(text) is None
+
+
+# ---------------------------------------------------------------- 强制工具意图（提醒）
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1分钟后提醒我睡觉",
+        "一分钟后提醒我睡觉",
+        "12点3分提醒我睡觉",
+        "明天 9 点提醒我交房租",
+        "每天 8 点提醒我吃药",
+        "半小时后叫我起床",
+        "10:30 提醒我开会",
+        "记得明天9点提醒我开会",
+    ],
+)
+def test_match_forced_tool_hits_create_reminder(text: str) -> None:
+    """动作 + 明确时间 → 强制 create_reminder（真机模型曾只说不做）。"""
+    assert match_forced_tool(text) == "create_reminder"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "提醒我交房租",  # 没时间：应先反问“什么时候”
+        "明天提醒我交房租",  # 只有日期、没有钟点：仍应先问几点
+        "每天晚上提醒我吃药",
+        "下周一提醒我开会",
+        "提醒我怎么用",
+        "你能提醒我吗",
+        "我有哪些提醒",
+        "取消明天9点的提醒",
+        "提醒功能怎么用",
+        "",
+    ],
+)
+def test_match_forced_tool_misses(text: str) -> None:
+    """没有明确时间 / 不是创建动作：不强制，保留模型反问的空间。"""
+    assert match_forced_tool(text) is None

@@ -153,10 +153,16 @@ class AckRemindersData(EventData):
 
 
 class GetReminderHistoryData(EventData):
-    """拉取某一天的全部提醒事件（已读 + 未读；缺省今天）。"""
+    """拉取时钟视图（当天事件 + 所有未到期计划；缺省今天）。"""
 
     date: str | None = None
     limit: int = 200
+
+
+class DeleteReminderItemData(EventData):
+    """删除时钟视图里的一项（id 为 reminder_events.id 或 reminders.id）。"""
+
+    id: str
 
 
 class EnvUpdateData(EventData):
@@ -253,10 +259,11 @@ class ToolCallData(EventData):
 
 
 class ReminderItemData(EventData):
-    """提醒批次里的单项（proactive.items / reminders.items 共用）。
+    """提醒批次里的单项（proactive.items / reminders.items / history.items 共用）。
 
-    ``id`` 是 reminder_events 事件 id——前端"知道了"按它回执；``time_text`` 是后端
-    格式化好的用户可读时间（今天/明天/日期），前端直接展示。
+    已触发事件：``id`` 是 reminder_events 事件 id——前端"知道了"按它回执；
+    未到期计划（2026-10-18 时钟入口视图）：``pending=True``，``id`` 是 reminders.id，
+    ``fired_at`` 为空、不可回执已读。``time_text`` 是后端格式化好的用户可读时间。
     """
 
     id: str
@@ -266,6 +273,7 @@ class ReminderItemData(EventData):
     fired_at: str = ""
     late: bool = False
     acknowledged: bool = False
+    pending: bool = False
     time_text: str = ""
 
 
@@ -289,19 +297,30 @@ class ProactiveData(EventData):
 
 
 class RemindersData(EventData):
-    """未读提醒快照（get_reminders / ack_reminders 的响应）。"""
+    """未读提醒快照（get_reminders / ack_reminders 的响应）。
+
+    ``pending`` 是尚未到期的计划（灰灯，不进入未读列表；底部灰灯展开用），
+    ``pending_count`` 与其等长。
+    """
 
     items: list[ReminderItemData] = Field(default_factory=list)
     unread_count: int = 0
+    pending: list[ReminderItemData] = Field(default_factory=list)
+    pending_count: int = 0
 
 
 class ReminderHistoryData(EventData):
-    """某一天的全部提醒事件快照（今日视图；已读 + 未读，按触发时间正序）。"""
+    """时钟入口视图快照：当天事件（已读 + 未读）+ 所有未到期计划，按到期时间正序。
+
+    ``items`` 里未到期项 ``pending=True``；``read_count/unread_count`` 只统计事件，
+    ``pending_count`` 单独统计未到期计划（2026-10-18）。
+    """
 
     date: str
     items: list[ReminderItemData] = Field(default_factory=list)
     read_count: int = 0
     unread_count: int = 0
+    pending_count: int = 0
 
 
 class NoticeData(EventData):
@@ -371,6 +390,7 @@ CLIENT_EVENT_MODELS: dict[str, type[EventData]] = {
     "get_reminders": GetRemindersData,
     "ack_reminders": AckRemindersData,
     "get_reminder_history": GetReminderHistoryData,
+    "delete_reminder_item": DeleteReminderItemData,
     "audio_chunk": AudioChunkData,
 }
 

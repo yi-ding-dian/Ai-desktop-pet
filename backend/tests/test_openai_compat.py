@@ -236,6 +236,18 @@ def test_tools_param_passed_to_sdk_when_present() -> None:
     assert client.requests[0]["tools"] == TOOLS
 
 
+def test_tool_choice_passed_only_with_tools() -> None:
+    """tool_choice 随 tools 一起透传；没有 tools 时不发（避免非法请求）。"""
+    client = FakeClient([make_chunk(content="ok")])
+    choice = {"type": "function", "function": {"name": "open_settings"}}
+    collect(make_provider(client), tools=TOOLS, tool_choice=choice)
+    assert client.requests[0]["tool_choice"] == choice
+
+    client2 = FakeClient([make_chunk(content="ok")])
+    collect(make_provider(client2), tool_choice=choice)
+    assert "tool_choice" not in client2.requests[0]
+
+
 def test_tools_param_absent_from_request_by_default() -> None:
     """不带 tools 的普通对话：请求体不含该字段（与旧版逐字一致）。"""
     client = FakeClient([make_chunk(content="ok")])

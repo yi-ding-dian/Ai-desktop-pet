@@ -30,7 +30,13 @@ body,
 
 .reminder-panel {
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   width: 100%;
+  /* 与主进程 MAX_PANEL_HEIGHT=480 对齐（减去 stage 上下 padding 12）：
+     允许面板量出展开后的真实高度，主进程再据此把窗口向下长；不能写 100vh，
+     否则窗口还停在收起高度时面板会被提前夹住，永远量不到展开高度。 */
+  max-height: 468px;
   border-radius: 12px;
   background: var(--bubble-bg);
   color: var(--bubble-fg);
@@ -43,6 +49,7 @@ body,
 
 .reminder-header {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
@@ -127,17 +134,21 @@ body,
   display: flex;
   flex-direction: column;
   gap: 0;
+  min-height: 0;
   padding: 0 6px 2px;
 }
 
 .reminder-items-scroll {
-  max-height: 220px;
+  /* 时钟视图最多 7~9 条可见；再多才内部滚动（用户要求“显示所有”不要压扁） */
+  max-height: 420px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 .reminder-item {
   display: flex;
+  /* 行不能被 flex 压扁；内容超高时由容器滚动 */
+  flex: 0 0 auto;
   flex-direction: column;
   align-items: flex-start;
   gap: 1px;
@@ -160,6 +171,62 @@ body,
 
 .reminder-item:active {
   background: rgba(127, 127, 127, 0.24);
+}
+
+/* 时钟视图：每项右侧悬浮显示红色 ×（默认隐藏，不占视觉） */
+.reminder-item-row {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  width: 100%;
+  /* 整行（文字 + ×）共用同一个悬浮灰底，看起来是一个整体 */
+  border-radius: 8px;
+}
+
+.reminder-item-row:hover {
+  background: rgba(127, 127, 127, 0.16);
+}
+
+.reminder-item-row:active {
+  background: rgba(127, 127, 127, 0.24);
+}
+
+.reminder-item-row .reminder-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 行内文字按钮的 hover/active 让给整行灰底，避免出现“两块灰底” */
+.reminder-item-row .reminder-item:hover,
+.reminder-item-row .reminder-item:active {
+  background: transparent;
+}
+
+.reminder-delete {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-right: 1px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #ef4444;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.reminder-item-row:hover .reminder-delete,
+.reminder-delete:focus-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.reminder-delete:hover {
+  background: rgba(239, 68, 68, 0.15);
 }
 
 .reminder-item-time {
@@ -197,6 +264,87 @@ body,
 .reminder-item-read .reminder-item-time {
   opacity: 0.55;
 }
+
+/* 未到时间（时钟入口视图）：灰灯、不可点已读；文字略淡但比已读更清晰 */
+.reminder-item-pending {
+  cursor: default;
+}
+
+.reminder-item-pending:hover,
+.reminder-item-pending:active {
+  background: transparent;
+}
+
+.reminder-item-pending .reminder-item-text,
+.reminder-item-pending .reminder-item-time {
+  opacity: 0.82;
+}
+
+/* 灰灯展开后的待提醒列表（向下展开；过高时内部滚动） */
+.reminder-pending-list {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  max-height: 180px;
+  margin: 0 6px;
+  padding: 1px 0 2px;
+  border-top: 1px solid rgba(127, 127, 127, 0.18);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.reminder-pending-label {
+  padding: 4px 7px 2px;
+  font-size: 10.5px;
+  opacity: 0.55;
+}
+
+.reminder-pending-chevron {
+  margin-left: -1px;
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+/* 灰色状态灯：行内与底部“未到时间 N 条”入口共用 */
+.reminder-pending-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #9ca3af;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
+/* 面板底部居中：折叠时「未到时间 N 条」；展开/时钟视图变「收起」（无灰铃图标） */
+.reminder-pending-entry {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: calc(100% - 12px);
+  box-sizing: border-box;
+  margin: 1px auto 6px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--bubble-fg);
+  opacity: 0.65;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.reminder-pending-entry:hover {
+  opacity: 1;
+  background: rgba(127, 127, 127, 0.12);
+}
+
 
 .reminder-empty {
   padding: 10px 8px 12px;
@@ -251,4 +399,91 @@ body,
 
 .reminder-compact:hover {
   filter: brightness(1.04);
+}
+
+/* ---------------------------------------------------------------- 常驻灰灯小球（无未读、只有待提醒） */
+
+.reminder-list-stage-bell {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reminder-float-bell {
+  display: flex;
+  align-items: center;
+  /* 内容贴向宠物：右侧时左对齐（灰点靠近兔子）；左侧时由 -left 右对齐 */
+  justify-content: flex-start;
+  gap: 5px;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0 2px;
+  border: none;
+  /* 只要灰点 + 文字：无框、无底色、无阴影；点击焦点也不画框 */
+  background: transparent;
+  outline: none;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  overflow: hidden;
+  animation: reminder-bell-in 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.reminder-float-bell:hover {
+  filter: brightness(1.08);
+}
+
+.reminder-float-bell-left {
+  justify-content: flex-end;
+}
+
+.reminder-float-bell-text {
+  color: #9ca3af;
+  opacity: 0.92;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 无底色时保证浅色桌面上也能看清（用户确认的“淡阴影”） */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.reminder-float-bell .reminder-pending-dot {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55), 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* 展开/收起/视图切换的内容入场（窗口 bounds 由主进程缓动） */
+@keyframes reminder-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes reminder-bell-in {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.reminder-panel {
+  animation: reminder-panel-in 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: top center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reminder-panel,
+  .reminder-float-bell {
+    animation: none;
+  }
 }

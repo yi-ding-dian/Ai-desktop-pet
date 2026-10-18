@@ -9,8 +9,10 @@
  *   → 本域摆窗/转发 → 列表页渲染；列表页点击条目 → ACTION → 本域转回宠物窗
  *   → 宠物窗发 ack_reminders → 新快照再回来。
  *
- * 定位：右侧优先；右侧不够翻左侧；两侧都不够用紧凑条（待看 N 条，点击展开）。
- * 纯函数见 geometry.ts。宠物移动时跟随重摆；教学/向导/宠物隐藏时由宠物面传 visible=false。
+ * 定位：右侧优先；右侧不够翻左侧；两侧都不够用紧凑条（待看 N 条，点击展开）；
+ * 无未读、只有待提醒时缩成 104×38 常驻灰灯小条（点击向下展开，点别处收回）。
+ * 纯函数见 geometry.ts。展开/收起/时钟视图切换对窗口 bounds 做 180ms 缓动；
+ * 宠物移动时跟随重摆不走动画；教学/向导/宠物隐藏时由宠物面传 visible=false。
  */
 import { app, BrowserWindow, ipcMain, Menu, screen, type WebContents } from 'electron'
 import { join } from 'node:path'
@@ -22,7 +24,10 @@ import {
   type ReminderListOpenPayload,
   type ReminderListUpdatePayload
 } from '../ipc/channels'
-import { computeReminderListPlacement } from './geometry'
+import {
+  computeReminderBellPlacement,
+  computeReminderListPlacement
+} from './geometry'
 import type { Rect, Size } from '../window'
 
 const isDev = !app.isPackaged
@@ -38,10 +43,24 @@ let readyWaiters: Array<() => void> = []
 
 /** 宠物面上报的最新未读快照 */
 let latest: ReminderListUpdatePayload | null = null
-/** 列表页上报的完整面板尺寸（紧凑态不覆盖它） */
+/** 列表页上报的完整面板尺寸（紧凑态不覆盖它；灰灯展开时是展开后高度） */
 let contentSize: Size | null = null
+/** 收起态面板尺寸（灰灯收起时立即恢复，避免等下一次 REPORT_SIZE 造成跳动） */
+let collapsedSize: Size | null = null
 /** 最近一次实际 setBounds 的值（防高频重复 setBounds / 尺寸上报回声） */
 let lastAppliedBounds: Rect | null = null
+/** 灰灯展开时：面板顶边相对宠物窗 y 的偏移（顶部固定、向下生长） */
+let expandedTopOffset: number | null = null
+/** 上一轮是否处于“向下展开”态（未读展开 / 时钟视图；用于捕获/清除锚点） */
+let wasDownExpanded = false
+/** 上一轮是否为常驻灰灯小球（状态切换时重发内容并触发动画） */
+let wasBellOnly = false
+/** 灰灯当前所在侧（渲染侧据此把灰点/文字贴向宠物） */
+let bellSide: 'right' | 'left' = 'right'
+/** 窗口 bounds 动画定时器（展开/收起/时钟视图切换用） */
+let boundsAnimTimer: ReturnType<typeof setInterval> | null = null
+/** 动画时长（ms）：短促但不生硬 */
+const BOUNDS_ANIM_MS = 180
 /** 当前是否为紧凑条 */
 let compactNow = false
 /** 用户从紧凑条点了展开（即使空间不足也尽量展开） */
@@ -103,11 +122,17 @@ function createListWindow(): BrowserWindow {
   })
   win.setIgnoreMouseEvents(false)
   win.on('closed', () => {
+    cancelBoundsAnimation()
     listWin = null
     listReady = false
     readyWaiters = []
     lastAppliedBounds = null
     contentSize = null
+    collapsedSize = null
+    expandedTopOffset = null
+    wasDownExpanded = false
+    wasBellOnly = false
+    bellSide = 'right'
   })
   loadListPage(win)
   return win
@@ -133,9 +158,10 @@ function waitReady(timeoutMs: number): Promise<boolean> {
 
 function hideList(): void {
   forceFull = false
+  cancelBoundsAnimation()
   if (listWin && !listWin.isDestroyed() && listWin.isVisible()) {
     listWin.hide()
-    console.log('[reminder-list] 未读清空/隐藏 → 收起列表窗')
+    console.log('[reminder-list] 未读/待提醒清空或隐藏 → 收起列表窗')
   }
 }
 
@@ -144,6 +170,11 @@ function currentOpenPayload(): ReminderListOpenPayload {
     mode: latest?.mode ?? 'unread',
     items: latest?.items ?? [],
     unreadCount: latest?.unreadCount ?? 0,
+    pendingItems: latest?.pendingItems ?? [],
+    pendingExpanded: latest?.pendingExpanded === true,
+    pendingCount: latest?.pendingCount ?? 0,
+    bellOnly: latest?.bellOnly === true,
+    bellSide,
     compact: compactNow
   }
 }
@@ -153,28 +184,109 @@ function sendOpen(): void {
   sendTo(listWin, IPC_REMINDER_LIST.OPEN, currentOpenPayload())
 }
 
+function cancelBoundsAnimation(): void {
+  if (boundsAnimTimer !== null) {
+    clearInterval(boundsAnimTimer)
+    boundsAnimTimer = null
+  }
+}
+
+function sameRect(a: Rect, b: Rect): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
+
+/**
+ * 窗口 bounds 缓动（展开/收起/时钟视图切换）：从当前 bounds 插值到目标，
+ * ease-out；动画中来了新目标则从当前帧继续，不跳变。宠物移动跟随不走这里。
+ */
+function animateBounds(win: BrowserWindow, target: Rect): void {
+  const from = win.getBounds()
+  if (sameRect(from, target)) {
+    win.setBounds(target)
+    return
+  }
+  cancelBoundsAnimation()
+  forceRepaint(win)
+  const started = Date.now()
+  boundsAnimTimer = setInterval(() => {
+    if (win.isDestroyed()) {
+      cancelBoundsAnimation()
+      return
+    }
+    const t = Math.min(1, (Date.now() - started) / BOUNDS_ANIM_MS)
+    const eased = 1 - Math.pow(1 - t, 3)
+    const frame: Rect = {
+      x: Math.round(from.x + (target.x - from.x) * eased),
+      y: Math.round(from.y + (target.y - from.y) * eased),
+      width: Math.round(from.width + (target.width - from.width) * eased),
+      height: Math.round(from.height + (target.height - from.height) * eased)
+    }
+    win.setBounds(frame)
+    if (t >= 1) {
+      cancelBoundsAnimation()
+      win.setBounds(target)
+      forceRepaint(win)
+    }
+  }, 16)
+}
+
 /**
  * 重算并应用摆放（compact 由几何决定；forceFull 时即使空间不足也尽量展开）。
  * ``sendContent``：是否把最新内容重新下发给列表页——宠物移动跟随只调窗口位置，
  * 不能每帧重发内容（否则 React 每帧 setState）。
+ * ``animate``：尺寸/位置变化是否走缓动（展开/收起/视图切换）；宠物移动跟随不走。
  */
-function applyPlacement(force = false, sendContent = false): void {
+function applyPlacement(
+  force = false,
+  sendContent = false,
+  animate = false
+): void {
   const win = listWin
   const pet = petWin
   if (!win || win.isDestroyed() || !pet || pet.isDestroyed()) return
   const petBounds = pet.getBounds()
   const wa = screen.getDisplayMatching(petBounds).workArea
+  const bellOnly = latest?.bellOnly === true
+  // 向下展开态：未读里的灰灯展开 / 时钟视图（显示全部）。
+  // 顶部固定、高度向下增加，允许盖住输入框；这样才能一次看全 7~9 条。
+  // 普通收起未读面板仍用底边锚定（不压输入框）。
+  const downExpanded =
+    !bellOnly &&
+    (latest?.mode === 'today' ||
+      (latest?.mode === 'unread' && latest?.pendingExpanded === true))
+  if (downExpanded && !wasDownExpanded && lastAppliedBounds) {
+    // 从收起态切到向下展开：记住当前面板顶边，之后顶边固定、高度向下长
+    expandedTopOffset = lastAppliedBounds.y - petBounds.y
+  } else if (!downExpanded) {
+    expandedTopOffset = null
+  }
+  wasDownExpanded = downExpanded
   // 始终以"完整面板尺寸"参与几何计算：compact 由几何函数按空间决定，
   // 不能因为上一轮是紧凑态就只传紧凑尺寸（否则空间恢复后仍按 104px 算宽度）。
-  const fullSize = contentSize ?? DEFAULT_FULL_SIZE
-  const placement = computeReminderListPlacement(
-    petBounds,
-    fullSize,
-    wa,
-    force || forceFull
-  )
+  // 展开时用展开尺寸；收起时优先用收起态尺寸，避免等上报造成跳动。
+  const fullSize = downExpanded
+    ? contentSize ?? DEFAULT_FULL_SIZE
+    : collapsedSize ?? contentSize ?? DEFAULT_FULL_SIZE
+  const anchorTop =
+    downExpanded && expandedTopOffset !== null
+      ? petBounds.y + expandedTopOffset
+      : null
+  const placement = bellOnly
+    ? computeReminderBellPlacement(petBounds, wa)
+    : computeReminderListPlacement(
+        petBounds,
+        fullSize,
+        wa,
+        force || forceFull,
+        anchorTop
+      )
   const wasCompact = compactNow
   compactNow = placement.compact
+  const wasBell = wasBellOnly
+  wasBellOnly = bellOnly
+  const prevBellSide = bellSide
+  if (bellOnly) bellSide = placement.side
+  const bellSideChanged = bellOnly && prevBellSide !== bellSide
 
   // 几何结果已包含可用空间夹取（compact 固定小尺寸；forceFull 最小 140）
   const next: Rect = {
@@ -190,11 +302,27 @@ function applyPlacement(force = false, sendContent = false): void {
     prev.y === next.y &&
     prev.width === next.width &&
     prev.height === next.height
+  // 先切内容再动窗口：展开/收起时内容与尺寸同时过渡，避免旧内容被拉伸。
+  // 窗口未显示时不能下发内容（首次显示必须先 show 再 sendOpen，否则 Windows
+  // 透明窗会出现“有布局不绘制”的旧问题）。
+  if (
+    win.isVisible() &&
+    (sendContent ||
+      wasCompact !== compactNow ||
+      wasBell !== bellOnly ||
+      bellSideChanged)
+  ) {
+    sendOpen()
+  }
   if (!same) {
-    win.setBounds(next)
+    if (animate && win.isVisible()) {
+      animateBounds(win, next)
+    } else {
+      cancelBoundsAnimation()
+      win.setBounds(next)
+    }
     lastAppliedBounds = next
   }
-  if (sendContent || wasCompact !== compactNow) sendOpen()
 }
 
 /** 强制重绘兜底：透明窗延迟显示时偶发"有布局无画面"，invalidate 促一次全量绘制 */
@@ -209,9 +337,14 @@ function forceRepaint(win: BrowserWindow | null): void {
 
 async function openList(): Promise<void> {
   const data = latest
-  // 未读视图空了就收起；今日视图即使 0 条也保留窗口显示“今天还没有提醒”，方便切回未读
+  // 未读视图空了就收起；但用户手动展开灰灯待提醒时保留（即使未读已清空）；
+  // 时钟视图即使 0 条也保留窗口显示“还没有提醒”，方便切回未读
   const emptyUnread =
-    data?.mode === 'unread' && (data.unreadCount <= 0 || data.items.length === 0)
+    data?.mode === 'unread' &&
+    (data.unreadCount <= 0 || data.items.length === 0) &&
+    data.pendingCount <= 0 &&
+    !data.pendingExpanded &&
+    !data.bellOnly
   if (!data || !data.visible || emptyUnread) {
     hideList()
     return
@@ -224,8 +357,8 @@ async function openList(): Promise<void> {
   if (latest !== data) return // 等待期间快照已更新：让新的一次 UPDATE 处理
 
   if (win.isVisible()) {
-    // 已在显示：只更新位置/内容
-    applyPlacement(forceFull, true)
+    // 已在显示：更新位置/内容；展开/收起/视图切换走缓动
+    applyPlacement(forceFull, true, true)
     win.moveTop()
     return
   }
@@ -271,24 +404,37 @@ export function initReminderList(pet: BrowserWindow): void {
     if (!isPetSender(event.sender)) return
     const raw = payload as ReminderListUpdatePayload | null
     if (!raw || !Array.isArray(raw.items)) return
-    const items = raw.items
-      .filter((item) => item && typeof item.id === 'string' && typeof item.text === 'string')
-      .map((item) => ({
-        id: item.id,
-        text: item.text,
-        timeText: typeof item.timeText === 'string' ? item.timeText : '',
-        late: item.late === true,
-        acknowledged: item.acknowledged === true
-      }))
+    const sanitize = (items: unknown): ReminderListUpdatePayload['items'] =>
+      (Array.isArray(items) ? items : [])
+        .filter((item) => item && typeof item.id === 'string' && typeof item.text === 'string')
+        .map((item) => ({
+          id: item.id,
+          text: item.text,
+          timeText: typeof item.timeText === 'string' ? item.timeText : '',
+          late: item.late === true,
+          acknowledged: item.acknowledged === true,
+          pending: item.pending === true
+        }))
+    const items = sanitize(raw.items)
+    const pendingItems = sanitize(raw.pendingItems)
     const unreadCount = Number(raw.unreadCount)
+    const pendingCount = Number(raw.pendingCount)
     latest = {
       mode: raw.mode === 'today' ? 'today' : 'unread',
       items,
       unreadCount: Number.isFinite(unreadCount) ? Math.max(0, Math.round(unreadCount)) : items.length,
+      pendingItems,
+      pendingExpanded: raw.pendingExpanded === true,
+      pendingCount: Number.isFinite(pendingCount) ? Math.max(0, Math.round(pendingCount)) : pendingItems.length,
+      bellOnly: raw.bellOnly === true,
       visible: raw.visible !== false
     }
     const emptyUnread =
-      latest.mode === 'unread' && (latest.unreadCount === 0 || latest.items.length === 0)
+      latest.mode === 'unread' &&
+      (latest.unreadCount === 0 || latest.items.length === 0) &&
+      latest.pendingCount <= 0 &&
+      !latest.pendingExpanded &&
+      !latest.bellOnly
     if (!latest.visible || emptyUnread) {
       hideList()
       return
@@ -313,9 +459,16 @@ export function initReminderList(pet: BrowserWindow): void {
     const width = Number(s?.width)
     const height = Number(s?.height)
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
-    // 紧凑条上报的尺寸不能覆盖完整面板尺寸（展开后还要用回完整尺寸）
-    if (!compactNow) contentSize = { width, height }
-    if (!compactNow) applyPlacement(forceFull)
+    // 紧凑条/灰灯小球上报的尺寸不能覆盖完整面板尺寸（展开后还要用回完整尺寸）
+    if (!compactNow && latest?.bellOnly !== true) {
+      contentSize = { width, height }
+      const downExpanded =
+        latest?.mode === 'today' ||
+        (latest?.mode === 'unread' && latest?.pendingExpanded === true)
+      // 向下展开态（待提醒面板 / 时钟视图）不覆盖“未读收起态”尺寸
+      if (!downExpanded) collapsedSize = { width, height }
+      applyPlacement(forceFull, false, true)
+    }
   })
 
   // 列表右键菜单：不再在列表底部放“全部知道了”（占位置），改为右键 → 全部已读
@@ -344,21 +497,26 @@ export function initReminderList(pet: BrowserWindow): void {
     if (!action || typeof action.type !== 'string') return
     if (action.type === 'expand') {
       forceFull = true
-      applyPlacement(true, true)
+      applyPlacement(true, true, true)
       console.log('[reminder-list] 紧凑条 → 展开完整列表')
       return
     }
-    if (action.type === 'ack') {
+    if (action.type === 'ack' || action.type === 'delete') {
       if (typeof action.id !== 'string' || !action.id) return
-      forwardAction({ type: 'ack', id: action.id })
+      forwardAction({ type: action.type, id: action.id })
       return
     }
     if (action.type === 'ack-all') {
       forwardAction({ type: 'ack-all' })
       return
     }
-    if (action.type === 'history' || action.type === 'unread') {
-      // 视图切换由宠物面统一管：它负责拉取今日历史/未读快照并回推列表内容
+    if (
+      action.type === 'history' ||
+      action.type === 'unread' ||
+      action.type === 'pending-expand' ||
+      action.type === 'pending-collapse'
+    ) {
+      // 视图切换/灰灯展开由宠物面统一管：它负责拉取历史/未读快照并回推列表内容
       forwardAction({ type: action.type })
     }
   })
@@ -370,9 +528,15 @@ export function initReminderList(pet: BrowserWindow): void {
 export function destroyReminderList(): void {
   readyWaiters = []
   listReady = false
+  cancelBoundsAnimation()
   latest = null
   contentSize = null
+  collapsedSize = null
   lastAppliedBounds = null
+  expandedTopOffset = null
+  wasDownExpanded = false
+  wasBellOnly = false
+  bellSide = 'right'
   compactNow = false
   forceFull = false
   const win = listWin

@@ -403,6 +403,8 @@ def test_backend_tool_executes_and_emits_notice_not_tool_call() -> None:
     assert notice["code"] == "reminder_created"
     assert notice["level"] == "info"
     assert "已设置提醒" in notice["message"]
+    # 工具已真正返回：不应再补“没设上”警示
+    assert all(n["code"] != "reminder_tool_missed" for n in sink.data_of("notice"))
     # 模型有正文：不补 ack，正文照常
     assert sink.data_of("reply_end")[0]["full_text"] == "好嘞，这就给你设上～"
 
@@ -445,6 +447,56 @@ def test_backend_tool_failure_with_content_keeps_model_text() -> None:
 
     assert sink.data_of("reply_end")[0]["full_text"] == "我试试看～"
     assert sink.data_of("notice")[0]["message"] == "提醒没设上：时间太远"
+
+
+def test_reminder_intent_forces_tool_choice() -> None:
+    """动作 + 明确时间 → 请求带 tool_choice（模型只回文字时也会被迫调用工具）。"""
+    fake = FakeReminderTools()
+    provider = FakeLLMProvider(pieces=["好，提醒你睡觉～"])
+    sink, _ = run_turn(
+        provider,
+        tools=reminder_registry(fake),
+        user_text="1分钟后提醒我睡觉",
+    )
+
+    assert provider.seen_opts[0]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "create_reminder"},
+    }
+    # 假 provider 不遵守 tool_choice（模拟网关忽略）：必须给用户一条“没设上”警示，
+    # 不能让模型那句“好，提醒你”变成静默失败。
+    assert sink.data_of("notice")[-1]["code"] == "reminder_tool_missed"
+
+
+def test_plain_reminder_without_time_does_not_force_tool_choice() -> None:
+    """没给时间不强制：模型应先反问，而不是带空 due_at 去调用工具。"""
+    fake = FakeReminderTools()
+    provider = FakeLLMProvider(pieces=["什么时候提醒你呀？"])
+    run_turn(provider, tools=reminder_registry(fake), user_text="提醒我交房租")
+
+    assert "tool_choice" not in provider.seen_opts[0]
+
+
+def test_tool_choice_rejected_retries_with_tools_only() -> None:
+    """网关支持 tools 但不支持 tool_choice：先摘 tool_choice、保留 tools 重试。"""
+    fake = FakeReminderTools()
+    provider = FakeLLMProvider(
+        pieces=["重放成功啦"],
+        fail_calls={
+            1: LlmError(LlmErrorCode.LLM_BAD_REQUEST, "请求被拒绝：不支持的参数 tool_choice")
+        },
+    )
+    sink, _ = run_turn(
+        provider,
+        tools=reminder_registry(fake),
+        user_text="1分钟后提醒我睡觉",
+    )
+
+    assert len(provider.seen_opts) == 2
+    assert "tool_choice" in provider.seen_opts[0]
+    assert "tool_choice" not in provider.seen_opts[1]
+    assert provider.seen_opts[1]["tools"]  # tools 仍保留
+    assert sink.data_of("reply_end")[0]["full_text"] == "重放成功啦"
 
 
 def test_time_block_injected_only_when_reminder_tools_registered() -> None:

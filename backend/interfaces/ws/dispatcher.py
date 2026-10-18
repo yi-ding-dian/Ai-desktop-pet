@@ -20,6 +20,7 @@ from backend.interfaces.ws.protocol import (
     AckRemindersData,
     BehaviorDoneData,
     ClientMessage,
+    DeleteReminderItemData,
     EnvUpdateData,
     GetReminderHistoryData,
     GetRemindersData,
@@ -362,12 +363,31 @@ def build_dispatcher(
         )
 
     async def on_get_reminder_history(ctx: ConnectionContext, msg: ClientMessage) -> None:
-        """拉取某一天的全部提醒事件（今日视图：已读 + 未读，时间正序）。"""
+        """拉取时钟视图：当天事件（已读 + 未读）+ 所有未到期计划，按到期时间正序。"""
         assert reminders is not None
         data = cast(GetReminderHistoryData, msg.data)
         await ctx.send_event(
             "reminder_history",
             reminders.list_history(data.date, limit=data.limit),
+            reply_to=msg.envelope.id,
+        )
+
+    async def on_delete_reminder_item(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """删除时钟视图里的一项（已触发事件或未到期计划），回两份刷新快照。"""
+        assert reminders is not None
+        data = cast(DeleteReminderItemData, msg.data)
+        result = reminders.delete_item(data.id)
+        if not result.get("ok"):
+            logger.info("删除提醒项未命中：id={}", data.id)
+        # 事件删除影响未读/历史；计划删除影响 pending；两份快照都回，前端自然收敛
+        await ctx.send_event(
+            "reminders",
+            reminders.list_unread(limit=100),
+            reply_to=msg.envelope.id,
+        )
+        await ctx.send_event(
+            "reminder_history",
+            reminders.list_history(None),
             reply_to=msg.envelope.id,
         )
 
@@ -419,6 +439,7 @@ def build_dispatcher(
         dispatcher.register("get_reminders", on_get_reminders)
         dispatcher.register("ack_reminders", on_ack_reminders)
         dispatcher.register("get_reminder_history", on_get_reminder_history)
+        dispatcher.register("delete_reminder_item", on_delete_reminder_item)
     if settings is not None:
         dispatcher.register("get_config", on_get_config)
         dispatcher.register("set_config", on_set_config)
