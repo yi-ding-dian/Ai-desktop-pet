@@ -32,6 +32,7 @@ import {
   setupSpeechBubble,
   dismissSpeechBubble,
   speakLifecycleLine,
+  setupNameOnboarding,
   setupChatHistory,
   getChatHistory,
   emotionEmoji,
@@ -207,6 +208,13 @@ export default function App(): ReactElement {
       return
     }
   }, [])
+
+  // ---- 启动称呼引导（2026-10-18）：画像里没有用户名字时，问候收尾后问一句 ----
+  // 提问/拒绝冷却都在 chat 域的 name-onboarding 里；这里只传抑制判定（教学/向导中不问）。
+  useEffect(
+    () => setupNameOnboarding(wsClient, { shouldSuppress: () => speechSuppressedRef.current }),
+    [wsClient]
+  )
 
   // ---- 提醒接线（reminders 域，2026-10-18）：后端 proactive{kind:'reminder'} → 气泡 + 系统通知 ----
   // 气泡一定会出（与语音开关无关）；教学/向导/隐藏/流式中排队，恢复后补气泡

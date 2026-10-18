@@ -32,6 +32,7 @@ from backend.interfaces.ws.protocol import (
     NotebookListData,
     NotebookRenameData,
     NotebookSaveData,
+    NoteAssistantMessageData,
     PetEventData,
     SetConfigData,
     TestLlmData,
@@ -46,12 +47,16 @@ if TYPE_CHECKING:  # 避免与 server 运行时循环 import（类型注解专�
     from backend.interfaces.ws.server import ConnectionContext
     from backend.modules.behavior.engine import BehaviorEngine
     from backend.modules.chat.history import HistoryStore
+    from backend.modules.memory.profile import ProfileStore
 
 Handler = Callable[["ConnectionContext", ClientMessage], Awaitable[None]]
 
 #: tap_head 的轻量情绪回应（v1 不调 LLM；真正"回话"属 proactive，后续版本）
 _TAP_HEAD_EMOTION = "happy"
 _TAP_HEAD_INTENSITY = 0.9
+
+#: 画像里可能存放"用户称呼"的 key（记忆提取 prompt 建议 称呼/姓名；昵称/用户名兜底）
+_USER_NAME_PROFILE_KEYS = ("称呼", "姓名", "昵称", "用户名")
 
 
 class _ConnectionSink:
@@ -191,6 +196,8 @@ def build_dispatcher(
     settings: SettingsService | None = None,
     reminders: ReminderService | None = None,
     notebook: NotebookService | None = None,
+    profile: ProfileStore | None = None,
+    memory_enabled: Callable[[], bool] | None = None,
 ) -> Dispatcher:
     """装配默认事件路由（interfaces → application 的唯一接线点）。
 
@@ -202,6 +209,10 @@ def build_dispatcher(
     ``reminders``：提醒调度服务（2026-10-18，可为 None——未装配存储时无提醒功能）。
     ``notebook``：记忆本服务（2026-10-18，可为 None——未装配时设置页记忆本请求
     与 ``notebook_file_deleted`` 均走 NOT_IMPLEMENTED；工具也不会注册）。
+    ``profile``：用户画像存储（2026-10-18 启动称呼引导，可为 None——未装配时
+    get_profile 走 NOT_IMPLEMENTED；前端静默跳过称呼引导）。
+    ``memory_enabled``：后台记忆提取开关的活引用（get_profile 回给前端，用于判断
+    "问了名字也存不上"时是否跳过引导）。
     """
     dispatcher = Dispatcher()
 
@@ -493,6 +504,60 @@ def build_dispatcher(
         )
         await ctx.send_event("llm_test_result", payload, reply_to=msg.envelope.id)
 
+    # ---------- 用户画像（2026-10-18 启动称呼引导；未装配 profile 时不注册） ----------
+
+    async def on_get_profile(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """拉取用户画像摘要（启动称呼引导）：只回是否有名字 + 名字 + 记忆开关。
+
+        名字按「称呼 → 姓名 → 昵称 → 用户名」取第一个非空值——记忆提取 prompt
+        可能写成其中任意一个 key；其余画像条目（城市/职业等）不对外暴露。
+        """
+        assert profile is not None  # 仅在装配了 profile 时注册（见下方注册块）
+        name: str | None = None
+        for key in _USER_NAME_PROFILE_KEYS:
+            try:
+                value = profile.get(key)
+            except Exception:
+                logger.exception("画像读取失败（get_profile，key={}）", key)
+                continue
+            if value and value.strip():
+                name = value.strip()
+                break
+        enabled = True
+        if memory_enabled is not None:
+            try:
+                enabled = bool(memory_enabled())
+            except Exception:
+                logger.exception("读取记忆提取开关失败（按开启返回）")
+        await ctx.send_event(
+            "profile",
+            {"has_name": name is not None, "name": name, "memory_enabled": enabled},
+            reply_to=msg.envelope.id,
+        )
+
+    async def on_note_assistant_message(
+        ctx: ConnectionContext, msg: ClientMessage
+    ) -> None:
+        """补录前端本地展示的助手台词（启动称呼提问）：只写入会话历史，不触发回复。
+
+        背景：问候/称呼提问由宠物面本地气泡展示，LLM 看不到；补录后用户对提问的
+        回答才有上下文，后台记忆提取也能据此把"称呼"写进画像。
+        未 hello（无 session）时静默忽略——不得因此创建空会话。
+        """
+        if not ctx.session_id:
+            logger.debug("补录助手台词：连接尚无会话（未 hello），忽略")
+            return
+        session = sessions.get(ctx.session_id)
+        if session is None:
+            logger.debug("补录助手台词：会话 {} 不在内存，忽略", ctx.session_id)
+            return
+        data = cast(NoteAssistantMessageData, msg.data)
+        text = (data.text or "").strip()
+        if not text:
+            return
+        session.append_message("assistant", text)
+        logger.info("补录助手台词（本地气泡）session={} len={}", session.id, len(text))
+
     dispatcher.register("ping", on_ping)
     dispatcher.register("hello", on_hello)
     dispatcher.register("user_message", on_user_message)
@@ -501,6 +566,7 @@ def build_dispatcher(
     dispatcher.register("pet_event", on_pet_event)
     dispatcher.register("behavior_done", on_behavior_done)
     dispatcher.register("env_update", on_env_update)
+    dispatcher.register("note_assistant_message", on_note_assistant_message)
     if reminders is not None:
         dispatcher.register("get_reminders", on_get_reminders)
         dispatcher.register("ack_reminders", on_ack_reminders)
@@ -516,4 +582,6 @@ def build_dispatcher(
         dispatcher.register("notebook_rename", on_notebook_rename)
         dispatcher.register("notebook_delete", on_notebook_delete)
         dispatcher.register("notebook_file_deleted", on_notebook_file_deleted)
+    if profile is not None:
+        dispatcher.register("get_profile", on_get_profile)
     return dispatcher

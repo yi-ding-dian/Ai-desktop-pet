@@ -28,6 +28,7 @@ import type { PetState } from '../../shared/protocol'
 import { subscribeVoiceSpeaking, stopVoiceNow } from '../voice'
 // 统一发送入口（P5 §7.5）：关键词（开始教学/下课）+ WS 发送 + 教学模式镜像/气泡都在此
 import { sendUserMessage } from '../teaching'
+import { notifyUserMessage } from './name-onboarding'
 import { clearChatNotice, showChatNotice, subscribeChatNotice, type ChatNotice } from './notice'
 import { speakLocalNotice } from './speech'
 
@@ -339,6 +340,8 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
     const question = text || '帮我看看这个文件'
     // 统一发送入口（teaching 域）：关键词（开始教学/下课）→ WS 发送 → 教学模式镜像 + 头顶气泡
     if (!sendUserMessage(client, question, attachments)) return
+    // 启动称呼引导（chat 域）：记录"用户已发言"；提问后的回答窗口据此判定拒绝/已回应
+    notifyUserMessage(question)
     setInput('')
     setAttachments([])
     clearChatNotice()

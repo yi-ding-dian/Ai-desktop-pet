@@ -69,6 +69,22 @@ export interface PetEventData {
 /** 拉取当前配置 */
 export interface GetConfigData {}
 
+/** 启动称呼引导（2026-10-18）：拉取用户画像摘要（无字段） */
+export interface GetProfileData {}
+
+/** 用户画像摘要：只含称呼类信息（是否有名字 + 名字 + 记忆提取开关） */
+export interface ProfileData {
+  has_name: boolean
+  name?: string | null
+  /** 后台记忆提取开关：false 时名字不会被自动写入画像，前端跳过称呼引导 */
+  memory_enabled?: boolean
+}
+
+/** 前端本地展示的助手台词补录（启动称呼提问）：只写入会话历史，不触发回复 */
+export interface NoteAssistantMessageData {
+  text: string
+}
+
 /** 更新配置（含设置 LLM key 的专用字段） */
 export interface SetConfigData {
   patch: Record<string, unknown>
@@ -457,6 +473,8 @@ export interface ServerEventMap {
   notice: NoticeData
   history: HistoryData
   config: ConfigData
+  /** 用户画像摘要（get_profile 的响应；启动称呼引导） */
+  profile: ProfileData
   llm_test_result: LlmTestResultData
   error: ErrorData
   pong: PongData
@@ -474,6 +492,10 @@ export interface ClientEventMap {
   get_config: GetConfigData
   set_config: SetConfigData
   test_llm: TestLlmData
+  /** 启动称呼引导：拉取用户画像摘要 */
+  get_profile: GetProfileData
+  /** 前端本地展示的助手台词补录（只写入会话历史，不触发回复） */
+  note_assistant_message: NoteAssistantMessageData
   load_history: LoadHistoryData
   behavior_done: BehaviorDoneData
   env_update: EnvUpdateData

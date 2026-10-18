@@ -418,6 +418,33 @@ class ConfigData(EventData):
     model_config = ConfigDict(extra="allow")
 
 
+class GetProfileData(EventData):
+    """拉取用户画像摘要（2026-10-18 启动称呼引导）：无字段。"""
+
+
+class NoteAssistantMessageData(EventData):
+    """前端本地展示的助手台词补录（2026-10-18 启动称呼提问）。
+
+    气泡里的问候/提问由主进程本地展示、不经过 LLM；补录进会话历史后，
+    用户对提问的回答才有上下文（LLM 理解 + 后台记忆提取写入画像）。
+    只记历史，**不触发回复、不产生 TTS**。
+    """
+
+    text: str = Field(min_length=1, max_length=500)
+
+
+class ProfileData(EventData):
+    """用户画像摘要：只暴露称呼类信息（是否有名字 + 名字本身）。
+
+    ``memory_enabled``：后台记忆提取开关——关闭时名字不会被自动写入画像，
+    前端据此跳过称呼引导（避免"问了却永远存不上"）。
+    """
+
+    has_name: bool
+    name: str | None = None
+    memory_enabled: bool = True
+
+
 class LlmTestResultData(EventData):
     """「测试连接」结果（§3.3）：失败时 message 说明具体原因（连不上 / 401 / 404…）；
     成功且网关支持 ``/models`` 时附可用模型列表（供下拉），拉不到则省略该字段。"""
@@ -454,6 +481,8 @@ CLIENT_EVENT_MODELS: dict[str, type[EventData]] = {
     "get_config": GetConfigData,
     "set_config": SetConfigData,
     "test_llm": TestLlmData,
+    "get_profile": GetProfileData,
+    "note_assistant_message": NoteAssistantMessageData,
     "load_history": LoadHistoryData,
     "behavior_done": BehaviorDoneData,
     "env_update": EnvUpdateData,
@@ -488,6 +517,7 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "notice": NoticeData,
     "history": HistoryData,
     "config": ConfigData,
+    "profile": ProfileData,
     "llm_test_result": LlmTestResultData,
     "error": ErrorData,
     "pong": PongData,

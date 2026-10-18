@@ -11,6 +11,7 @@ export {
   speakLifecycleLine,
   type SpeechBubbleOptions
 } from './speech'
+export { setupNameOnboarding, notifyUserMessage } from './name-onboarding'
 export { setupChatHistory, getChatHistory, clearChatHistory, type ChatRecord } from './history'
 export { emotionEmoji } from './emotions'
 export {

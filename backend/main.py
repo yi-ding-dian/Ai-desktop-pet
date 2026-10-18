@@ -171,6 +171,9 @@ def main() -> int:
         settings=settings,
         reminders=runtime.reminders,
         notebook=notebook_service,
+        # 启动称呼引导（2026-10-18）：画像里是否有用户名字 + 记忆提取开关（活引用，热更即生效）
+        profile=profile_store,
+        memory_enabled=lambda: runtime.config.memory.enabled,
     )
     app = create_app(
         dispatcher=dispatcher, app_version=__version__, voice_factory=runtime.voice_factory
