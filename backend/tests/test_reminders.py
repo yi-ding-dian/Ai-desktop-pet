@@ -22,6 +22,7 @@ from starlette.websockets import WebSocketState
 from backend.application.reminder_service import (
     REPEAT_MISS_GRACE,
     ReminderDelivery,
+    ReminderDeliveryItem,
     ReminderService,
 )
 from backend.application.voice import VoiceOut
@@ -77,6 +78,7 @@ def make_service(
         store,
         config=lambda: config or ReminderConfig(),
         quiet_hours=lambda: quiet_hours or [],
+        now=lambda: NOW,
     )
 
 
@@ -213,7 +215,7 @@ def test_tick_delivers_one_shot_and_marks_fired(store: ReminderStore) -> None:
     assert tick(service,now=NOW + timedelta(minutes=1, seconds=1)) == 1
     assert len(sink.deliveries) == 1
     delivery = sink.deliveries[0]
-    assert delivery.reminder_id == reminder.id
+    assert delivery.items[0].reminder_id == reminder.id
     assert delivery.text == "⏰ 提醒：关火"
     assert delivery.voice is False  # 默认关闭语音，但气泡消息一定送达
     assert delivery.late is False
@@ -314,6 +316,98 @@ def test_tick_respects_max_catchup(store: ReminderStore) -> None:
     assert len(store.list_active()) == 2
 
 
+def test_tick_batches_simultaneous_reminders_into_one_list(store: ReminderStore) -> None:
+    """同一 tick 到期的多条合并成一条 proactive：气泡列全部，事件逐条未读。"""
+    reminders = [
+        store.create(text, iso(NOW + timedelta(minutes=1)), now=NOW)
+        for text in ("关火", "交房租", "喝水")
+    ]
+    service = make_service(store)
+    sink = FakeSink()
+    service.set_connection(sink)
+
+    delivered = tick(service, now=NOW + timedelta(minutes=1, seconds=1))
+
+    assert delivered == 3
+    assert len(sink.deliveries) == 1
+    batch = sink.deliveries[0]
+    assert batch.batch_id.startswith("b_")
+    assert len(batch.items) == 3
+    assert batch.text.startswith("⏰ 你有 3 条提醒")
+    assert "1. " in batch.text and "2. " in batch.text and "3. " in batch.text
+    assert "关火" in batch.text and "交房租" in batch.text and "喝水" in batch.text
+    assert [item.late for item in batch.items] == [False, False, False]
+
+    snapshot = service.list_unread()
+    assert snapshot["unread_count"] == 3
+    assert {item["id"] for item in snapshot["items"]} == {
+        item.event_id for item in batch.items
+    }
+    assert all(store.get(reminder.id).status == "fired" for reminder in reminders)  # type: ignore[union-attr]
+    assert store.list_active() == []
+
+
+def test_unread_snapshot_and_acknowledge(store: ReminderStore) -> None:
+    """未读快照按事件返回；按 id 已读与全部已读都生效。"""
+    for text in ("关火", "喝水"):
+        store.create(text, iso(NOW + timedelta(minutes=1)), now=NOW)
+    service = make_service(store)
+    sink = FakeSink()
+    service.set_connection(sink)
+    tick(service, now=NOW + timedelta(minutes=1, seconds=1))
+
+    snapshot = service.list_unread()
+    assert snapshot["unread_count"] == 2
+    ids = [item["id"] for item in snapshot["items"]]
+    assert all(item["time_text"] for item in snapshot["items"])
+
+    updated = service.acknowledge(ids[:1])
+    assert updated["unread_count"] == 1
+    assert [item["id"] for item in updated["items"]] == [ids[1]]
+
+    cleared = service.acknowledge(all_=True)
+    assert cleared == {"items": [], "unread_count": 0}
+
+
+def test_history_includes_read_and_unread_for_the_day(store: ReminderStore) -> None:
+    """今日视图：已读 + 未读都返回，按触发时间正序；跨天事件不混入。"""
+    reminders = [
+        store.create(text, iso(NOW + timedelta(minutes=1)), now=NOW)
+        for text in ("关火", "喝水")
+    ]
+    service = make_service(store)
+    sink = FakeSink()
+    service.set_connection(sink)
+    tick(service, now=NOW + timedelta(minutes=1, seconds=1))
+
+    snapshot = service.list_unread()
+    first_id = snapshot["items"][0]["id"]
+    service.acknowledge([first_id])
+
+    history = service.list_history(NOW.date().isoformat())
+    assert history["date"] == NOW.date().isoformat()
+    assert len(history["items"]) == 2
+    assert history["read_count"] == 1
+    assert history["unread_count"] == 1
+    assert [item["fired_at"] for item in history["items"]] == sorted(
+        item["fired_at"] for item in history["items"]
+    )
+    assert sum(1 for item in history["items"] if item["acknowledged"]) == 1
+
+    # 再插一条昨天触发的事件（直接写事件，不经过 tick）
+    other = store.create("昨天的事", iso(NOW + timedelta(days=1)), now=NOW)
+    store.record_event(
+        other,
+        event_id=store.new_event_id(),
+        batch_id="b_yesterday",
+        fired_at=NOW - timedelta(days=1),
+        late=False,
+    )
+    today = service.list_history(NOW.date().isoformat())
+    assert len(today["items"]) == 2  # 昨天的没混进来
+    assert all(item["reminder_id"] != other.id for item in today["items"])
+
+
 def test_tick_silent_quiet_hours_disables_voice_but_keeps_bubble(store: ReminderStore) -> None:
     store.create("关火", iso(NOW + timedelta(minutes=1)), now=NOW)
     service = make_service(
@@ -400,13 +494,21 @@ class FakeCtx:
 def delivery(*, voice: bool = False) -> ReminderDelivery:
     return ReminderDelivery(
         message_id="r_test_1",
+        batch_id="b_test_1",
         text="⏰ 提醒：关火",
         spoken_text="提醒你：关火",
         emotion="surprised",
-        reminder_id="rem_test",
-        due_at=iso(NOW),
         late=False,
         voice=voice,
+        items=(
+            ReminderDeliveryItem(
+                event_id="e_test_1",
+                reminder_id="rem_test",
+                text="关火",
+                due_at=iso(NOW),
+                late=False,
+            ),
+        ),
     )
 
 
@@ -420,7 +522,9 @@ def test_reminder_sink_always_sends_proactive_even_without_voice() -> None:
     payload = ctx.sent[0][1]
     assert payload["kind"] == "reminder"
     assert payload["text"] == "⏰ 提醒：关火"
-    assert payload["reminder_id"] == "rem_test"
+    assert payload["batch_id"] == "b_test_1"
+    assert payload["items"][0]["id"] == "e_test_1"
+    assert payload["reminder_id"] == "rem_test"  # 兼容旧字段：批次第一项
     assert ctx.frames == []
 
 

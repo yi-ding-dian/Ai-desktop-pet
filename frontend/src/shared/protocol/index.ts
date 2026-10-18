@@ -93,6 +93,38 @@ export interface BehaviorDoneData {
   interrupted: boolean
 }
 
+/** 拉取未读提醒（提醒列表，2026-10-18） */
+export interface GetRemindersData {
+  limit?: number
+}
+
+/** 提醒已读回执：按事件 id 或全部（2026-10-18） */
+export interface AckRemindersData {
+  ids?: string[]
+  all?: boolean
+}
+
+/** 拉取某一天的全部提醒事件（已读 + 未读；缺省今天） */
+export interface GetReminderHistoryData {
+  date?: string | null
+  limit?: number
+}
+
+/** 提醒事件单项（proactive.items / reminders.items 共用，与 protocol.py ReminderItemData 对齐） */
+export interface ReminderItemData {
+  /** reminder_events 事件 id（"知道了"按它回执） */
+  id: string
+  reminder_id: string
+  text: string
+  due_at: string
+  fired_at: string
+  late: boolean
+  /** 是否已读（今日视图里绿点/红点） */
+  acknowledged: boolean
+  /** 后端格式化好的用户可读时间（今天 09:00 / 10月18日 09:00） */
+  time_text: string
+}
+
 /** 屏幕坐标点（与 electron/window Point 结构一致；协议层独立定义避免依赖 electron 目录） */
 export interface EnvPoint {
   x: number
@@ -220,9 +252,28 @@ export interface ProactiveData {
   text: string
   emotion: string
   kind?: 'greeting' | 'reminder'
+  /** 同一 tick 的提醒批次 id（气泡 meta 用它关联已读回执） */
+  batch_id?: string | null
+  /** 本批提醒逐项（单条时长度 1；气泡"知道了"按各项 id 回执） */
+  items?: ReminderItemData[]
+  /** 兼容单条旧字段：items 的第一项 */
   reminder_id?: string | null
   due_at?: string | null
   late?: boolean
+}
+
+/** 未读提醒快照（get_reminders / ack_reminders 的响应） */
+export interface RemindersData {
+  items: ReminderItemData[]
+  unread_count: number
+}
+
+/** 某一天的全部提醒事件（今日视图；已读 + 未读，时间正序） */
+export interface ReminderHistoryData {
+  date: string
+  items: ReminderItemData[]
+  read_count: number
+  unread_count: number
 }
 
 /**
@@ -316,6 +367,10 @@ export interface ServerEventMap {
   /** 工具调用（§4.7 工具机制）：reply_end 之后推送，前端按 name 执行（如 open_settings 开设置窗） */
   tool_call: ToolCallData
   proactive: ProactiveData
+  /** 未读提醒快照（get_reminders / ack_reminders 的响应） */
+  reminders: RemindersData
+  /** 某一天的全部提醒事件（今日视图） */
+  reminder_history: ReminderHistoryData
   /** 一次性提示（文件分析丢历史等）；前端顶部/输入框上方轻提示 */
   notice: NoticeData
   history: HistoryData
@@ -340,6 +395,9 @@ export interface ClientEventMap {
   load_history: LoadHistoryData
   behavior_done: BehaviorDoneData
   env_update: EnvUpdateData
+  get_reminders: GetRemindersData
+  ack_reminders: AckRemindersData
+  get_reminder_history: GetReminderHistoryData
   audio_chunk: AudioChunkData
 }
 

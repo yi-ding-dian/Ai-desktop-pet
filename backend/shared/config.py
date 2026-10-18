@@ -86,8 +86,8 @@ enabled                     = true
 voice                       = false
 # 免打扰时段策略：normal=照常提醒 / silent=只出气泡不出声（时段沿用 [behavior].quiet_hours）
 quiet_hours_policy          = "normal"
-# 一次最多补报几条错过的提醒（1–10）
-max_catchup                 = 3
+# 一次最多合并/补报几条提醒（1–10；同一轮到期的会合并成一条列表气泡）
+max_catchup                 = 10
 # 宠物隐藏时是否补系统通知
 os_notification_when_hidden = true
 # 二期"稍后提醒"默认分钟数（当前仅存配置）
@@ -282,13 +282,13 @@ class ReminderConfig(BaseModel):
       语音只是附加通道；全局语音关闭时也自然静默）；
     - ``quiet_hours_policy``：免打扰时段策略（时段沿用 ``[behavior].quiet_hours``）：
       ``normal`` = 照常提醒，``silent`` = 只出气泡不出声；
-    - ``max_catchup``：一次 tick 最多补报几条（避免启动时语音轰炸）。
+    - ``max_catchup``：一次 tick 最多合并/补报几条（同一轮到期会列在同一气泡里）。
     """
 
     enabled: bool = True
     voice: bool = False
     quiet_hours_policy: str = "normal"
-    max_catchup: int = 3
+    max_catchup: int = 10
     os_notification_when_hidden: bool = True
     snooze_minutes: int = 10
 

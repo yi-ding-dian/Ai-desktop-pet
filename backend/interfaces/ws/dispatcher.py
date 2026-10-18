@@ -17,9 +17,12 @@ from backend.application.settings_service import ConfigInvalid, SettingsService
 from backend.interfaces.ws.auth import verify_token
 from backend.interfaces.ws.protocol import (
     PROTOCOL_VERSION,
+    AckRemindersData,
     BehaviorDoneData,
     ClientMessage,
     EnvUpdateData,
+    GetReminderHistoryData,
+    GetRemindersData,
     HelloAckData,
     HelloData,
     LoadHistoryData,
@@ -87,6 +90,7 @@ class _ReminderSink:
     async def deliver(self, delivery: ReminderDelivery) -> bool:
         if self.is_closed():
             return False
+        first = delivery.items[0] if delivery.items else None
         await self._ctx.send_event(
             "proactive",
             {
@@ -94,8 +98,20 @@ class _ReminderSink:
                 "text": delivery.text,
                 "emotion": delivery.emotion,
                 "kind": "reminder",
-                "reminder_id": delivery.reminder_id,
-                "due_at": delivery.due_at,
+                "batch_id": delivery.batch_id,
+                "items": [
+                    {
+                        "id": item.event_id,
+                        "reminder_id": item.reminder_id,
+                        "text": item.text,
+                        "due_at": item.due_at,
+                        "late": item.late,
+                    }
+                    for item in delivery.items
+                ],
+                # 兼容旧字段：批次第一项
+                "reminder_id": first.reminder_id if first else None,
+                "due_at": first.due_at if first else None,
                 "late": delivery.late,
             },
         )
@@ -325,6 +341,36 @@ def build_dispatcher(
         if engine is not None:
             engine.update_env(data)
 
+    # ---------- 提醒列表（2026-10-18；未装配提醒服务时不注册） ----------
+
+    async def on_get_reminders(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """拉取未读提醒快照（列表/未读数）。"""
+        assert reminders is not None
+        data = cast(GetRemindersData, msg.data)
+        await ctx.send_event(
+            "reminders", reminders.list_unread(limit=data.limit), reply_to=msg.envelope.id
+        )
+
+    async def on_ack_reminders(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """标记提醒已读（按事件 id 或全部），回更新后的未读快照。"""
+        assert reminders is not None
+        data = cast(AckRemindersData, msg.data)
+        await ctx.send_event(
+            "reminders",
+            reminders.acknowledge(data.ids, all_=data.all),
+            reply_to=msg.envelope.id,
+        )
+
+    async def on_get_reminder_history(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """拉取某一天的全部提醒事件（今日视图：已读 + 未读，时间正序）。"""
+        assert reminders is not None
+        data = cast(GetReminderHistoryData, msg.data)
+        await ctx.send_event(
+            "reminder_history",
+            reminders.list_history(data.date, limit=data.limit),
+            reply_to=msg.envelope.id,
+        )
+
     # ---------- 设置面板（§7.6；未装配 settings 时不注册，走 NOT_IMPLEMENTED） ----------
 
     async def on_get_config(ctx: ConnectionContext, msg: ClientMessage) -> None:
@@ -369,6 +415,10 @@ def build_dispatcher(
     dispatcher.register("pet_event", on_pet_event)
     dispatcher.register("behavior_done", on_behavior_done)
     dispatcher.register("env_update", on_env_update)
+    if reminders is not None:
+        dispatcher.register("get_reminders", on_get_reminders)
+        dispatcher.register("ack_reminders", on_ack_reminders)
+        dispatcher.register("get_reminder_history", on_get_reminder_history)
     if settings is not None:
         dispatcher.register("get_config", on_get_config)
         dispatcher.register("set_config", on_set_config)

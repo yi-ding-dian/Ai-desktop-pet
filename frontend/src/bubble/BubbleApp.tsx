@@ -89,7 +89,9 @@ export default function BubbleApp(): ReactElement {
         ? bridge.onUpdate((p: BubbleUpdatePayload) => {
             if (!p || p.session !== lastSession) return
             setPayload((prev) =>
-              prev && prev.variant === 'text' ? { ...prev, message: p.message } : prev
+              prev && prev.variant === 'text'
+                ? { ...prev, message: p.message, meta: p.meta ?? prev.meta }
+                : prev
             )
           })
         : () => {}
@@ -169,6 +171,7 @@ export default function BubbleApp(): ReactElement {
       variant={payload.variant}
       items={payload.variant === 'menu' ? payload.items : undefined}
       message={payload.variant !== 'menu' ? payload.message : undefined}
+      meta={payload.variant === 'text' ? payload.meta : undefined}
       confirmLabel={payload.variant === 'confirm' ? payload.confirmLabel : undefined}
       cancelLabel={payload.variant === 'confirm' ? payload.cancelLabel : undefined}
       tail={tail}

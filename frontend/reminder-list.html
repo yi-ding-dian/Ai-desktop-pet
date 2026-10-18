@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>提醒</title>
+    <script>
+      // 首帧防闪烁：与 bubble.html 同一套主题基调判定（主题变量由 shared/theme 注入）
+      ;(function () {
+        var PRESET_TONE = {
+          dark: 'dark',
+          blue: 'dark',
+          violet: 'dark',
+          plum: 'dark',
+          light: 'light',
+          warm: 'light',
+          mint: 'light',
+          sakura: 'light'
+        }
+        var tone = 'light'
+        try {
+          var raw = localStorage.getItem('pet-theme') || 'preset:mint'
+          var key = raw.indexOf('preset:') === 0 ? raw.slice(7) : raw
+          if (key === 'system') {
+            tone = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+          } else if (raw.indexOf('custom:') === 0) {
+            var bg = ''
+            try {
+              var list = JSON.parse(localStorage.getItem('pet-my-themes') || '[]')
+              var id = raw.slice(7)
+              for (var i = 0; i < list.length; i++) {
+                if (list[i] && list[i].id === id && list[i].colors) bg = String(list[i].colors.bg || '')
+              }
+            } catch (e2) {
+              /* 数据损坏：走兜底 */
+            }
+            var m = bg.match(/^#?([0-9a-f]{6})$/i)
+            if (m) {
+              var n = parseInt(m[1], 16)
+              var lum =
+                (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255
+              tone = lum < 0.5 ? 'dark' : 'light'
+            }
+          } else if (PRESET_TONE[key]) {
+            tone = PRESET_TONE[key]
+          }
+        } catch (e) {
+          /* localStorage 不可用：用默认 */
+        }
+        document.documentElement.dataset.theme = tone
+      })()
+    </script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/reminder-list/main.tsx"></script>
+  </body>
+</html>

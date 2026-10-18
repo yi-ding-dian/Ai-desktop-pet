@@ -43,6 +43,7 @@ import type { Rect } from '../../electron/window'
 import type {
   BubbleMenuItemPayload,
   BubbleMotion,
+  BubbleSpeechMeta,
   BubbleTail,
   BubbleVariant
 } from '../../electron/ipc/channels'
@@ -81,6 +82,8 @@ export interface PetBubbleProps {
   items?: BubbleMenuItemPayload[]
   /** confirm/text：文本内容 */
   message?: string
+  /** text：消息属性（提醒气泡显示「知道了」；普通回复显示「展开」） */
+  meta?: BubbleSpeechMeta
   /** confirm：确认按钮文案（默认「确定」） */
   confirmLabel?: string
   /** confirm：取消按钮文案（默认「取消」） */
@@ -165,6 +168,7 @@ export default function PetBubble({
   variant,
   items,
   message,
+  meta,
   confirmLabel = '确定',
   cancelLabel = '取消',
   tail = 'down',
@@ -395,16 +399,29 @@ export default function PetBubble({
           恒定占位——形状上报含它，鼠标进条区即触发；点击回传 action） */}
       {variant === 'text' ? (
         <div className="pet-bubble-toolbar" ref={toolbarRef} data-testid="speech-toolbar">
-          <button
-            type="button"
-            className="pet-bubble-tool"
-            data-testid="speech-tool-expand"
-            title="展开（带着聊天记录进入教学）"
-            onClick={() => onAction('expand')}
-          >
-            <ExpandIcon />
-            <span>展开</span>
-          </button>
+          {meta?.kind === 'reminder' ? (
+            <button
+              type="button"
+              className="pet-bubble-tool"
+              data-testid="speech-tool-ack"
+              title="知道了（标记这条提醒已读）"
+              onClick={() => onAction('reminder-ack')}
+            >
+              <CheckIcon />
+              <span>知道了</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="pet-bubble-tool"
+              data-testid="speech-tool-expand"
+              title="展开（带着聊天记录进入教学）"
+              onClick={() => onAction('expand')}
+            >
+              <ExpandIcon />
+              <span>展开</span>
+            </button>
+          )}
           <button
             type="button"
             className="pet-bubble-tool pet-bubble-tool-icon"
@@ -473,7 +490,15 @@ export default function PetBubble({
           </div>
         ) : null}
 
-        {variant === 'text' ? <div className="pet-bubble-message">{message}</div> : null}
+        {variant === 'text' ? (
+          <div
+            className={`pet-bubble-message${
+              meta?.kind === 'reminder' ? ' pet-bubble-message-reminder' : ''
+            }`}
+          >
+            {message}
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -499,6 +524,25 @@ function ExpandIcon(): ReactElement {
       <path d="M9 21H3v-6" />
       <path d="M21 3l-7 7" />
       <path d="M3 21l7-7" />
+    </svg>
+  )
+}
+
+/** 对勾：提醒气泡「知道了」 */
+function CheckIcon(): ReactElement {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 12.5l5 5L20 6.5" />
     </svg>
   )
 }

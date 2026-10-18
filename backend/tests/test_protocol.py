@@ -141,6 +141,9 @@ CLIENT_MIN_DATA: dict[str, dict] = {
     "load_history": {"session_id": "s1"},
     "behavior_done": {"id": "b1"},
     "env_update": {},
+    "get_reminders": {"limit": 20},
+    "ack_reminders": {"ids": ["e1"]},
+    "get_reminder_history": {},
     "audio_chunk": {},
 }
 
@@ -156,6 +159,8 @@ SERVER_MIN_DATA: dict[str, dict] = {
     "reply_end": {"message_id": "m1", "full_text": "a"},
     "tool_call": {"id": "call_1", "name": "open_settings", "args": {}},
     "proactive": {"message_id": "m1", "text": "hi"},
+    "reminders": {"items": [], "unread_count": 0},
+    "reminder_history": {"date": "2026-10-18", "items": [], "read_count": 0, "unread_count": 0},
     "notice": {"code": "context_reset", "message": "为了装下文件，先不带之前的聊天了"},
     "history": {"session_id": "s1"},
     "config": {},

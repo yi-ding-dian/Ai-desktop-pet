@@ -412,3 +412,13 @@ body,
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* 提醒气泡：多条编号列表必须保留换行；允许比普通回复更高的行数（窗上限 420px）。
+   超出仍裁切——完整未读在右侧提醒列表里，气泡只负责"立刻看到全部"。 */
+.pet-bubble-text .pet-bubble-message.pet-bubble-message-reminder {
+  display: block;
+  -webkit-line-clamp: unset;
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow: hidden;
+}

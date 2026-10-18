@@ -14,6 +14,7 @@
     "test:click-through": "esbuild electron/window/click-through.test.ts --bundle --platform=node --format=esm --outfile=out/tests/click-through.test.mjs && esbuild electron/window/xdotool-cursor-source.test.ts --bundle --platform=node --format=esm --outfile=out/tests/xdotool-cursor-source.test.mjs && node out/tests/click-through.test.mjs && node out/tests/xdotool-cursor-source.test.mjs",
     "test:bubble-geometry": "esbuild electron/bubble/geometry.test.ts --bundle --platform=node --format=esm --outfile=out/tests/bubble-geometry.test.mjs && node out/tests/bubble-geometry.test.mjs",
     "test:teaching-geometry": "esbuild electron/teaching/geometry.test.ts --bundle --platform=node --format=esm --outfile=out/tests/teaching-geometry.test.mjs && node out/tests/teaching-geometry.test.mjs",
+    "test:reminder-list-geometry": "esbuild electron/reminder-list/geometry.test.ts --bundle --platform=node --format=esm --outfile=out/tests/reminder-list-geometry.test.mjs && node out/tests/reminder-list-geometry.test.mjs",
     "dist:linux": "npm run build && electron-builder --linux AppImage",
     "dist:linux-deb": "npm run build && electron-builder --linux AppImage deb",
     "dist:win": "npm run build && electron-builder --win",

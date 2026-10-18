@@ -8,17 +8,24 @@ import {
   IPC_BUBBLE,
   IPC_EVENTS,
   IPC_BALL_ANIMATION,
+  IPC_REMINDER_LIST,
   type BackendReadyPayload,
   type BackendSnapshot,
   type BackendStatusPayload,
   type BubbleOpenPayload,
   type BubbleRequest,
+  type BubbleSayBeginPayload,
+  type BubbleSpeechEventPayload,
+  type BubbleSpeechMeta,
   type BubbleTail,
   type BubbleUpdatePayload,
   type BallAnimationCommand,
   type BallAnimationPetReactionPayload,
   type PetBridgeApi,
   type PickedFile,
+  type ReminderListActionPayload,
+  type ReminderListOpenPayload,
+  type ReminderListUpdatePayload,
   type SettingsVisibilityPayload,
   type TeachingBoardInbox,
   type TeachingEnterReason,
@@ -283,8 +290,9 @@ const api: PetBridgeApi = {
       ipcRenderer.send(IPC.BUBBLE_REQUEST_OPEN, request)
     },
 
-    sayBegin(): void {
-      ipcRenderer.send(IPC_BUBBLE.SAY_BEGIN)
+    sayBegin(meta?: BubbleSpeechMeta): void {
+      const payload: BubbleSayBeginPayload = { meta }
+      ipcRenderer.send(IPC_BUBBLE.SAY_BEGIN, payload)
     },
 
     sayText(text: string): void {
@@ -368,6 +376,62 @@ const api: PetBridgeApi = {
       ipcRenderer.on(IPC_BUBBLE.SET_TAIL, listener)
       return () => {
         ipcRenderer.removeListener(IPC_BUBBLE.SET_TAIL, listener)
+      }
+    },
+
+    onSpeechEvent(cb: (payload: BubbleSpeechEventPayload) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: BubbleSpeechEventPayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_EVENTS.BUBBLE_SPEECH_EVENT, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.BUBBLE_SPEECH_EVENT, listener)
+      }
+    }
+  },
+
+  /** 提醒列表窗：宠物面推送未读快照 + 接收列表页动作（主进程摆窗/转发） */
+  reminderList: {
+    update(payload: ReminderListUpdatePayload): void {
+      ipcRenderer.send(IPC_REMINDER_LIST.UPDATE, payload)
+    },
+
+    ready(): void {
+      ipcRenderer.send(IPC_REMINDER_LIST.READY)
+    },
+
+    reportSize(size: { width: number; height: number }): void {
+      ipcRenderer.send(IPC_REMINDER_LIST.REPORT_SIZE, size)
+    },
+
+    action(payload: ReminderListActionPayload): void {
+      ipcRenderer.send(IPC_REMINDER_LIST.ACTION, payload)
+    },
+
+    contextMenu(): void {
+      ipcRenderer.send(IPC_REMINDER_LIST.CONTEXT_MENU)
+    },
+
+    onOpen(cb: (payload: ReminderListOpenPayload) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: ReminderListOpenPayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_REMINDER_LIST.OPEN, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_REMINDER_LIST.OPEN, listener)
+      }
+    },
+
+    onAction(cb: (payload: ReminderListActionPayload) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: ReminderListActionPayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_EVENTS.REMINDER_LIST_ACTION, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.REMINDER_LIST_ACTION, listener)
       }
     }
   },

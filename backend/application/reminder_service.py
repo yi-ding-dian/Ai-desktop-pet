@@ -17,9 +17,10 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Callable, Protocol
+from datetime import date, datetime, timedelta
+from typing import Callable, Protocol, Sequence
 
 from loguru import logger
 
@@ -27,6 +28,7 @@ from backend.modules.behavior import rules
 from backend.modules.reminders import (
     Reminder,
     ReminderError,
+    ReminderEvent,
     ReminderStore,
     advance_past,
     format_confirmation,
@@ -44,17 +46,32 @@ REPEAT_MISS_GRACE = timedelta(minutes=5)
 
 
 @dataclass(frozen=True)
+class ReminderDeliveryItem:
+    """一条已到点提醒（批量下行的单项；event_id 供前端已读/列表使用）。"""
+
+    event_id: str
+    reminder_id: str
+    text: str
+    due_at: str
+    late: bool
+
+
+@dataclass(frozen=True)
 class ReminderDelivery:
-    """一次到点提醒的下行载荷（由 interfaces 层转成 proactive 事件 + 音频帧）。"""
+    """一次到点提醒批次的下行载荷（同一 tick 的多条合并成一条 proactive）。
+
+    ``items`` 顺序即展示顺序；``event_id`` 在送达成功后才落 reminder_events，
+    前端拿它做"知道了"回执。
+    """
 
     message_id: str
+    batch_id: str
     text: str
     spoken_text: str
     emotion: str
-    reminder_id: str
-    due_at: str
     late: bool
     voice: bool
+    items: tuple[ReminderDeliveryItem, ...]
 
 
 class ReminderSink(Protocol):
@@ -229,6 +246,56 @@ class ReminderService:
             "reminder_id": reminder.id,
         }
 
+    # ---------------------------------------------------------------- 未读列表（WS get/ack）
+
+    def list_unread(self, limit: int = 50) -> dict:
+        """未读提醒快照（前端列表/球标用）：最新在前，含用户可读时间文案。"""
+        now = self._now()
+        events = self._store.list_unread(max(1, min(100, limit)))
+        return {
+            "items": [self._event_payload(event, now) for event in events],
+            "unread_count": self._store.count_unread(),
+        }
+
+    def acknowledge(self, ids: Sequence[str] | None = None, *, all_: bool = False) -> dict:
+        """标记提醒已读（按事件 id / 全部），返回更新后的未读快照。"""
+        count = self._store.acknowledge(ids, all_=all_, now=self._now())
+        logger.info("提醒已读：{} 条（all={}）", count, all_)
+        return self.list_unread()
+
+    def list_history(self, day: str | None = None, limit: int = 200) -> dict:
+        """某一天的全部提醒事件（已读 + 未读，按触发时间正序）——今日视图。"""
+        now = self._now()
+        day_value = now.date()
+        if day:
+            try:
+                day_value = date.fromisoformat(day)
+            except ValueError:
+                logger.warning("提醒历史日期格式非法（{}），回退为今天", day)
+        events = self._store.list_for_day(day_value, now=now)[
+            : max(1, min(500, limit))
+        ]
+        read_count = sum(1 for event in events if event.acknowledged)
+        return {
+            "date": day_value.isoformat(),
+            "items": [self._event_payload(event, now) for event in events],
+            "read_count": read_count,
+            "unread_count": len(events) - read_count,
+        }
+
+    @staticmethod
+    def _event_payload(event: ReminderEvent, now: datetime) -> dict:
+        return {
+            "id": event.id,
+            "reminder_id": event.reminder_id,
+            "text": event.text,
+            "due_at": event.due_at,
+            "fired_at": event.fired_at,
+            "late": event.late,
+            "acknowledged": event.acknowledged,
+            "time_text": format_due(event.due_datetime, now),
+        }
+
     # ---------------------------------------------------------------- 调度
 
     async def tick_once(self, now: datetime | None = None) -> int:
@@ -251,7 +318,9 @@ class ReminderService:
         due = [item for item in self._store.scheduled() if item.due_datetime <= now]
         due.sort(key=lambda item: item.due_datetime)
 
-        delivered = 0
+        # 同一 tick 到期的提醒合并成一个批次（一条 proactive 列全部）——避免多条同时到达时
+        # 气泡互相覆盖、语音逐条轰炸（2026-10-18 用户定稿"全部显示，列出来"）。
+        batch: list[tuple[Reminder, bool]] = []
         for reminder in due[: max(1, config.max_catchup)]:
             overdue = now - reminder.due_datetime
             if self._is_repeating(reminder) and overdue > REPEAT_MISS_GRACE:
@@ -265,49 +334,87 @@ class ReminderService:
                     next_due.isoformat(timespec="seconds"),
                 )
                 continue
+            batch.append((reminder, overdue > LATE_THRESHOLD))
+        if not batch:
+            return 0
 
-            delivery = self._build_delivery(reminder, now, overdue, config)
-            ok = await sink.deliver(delivery)
-            if not ok:
-                logger.warning("提醒送达失败（连接已断开？），下轮重试：id={}", reminder.id)
-                break
+        batch_id = f"b_{uuid.uuid4().hex[:12]}"
+        items = tuple(
+            ReminderDeliveryItem(
+                event_id=self._store.new_event_id(),
+                reminder_id=reminder.id,
+                text=reminder.text,
+                due_at=reminder.due_at,
+                late=late,
+            )
+            for reminder, late in batch
+        )
+        delivery = self._build_delivery(items, now, config, batch_id)
+        ok = await sink.deliver(delivery)
+        if not ok:
+            logger.warning("提醒批次送达失败（连接已断开？），下轮重试：batch={}", batch_id)
+            return 0
+
+        # 送达成功后才落事件与推进状态：连接失败时整批保留，下轮重试不会产生未读脏数据。
+        for (reminder, late), item in zip(batch, items):
+            try:
+                self._store.record_event(
+                    reminder,
+                    event_id=item.event_id,
+                    batch_id=batch_id,
+                    fired_at=now,
+                    late=late,
+                )
+            except Exception:
+                # 事件落库失败不回头重发（已展示过），只记日志——避免同一提醒无限重复推送
+                logger.exception("提醒事件落库失败（提醒仍按已处理推进）：id={}", reminder.id)
             if self._is_repeating(reminder):
                 next_due = advance_past(reminder.due_datetime, reminder.repeat_rule, now)
                 self._store.reschedule(reminder.id, next_due)
             else:
                 self._store.mark_fired(reminder.id, now=now)
-            delivered += 1
-            logger.info(
-                "提醒已送达 id={} 字数={} late={} voice={}",
-                reminder.id,
-                len(reminder.text),
-                delivery.late,
-                delivery.voice,
-            )
-        return delivered
+        logger.info(
+            "提醒批次已送达 batch={} 条数={} late={} voice={}",
+            batch_id,
+            len(batch),
+            delivery.late,
+            delivery.voice,
+        )
+        return len(batch)
 
     def _build_delivery(
         self,
-        reminder: Reminder,
+        items: tuple[ReminderDeliveryItem, ...],
         now: datetime,
-        overdue: timedelta,
         config: ReminderConfig,
+        batch_id: str,
     ) -> ReminderDelivery:
-        """组装下行载荷：补报时给气泡加前缀；免打扰 silent 策略下不出声。"""
-        late = overdue > LATE_THRESHOLD
-        prefix = "⏰ 补报提醒：" if late else "⏰ 提醒："
+        """组装批量下行载荷：单条用短句，多条编号列出；语音合并成一句。"""
+        if len(items) == 1:
+            item = items[0]
+            text = ("⏰ 补报提醒：" if item.late else "⏰ 提醒：") + item.text
+            spoken = f"提醒你：{item.text}"
+        else:
+            lines = [f"⏰ 你有 {len(items)} 条提醒"]
+            for index, item in enumerate(items, 1):
+                due = datetime.fromisoformat(item.due_at)
+                suffix = "（补报）" if item.late else ""
+                lines.append(f"{index}. {format_due(due, now)} {item.text}{suffix}")
+            text = "\n".join(lines)
+            spoken = f"提醒你 {len(items)} 件事：" + "、".join(item.text for item in items)
+
         voice = config.voice and not (
             config.quiet_hours_policy == "silent" and self._in_quiet_hours(now)
         )
         return ReminderDelivery(
-            message_id=f"r_{reminder.id}_{int(now.timestamp())}",
-            text=f"{prefix}{reminder.text}",
-            spoken_text=f"提醒你：{reminder.text}",
+            message_id=f"r_{batch_id}",
+            batch_id=batch_id,
+            text=text,
+            spoken_text=spoken,
             emotion="surprised",
-            reminder_id=reminder.id,
-            due_at=reminder.due_at,
-            late=late,
+            late=any(item.late for item in items),
             voice=voice,
+            items=items,
         )
 
     def _in_quiet_hours(self, now: datetime) -> bool:

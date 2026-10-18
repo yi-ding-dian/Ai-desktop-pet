@@ -15,8 +15,8 @@ from __future__ import annotations
 import sqlite3
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Literal
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Literal, Sequence
 
 #: 合法重复规则（None / "none" 都表示一次性）
 REPEAT_RULES: tuple[str, ...] = ("none", "daily", "weekdays", "weekly")
@@ -42,7 +42,7 @@ class ReminderError(Exception):
 
 @dataclass(frozen=True)
 class Reminder:
-    """一条提醒（与 reminders 表逐字段对应）。"""
+    """一条提醒计划（与 reminders 表逐字段对应）。"""
 
     id: str
     text: str
@@ -57,6 +57,35 @@ class Reminder:
     def due_datetime(self) -> datetime:
         """``due_at`` 的 datetime（带偏移；库中数据由本域写入，格式可控）。"""
         return datetime.fromisoformat(self.due_at)
+
+
+@dataclass(frozen=True)
+class ReminderEvent:
+    """一次到点触发事件（与 reminder_events 表逐字段对应）。
+
+    一张提醒计划可以触发多次（重复提醒），每次一条事件；提醒列表/未读状态都以事件为单位。
+    """
+
+    id: str
+    reminder_id: str
+    batch_id: str
+    text: str
+    due_at: str
+    fired_at: str
+    acknowledged_at: str | None
+    late: bool
+
+    @property
+    def due_datetime(self) -> datetime:
+        return datetime.fromisoformat(self.due_at)
+
+    @property
+    def fired_datetime(self) -> datetime:
+        return datetime.fromisoformat(self.fired_at)
+
+    @property
+    def acknowledged(self) -> bool:
+        return self.acknowledged_at is not None
 
 
 def _now_local() -> datetime:
@@ -283,6 +312,109 @@ class ReminderStore:
         items.sort(key=lambda item: item.due_datetime)
         return items[: max(1, limit)]
 
+    # ---------------------------------------------------------------- 触发事件（未读列表）
+
+    @staticmethod
+    def new_event_id() -> str:
+        """生成事件 id（服务在送达前要先把 id 放进 proactive，再落库）。"""
+        return f"e_{uuid.uuid4().hex[:12]}"
+
+    def record_event(
+        self,
+        reminder: Reminder,
+        *,
+        event_id: str,
+        batch_id: str,
+        fired_at: datetime,
+        late: bool,
+    ) -> ReminderEvent:
+        """记录一次成功送达的提醒事件（未读；重复提醒每次触发各一条）。"""
+        self._conn.execute(
+            """
+            INSERT INTO reminder_events
+              (id, reminder_id, batch_id, text, due_at, fired_at, acknowledged_at, late)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+            """,
+            (
+                event_id,
+                reminder.id,
+                batch_id,
+                reminder.text,
+                reminder.due_at,
+                _iso(fired_at),
+                1 if late else 0,
+            ),
+        )
+        event = self.get_event(event_id)
+        if event is None:  # 防御性兜底（插入后读不到）
+            raise ReminderError("提醒事件保存失败（写入后读取不到）")
+        return event
+
+    def get_event(self, event_id: str) -> ReminderEvent | None:
+        row = self._conn.execute(
+            "SELECT * FROM reminder_events WHERE id=?", (event_id,)
+        ).fetchone()
+        return _to_event(row) if row is not None else None
+
+    def list_unread(self, limit: int = 50) -> list[ReminderEvent]:
+        """未读事件（最新的在前；提醒列表用）。"""
+        rows = self._conn.execute(
+            "SELECT * FROM reminder_events WHERE acknowledged_at IS NULL "
+            "ORDER BY fired_at DESC, id DESC LIMIT ?",
+            (max(1, limit),),
+        ).fetchall()
+        return [_to_event(row) for row in rows]
+
+    def count_unread(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM reminder_events WHERE acknowledged_at IS NULL"
+        ).fetchone()
+        return int(row["n"]) if row is not None else 0
+
+    def list_for_day(self, day: date, *, now: datetime | None = None) -> list[ReminderEvent]:
+        """某一天触发的事件（已读 + 未读，按触发时间正序）——提醒“今日”视图用。"""
+        now = now or _now_local()
+        tz = now.tzinfo or timezone.utc
+        start = datetime.combine(day, time.min, tzinfo=tz)
+        end = start + timedelta(days=1)
+        rows = self._conn.execute(
+            "SELECT * FROM reminder_events WHERE fired_at >= ? AND fired_at < ? "
+            "ORDER BY fired_at ASC, id ASC",
+            (_iso(start), _iso(end)),
+        ).fetchall()
+        # 偏移不同的历史数据兜底：按本地日期精确过滤
+        return [
+            event
+            for event in (_to_event(row) for row in rows)
+            if event.fired_datetime.astimezone(tz).date() == day
+        ]
+
+    def acknowledge(
+        self,
+        ids: Sequence[str] | None = None,
+        *,
+        all_: bool = False,
+        now: datetime | None = None,
+    ) -> int:
+        """标记事件已读；``all_=True`` 清空全部未读。返回本次标记条数。"""
+        stamp = _iso(now or _now_local())
+        if all_:
+            cursor = self._conn.execute(
+                "UPDATE reminder_events SET acknowledged_at=? WHERE acknowledged_at IS NULL",
+                (stamp,),
+            )
+            return int(cursor.rowcount or 0)
+        cleaned = [str(item) for item in (ids or []) if str(item).strip()]
+        if not cleaned:
+            return 0
+        placeholders = ",".join("?" for _ in cleaned)
+        cursor = self._conn.execute(
+            f"UPDATE reminder_events SET acknowledged_at=? "
+            f"WHERE acknowledged_at IS NULL AND id IN ({placeholders})",
+            (stamp, *cleaned),
+        )
+        return int(cursor.rowcount or 0)
+
 
 def _iso(value: datetime) -> str:
     return value.isoformat(timespec="seconds")
@@ -298,4 +430,19 @@ def _to_reminder(row: sqlite3.Row) -> Reminder:
         created_at=str(row["created_at"]),
         fired_at=str(row["fired_at"]) if row["fired_at"] is not None else None,
         session_id=str(row["session_id"]) if row["session_id"] is not None else None,
+    )
+
+
+def _to_event(row: sqlite3.Row) -> ReminderEvent:
+    return ReminderEvent(
+        id=str(row["id"]),
+        reminder_id=str(row["reminder_id"]),
+        batch_id=str(row["batch_id"]),
+        text=str(row["text"]),
+        due_at=str(row["due_at"]),
+        fired_at=str(row["fired_at"]),
+        acknowledged_at=(
+            str(row["acknowledged_at"]) if row["acknowledged_at"] is not None else None
+        ),
+        late=bool(row["late"]),
     )

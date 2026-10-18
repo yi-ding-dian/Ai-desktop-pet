@@ -15,7 +15,7 @@
  * 容错：bridge 缺失（浏览器直开调试）时静默降级为无气泡（对话其余链路不受影响）。
  */
 import { getPetBridge } from '../../shared/pet-bridge'
-import type { PetBridgeApi } from '../../../electron/ipc/channels'
+import type { BubbleSpeechMeta, PetBridgeApi } from '../../../electron/ipc/channels'
 import type { WsClient } from '../../shared/ws-client'
 
 /** 文本快照节流窗口（ms）：窗口内多次 token 合并为一次全文下发 */
@@ -94,7 +94,11 @@ export function speakLocalNotice(text: string, ttlMs = 5_000): boolean {
  * 唯一让位场景是**回复正在流式输出**（speechActive）：此时返回 false，调用方
  * 排队等 reply_end 后再展示，避免把正在生成的回复打断。
  */
-export function speakReminder(text: string, ttlMs = 60_000): boolean {
+export function speakReminder(
+  text: string,
+  ttlMs = 60_000,
+  meta?: BubbleSpeechMeta
+): boolean {
   const bridge = bubbleBridge()
   if (!bridge || typeof bridge.sayBegin !== 'function') return false
   if (speechActive) return false
@@ -102,7 +106,7 @@ export function speakReminder(text: string, ttlMs = 60_000): boolean {
   if (typeof bridge.setNextSpeechTtl === 'function') {
     bridge.setNextSpeechTtl(ttlMs) // 主进程夹取上限 60s；提醒建议停留 60s
   }
-  bridge.sayBegin()
+  bridge.sayBegin(meta ?? { kind: 'reminder' })
   bridge.sayText(text)
   bridge.sayEnd(false)
   speechLatest = text

@@ -84,6 +84,22 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, due_at)",
+    # 提醒触发事件（每次到点一条；未读 = acknowledged_at IS NULL）——2026-10-18 提醒列表
+    """
+    CREATE TABLE IF NOT EXISTS reminder_events (
+      id              TEXT PRIMARY KEY,
+      reminder_id     TEXT NOT NULL,
+      batch_id        TEXT NOT NULL,
+      text            TEXT NOT NULL,
+      due_at          TEXT NOT NULL,
+      fired_at        TEXT NOT NULL,
+      acknowledged_at TEXT,
+      late            INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_reminder_events_unread "
+    "ON reminder_events(acknowledged_at, fired_at)",
+    "CREATE INDEX IF NOT EXISTS idx_reminder_events_fired ON reminder_events(fired_at)",
 )
 
 

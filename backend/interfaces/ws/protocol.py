@@ -139,6 +139,26 @@ class BehaviorDoneData(EventData):
     interrupted: bool = False
 
 
+class GetRemindersData(EventData):
+    """拉取未读提醒（提醒列表；2026-10-18）。"""
+
+    limit: int = 50
+
+
+class AckRemindersData(EventData):
+    """提醒已读回执：按事件 id 或全部标记已读（2026-10-18）。"""
+
+    ids: list[str] = Field(default_factory=list)
+    all: bool = False
+
+
+class GetReminderHistoryData(EventData):
+    """拉取某一天的全部提醒事件（已读 + 未读；缺省今天）。"""
+
+    date: str | None = None
+    limit: int = 200
+
+
 class EnvUpdateData(EventData):
     """环境上报：屏幕/窗口几何 + 系统空闲 + 宠物状态（行为决策依据）。"""
 
@@ -232,20 +252,56 @@ class ToolCallData(EventData):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
+class ReminderItemData(EventData):
+    """提醒批次里的单项（proactive.items / reminders.items 共用）。
+
+    ``id`` 是 reminder_events 事件 id——前端"知道了"按它回执；``time_text`` 是后端
+    格式化好的用户可读时间（今天/明天/日期），前端直接展示。
+    """
+
+    id: str
+    reminder_id: str = ""
+    text: str = ""
+    due_at: str = ""
+    fired_at: str = ""
+    late: bool = False
+    acknowledged: bool = False
+    time_text: str = ""
+
+
 class ProactiveData(EventData):
     """主动消息（问候/提醒），无对应用户输入。
 
-    提醒（2026-10-18）扩展：``kind=reminder`` 时带 ``reminder_id`` / ``due_at`` /
-    ``late``；前端**无论语音开关如何都展示气泡**，语音只是附加的音频帧。
+    提醒（2026-10-18）：同一轮到期的多条合并为一批（``items``），``text`` 是给气泡的
+    完整列表文案；前端**无论语音开关如何都展示气泡**，语音只是附加的音频帧。
     """
 
     message_id: str
     text: str
     emotion: str = "neutral"
     kind: Literal["greeting", "reminder"] = "greeting"
+    batch_id: str | None = None
+    items: list[ReminderItemData] = Field(default_factory=list)
+    # 兼容单条旧字段：items 的第一项（新前端优先读 items）
     reminder_id: str | None = None
     due_at: str | None = None
     late: bool = False
+
+
+class RemindersData(EventData):
+    """未读提醒快照（get_reminders / ack_reminders 的响应）。"""
+
+    items: list[ReminderItemData] = Field(default_factory=list)
+    unread_count: int = 0
+
+
+class ReminderHistoryData(EventData):
+    """某一天的全部提醒事件快照（今日视图；已读 + 未读，按触发时间正序）。"""
+
+    date: str
+    items: list[ReminderItemData] = Field(default_factory=list)
+    read_count: int = 0
+    unread_count: int = 0
 
 
 class NoticeData(EventData):
@@ -312,6 +368,9 @@ CLIENT_EVENT_MODELS: dict[str, type[EventData]] = {
     "load_history": LoadHistoryData,
     "behavior_done": BehaviorDoneData,
     "env_update": EnvUpdateData,
+    "get_reminders": GetRemindersData,
+    "ack_reminders": AckRemindersData,
+    "get_reminder_history": GetReminderHistoryData,
     "audio_chunk": AudioChunkData,
 }
 
@@ -327,6 +386,8 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "reply_end": ReplyEndData,
     "tool_call": ToolCallData,
     "proactive": ProactiveData,
+    "reminders": RemindersData,
+    "reminder_history": ReminderHistoryData,
     "notice": NoticeData,
     "history": HistoryData,
     "config": ConfigData,

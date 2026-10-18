@@ -69,8 +69,11 @@ import {
   type BubbleMenuItemPayload,
   type BubbleOpenPayload,
   type BubbleRequest,
+  type BubbleSayBeginPayload,
   type BubbleSayEndPayload,
   type BubbleSayTextPayload,
+  type BubbleSpeechEventPayload,
+  type BubbleSpeechMeta,
   type BubbleTail,
   type BubbleUpdatePayload
 } from '../ipc/channels'
@@ -120,8 +123,8 @@ const CLOSE_TIMEOUT_MS = 700
 const MENU_ACTION_IDS: readonly string[] = ['teaching', 'settings', 'clear-chat', 'hide-pet']
 /** 确认气泡动作 id 白名单（PetBubble 组件的通用语义 id：确认/取消） */
 const CONFIRM_ACTION_IDS: readonly string[] = ['confirm', 'cancel']
-/** 说话气泡动作 id 白名单（悬浮工具条：expand=带记录进教学；close=收气泡） */
-const SPEECH_ACTION_IDS: readonly string[] = ['expand', 'close']
+/** 说话气泡动作 id 白名单（悬浮工具条：expand=带记录进教学；close=收气泡；reminder-ack=提醒已读） */
+const SPEECH_ACTION_IDS: readonly string[] = ['expand', 'close', 'reminder-ack']
 
 /** 清空确认文案（用户定稿场景2；确认动作本期只发事件，清空逻辑归后续任务） */
 const CLEAR_CHAT_CONFIRM = {
@@ -187,6 +190,11 @@ let speechCancelled = false
 let suppressSpeechRestore = false
 /** 最新文本快照（渲染侧全文覆盖式；begin 异步就绪期间到达的文本在此暂存，就绪后补发；常驻期间为"当前显示内容"） */
 let speechText = ''
+/**
+ * 本轮说话的消息属性（2026-10-18）：普通回复 / 提醒。
+ * 提醒气泡由气泡窗显示「知道了」；关闭时向宠物窗回传未读列表生命周期事件。
+ */
+let speechMeta: BubbleSpeechMeta | null = null
 /** 回复气泡空闲自动收起时长（ms；0=不自动收）——设置保存后经 SET_IDLE_TTL 下发 */
 let speechIdleMs = 30_000
 /** 本轮回复是否已进入"可自动收起"阶段（SAY_END(false) 后置位；新一轮 SAY_BEGIN 清除；菜单让位保留） */
@@ -231,6 +239,32 @@ function isPetSender(sender: WebContents): boolean {
 /** sender 是否当前受管气泡窗（"气泡面专属"消息只认它） */
 function isBubbleSender(sender: WebContents): boolean {
   return Boolean(bubbleWin && !bubbleWin.isDestroyed() && sender.id === bubbleWin.webContents.id)
+}
+
+/** 两条消息属性是否同一批（重复 SAY_BEGIN 幂等用） */
+function sameSpeechMeta(a: BubbleSpeechMeta | null, b: BubbleSpeechMeta | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.kind === b.kind && a.batchId === b.batchId && a.messageId === b.messageId
+}
+
+/**
+ * 向宠物窗回传提醒气泡的生命周期：
+ *  - closed：气泡关闭（自动收起 / ✕ / 被新消息替换 / 教学向导让位）→ 未读进列表；
+ *  - reminder-ack：用户点了「知道了」→ 宠物面发 ack_reminders，清单移除。
+ * 非提醒气泡（普通回复）不产生事件。
+ */
+function notifySpeechEvent(type: 'closed' | 'reminder-ack', reason?: string): void {
+  const meta = speechMeta
+  if (!meta || meta.kind !== 'reminder') return
+  const pet = petWin
+  if (!pet || pet.isDestroyed() || pet.webContents.isDestroyed()) return
+  const payload: BubbleSpeechEventPayload = { type, meta, reason }
+  try {
+    pet.webContents.send(IPC_EVENTS.BUBBLE_SPEECH_EVENT, payload)
+    console.log(`[bubble] 提醒气泡事件：${type}${reason ? `（${reason}）` : ''}`)
+  } catch (err) {
+    console.warn('[bubble] 回传提醒气泡事件失败（忽略）：', err)
+  }
 }
 
 /** REQUEST_OPEN 载荷校验（本期只有 { kind:'menu' }） */
@@ -586,6 +620,7 @@ export function destroyBubble(): void {
   speechCancelled = false
   suppressSpeechRestore = false
   speechText = ''
+  speechMeta = null
   speechIdleMs = 30_000
   speechIdleEligible = false
   speechIdlePaused = false
@@ -750,14 +785,18 @@ function buildConfirmPayload(): BubbleOpenPayload {
  * 不飞光点——说话高频，每句都飞光点会闹；菜单/确认现也统一用本预设）。
  * message 初始可为空串（reply_start 时）——文本随后经 UPDATE 流式刷新。
  */
-function buildSpeechPayload(message: string): BubbleOpenPayload {
+function buildSpeechPayload(
+  message: string,
+  meta: BubbleSpeechMeta | null = null
+): BubbleOpenPayload {
   return {
     session: ++sessionSeq,
     variant: 'text',
     tail: 'down',
     motion: { enter: 'light', exit: 'light' },
     stableWindow: REUSE_BUBBLE_WINDOW,
-    message
+    message,
+    meta: meta ?? undefined
   }
 }
 
@@ -822,12 +861,20 @@ function closeBubble(reason: string): void {
  *  - 气泡尚未显示（弹出期就绪等待中/被菜单吞）：标记会话作废，弹出流程回来后中止。
  * keepText=true 时保留文本快照（菜单让位专用——菜单关闭后据此恢复气泡；其余路径清文本防误复活）。
  */
-function stopSpeech(reason: string, hard: boolean, keepText = false): void {
+function stopSpeech(
+  reason: string,
+  hard: boolean,
+  keepText = false,
+  notifyClose = true
+): void {
   speechActive = false
   clearSpeechIdleTimer()
   stopSpeechHoverPoll()
   speechIdlePaused = false
   if (!keepText) {
+    // 提醒气泡最终关闭 → 未读进列表（菜单让位 keepText 时不算关闭，恢复后仍是同一条）
+    if (notifyClose) notifySpeechEvent('closed', reason)
+    speechMeta = null
     speechText = ''
     speechIdleEligible = false
     speechIdleOverrideMs = null
@@ -849,6 +896,9 @@ function stopSpeech(reason: string, hard: boolean, keepText = false): void {
  */
 function maybeRestoreSpeech(): void {
   if (suppressSpeechRestore || !speechText) {
+    // 菜单让位后不恢复（进了教学/设置/隐藏）：提醒气泡此时才算最终关闭 → 进未读列表
+    notifySpeechEvent('closed', 'menu-suppressed')
+    speechMeta = null
     speechIdleEligible = false
     clearSpeechIdleTimer()
     return
@@ -888,6 +938,17 @@ async function openSpeechBubble(): Promise<void> {
     // 常驻复用：上一条还显示着 → 原地刷新（同 session 直接 UPDATE，无入场动画）
     if (isSpeechShowing()) {
       console.log('[bubble] 复用当前说话气泡（原地刷新内容）')
+      // 消息属性可能切换（普通回复 ↔ 提醒）：同步给气泡窗，决定「知道了」按钮显隐。
+      // 文本仍由随后的 SAY_TEXT 更新（此处保留旧文本，避免闪空）。
+      const prev = currentPayload
+      if (prev && prev.variant === 'text') {
+        currentPayload = { ...prev, meta: speechMeta ?? undefined }
+        sendTo(bubbleWin, IPC_BUBBLE.UPDATE, {
+          session: prev.session,
+          message: prev.message,
+          meta: speechMeta ?? undefined
+        } as BubbleUpdatePayload)
+      }
       startSpeechHoverPoll()
       scheduleSpeechIdleDismiss()
       return
@@ -920,7 +981,7 @@ async function openSpeechBubble(): Promise<void> {
     // 纯展示态但**接鼠标**（悬浮出工具条；不聚焦 showInactive；blur 收起由 interactive 守卫挡掉）。
     // 交互范围由渲染侧上报的形状控制（Linux：形状外完全穿透，不挡桌面；见 REPORT_SHAPE）
     interactive = false
-    const payload = buildSpeechPayload(speechText)
+    const payload = buildSpeechPayload(speechText, speechMeta)
     const tail = applyPlacement(win, ESTIMATED_SIZE.text)
     currentPayload = { ...payload, tail }
     lastTail = tail
@@ -959,8 +1020,12 @@ function updateSpeechBubble(text: string): void {
   const payload = currentPayload
   // variant 判空兜底（isSpeechShowing 已保证是 text；此处同时给 TS 收窄联合类型）
   if (!win || !payload || payload.variant !== 'text') return
-  currentPayload = { ...payload, message: text }
-  const update: BubbleUpdatePayload = { session: payload.session, message: text }
+  currentPayload = { ...payload, message: text, meta: speechMeta ?? undefined }
+  const update: BubbleUpdatePayload = {
+    session: payload.session,
+    message: text,
+    meta: speechMeta ?? undefined
+  }
   sendTo(win, IPC_BUBBLE.UPDATE, update)
   // 菜单恢复等"已结束但 speechActive 仍为 true"的路径：文本更新后重新计时
   if (speechIdleEligible) scheduleSpeechIdleDismiss()
@@ -1167,8 +1232,21 @@ function dispatchAction(id: string): void {
       void enterTeaching('bubble')
       break
     case 'close':
-      // 说话气泡「✕」：收掉当前消息（清文本——后续菜单关闭不复活）
+      // 说话气泡「✕」：收掉当前消息（清文本——后续菜单关闭不复活）。
+      // 提醒气泡的 ✕ 不等于已读：stopSpeech 会回传 closed，未读进列表。
       stopSpeech('气泡 ✕', false)
+      break
+    case 'reminder-ack':
+      // 提醒气泡「知道了」：回执已读（宠物面发 ack_reminders），然后收起且不再进未读列表
+      if (speechMeta?.kind !== 'reminder') {
+        console.warn('[bubble] 忽略非提醒气泡的 reminder-ack')
+        break
+      }
+      notifySpeechEvent('reminder-ack', '知道了')
+      speechMeta = null
+      speechText = ''
+      speechIdleEligible = false
+      stopSpeech('提醒已读', false, false, false)
       break
     default:
       break
@@ -1267,8 +1345,15 @@ export function initBubble(pet: BrowserWindow): void {
   })
 
   // 说话气泡三件套（场景3；只认宠物窗——chat 域的驱动）：出现/文本快照/结束
-  ipcMain.on(IPC_BUBBLE.SAY_BEGIN, (event) => {
+  ipcMain.on(IPC_BUBBLE.SAY_BEGIN, (event, payload: unknown) => {
     if (!isPetSender(event.sender)) return
+    const nextMeta: BubbleSpeechMeta =
+      (payload as BubbleSayBeginPayload | null)?.meta ?? { kind: 'chat' }
+    // 新消息替换旧提醒气泡：旧批次此时才算关闭 → 未读进列表（新批次随后接管气泡）
+    if (speechMeta?.kind === 'reminder' && !sameSpeechMeta(speechMeta, nextMeta)) {
+      notifySpeechEvent('closed', 'replaced')
+    }
+    speechMeta = nextMeta
     clearSpeechIdleTimer()
     speechIdleEligible = false
     // 本地短提示（不支持文件等）预置的 5s 只消费一次；普通回复回落设置值

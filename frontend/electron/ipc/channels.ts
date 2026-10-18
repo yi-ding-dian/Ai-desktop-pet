@@ -98,7 +98,11 @@ export const IPC_EVENTS = {
   /** 气泡系统：请求清空聊天（只发宠物窗口；气泡确认【清空】后主进程发出——chat 域收到后执行清空，本期只留占位） */
   CHAT_CLEAR_REQUESTED: 'chat:clear-requested',
   /** 空气让路：光标窗口内坐标推送（payload: {x,y} | null（null=光标不在窗口内）；仅让路态轮询推送——渲染侧据此判定是否恢复接管） */
-  PET_POINTER_POS: 'pet:pointer-pos'
+  PET_POINTER_POS: 'pet:pointer-pos',
+  /** 气泡说话生命周期（主 → 宠物窗；payload: BubbleSpeechEventPayload；提醒气泡关闭/已读时更新未读列表） */
+  BUBBLE_SPEECH_EVENT: 'bubble:speech-event',
+  /** 提醒列表动作（主 → 宠物窗；payload: ReminderListActionPayload；列表点条目/全部已读时回传） */
+  REMINDER_LIST_ACTION: 'reminder-list:action-request'
 } as const
 
 /** 通道名：魔法球捕获动画（ball-animation 域：主进程 ↔ fx 动画页） */
@@ -181,6 +185,26 @@ export const IPC_BUBBLE = {
   UPDATE: 'bubble:update'
 } as const
 
+/**
+ * 提醒列表窗（2026-10-18）：贴在宠物右侧的未读提醒面板。
+ * 数据流同气泡/黑板先例——宠物窗（WS 连接方）把未读快照发给主进程，主进程摆窗并转发；
+ * 列表页只做展示与动作回报，不自己连 WS。
+ */
+export const IPC_REMINDER_LIST = {
+  /** 宠物窗 → 主：未读快照（payload: ReminderListUpdatePayload；items 空 = 隐藏） */
+  UPDATE: 'reminder-list:update',
+  /** 列表窗 → 主：渲染就绪（主进程收到后补发内容） */
+  READY: 'reminder-list:ready',
+  /** 列表窗 → 主：内容尺寸上报（payload: {width,height}；主进程据此调窗/防出屏） */
+  REPORT_SIZE: 'reminder-list:report-size',
+  /** 列表窗 → 主：用户动作（ack / ack-all / expand） */
+  ACTION: 'reminder-list:action',
+  /** 列表窗 → 主：请求右键菜单（“全部已读”） */
+  CONTEXT_MENU: 'reminder-list:context-menu',
+  /** 主 → 列表窗：内容/显隐（payload: ReminderListOpenPayload） */
+  OPEN: 'reminder-list:open'
+} as const
+
 /** 尾巴朝向：down = 尾巴在气泡左下角（气泡悬于锚点上方，指向下方的宠物）；up = 翻向（气泡在锚点下方） */
 export type BubbleTail = 'down' | 'up'
 
@@ -223,7 +247,7 @@ export type BubbleOpenPayload = {
 } & (
   | { variant: 'menu'; items: BubbleMenuItemPayload[] }
   | { variant: 'confirm'; message: string; confirmLabel: string; cancelLabel: string }
-  | { variant: 'text'; message: string }
+  | { variant: 'text'; message: string; meta?: BubbleSpeechMeta }
 )
 
 /** 气泡请求（渲染面 → 主）：本期只有宠物窗右键菜单一种入口 */
@@ -239,15 +263,81 @@ export interface BubbleSayTextPayload {
   text: string
 }
 
+/**
+ * 说话气泡的消息属性（2026-10-18）：让气泡窗知道"这条是不是提醒"。
+ * 提醒气泡会显示「知道了」按钮；点它 → 主进程回传 reminder-ack → 宠物面发 ack_reminders。
+ */
+export interface BubbleSpeechMeta {
+  kind: 'chat' | 'reminder'
+  /** 回复/提醒消息 id（提醒批次用 batch_id） */
+  messageId?: string
+  /** 提醒批次 id（proactive.batch_id） */
+  batchId?: string
+  /** 本批提醒的事件 id（reminder_events.id；"知道了"按它回执） */
+  eventIds?: string[]
+}
+
+/** 说话气泡开始载荷（宠物面 → 主）：meta 决定气泡形态（普通回复 / 提醒） */
+export interface BubbleSayBeginPayload {
+  meta?: BubbleSpeechMeta
+}
+
 /** 说话气泡结束载荷（宠物面 → 主）：immediate = 被打断，不等停留立即收 */
 export interface BubbleSayEndPayload {
   immediate?: boolean
+}
+
+/** 主 → 宠物窗：提醒气泡生命周期（关闭 = 未读进列表；reminder-ack = 已读回执） */
+export interface BubbleSpeechEventPayload {
+  type: 'closed' | 'reminder-ack'
+  meta: BubbleSpeechMeta
+  /** closed 的原因（日志/排障）：idle / replaced / user / teaching / settings / menu 等 */
+  reason?: string
+}
+
+// ------------------------------------------------------------------ 提醒列表（reminder-list 域）
+
+/** 列表视图：unread=未读列表；today=今日全部（已读 + 未读） */
+export type ReminderListMode = 'unread' | 'today'
+
+/** 宠物窗 → 主：提醒列表快照（items 为空/visible=false 时主进程隐藏列表窗） */
+export interface ReminderListUpdatePayload {
+  mode: ReminderListMode
+  items: ReminderListItemPayload[]
+  /** 徽标数字：unread 模式=未读总数；today 模式=今日总数 */
+  unreadCount: number
+  visible: boolean
+}
+
+/** 列表项（只带展示所需字段；id = reminder_events.id） */
+export interface ReminderListItemPayload {
+  id: string
+  text: string
+  timeText: string
+  late: boolean
+  acknowledged: boolean
+}
+
+/** 主 → 列表窗：内容与形态（compact = 两侧空间都不够时的"待看 N 条"小条） */
+export interface ReminderListOpenPayload {
+  mode: ReminderListMode
+  items: ReminderListItemPayload[]
+  unreadCount: number
+  compact: boolean
+}
+
+/** 列表窗 → 主：用户动作（展开小条 / 单条已读 / 全部已读 / 切换今日视图） */
+export interface ReminderListActionPayload {
+  type: 'expand' | 'ack' | 'ack-all' | 'history' | 'unread'
+  id?: string
 }
 
 /** 同 session 内容更新载荷（主 → 气泡窗；说话气泡流式刷新——只换文字不重播入场，尺寸变化由既有 REPORT_SIZE 链路重摆） */
 export interface BubbleUpdatePayload {
   session: number
   message: string
+  /** 消息属性（提醒/回复切换时同步，决定是否显示「知道了」） */
+  meta?: BubbleSpeechMeta
 }
 
 // ------------------------------------------------------------------ 教学模式（P5，设计文档 §7.5）
@@ -487,7 +577,7 @@ export interface PetBridgeApi {
     /** 宠物面：请求弹出气泡（主进程定位+防出屏（窗随内容动）+防重窗；重复请求收敛为刷新） */
     requestOpen(request: BubbleRequest): void
     /** 宠物面：说话气泡出现（回复开始；气泡显于兔子头部旁，纯展示态不抢焦点/不挡鼠标） */
-    sayBegin(): void
+    sayBegin(meta?: BubbleSpeechMeta): void
     /** 宠物面：说话气泡文本快照（全文覆盖式更新；渲染侧已节流，主进程转发气泡窗走同 session UPDATE） */
     sayText(text: string): void
     /** 宠物面：说话结束（缺省按字数停留后自动收；immediate=true 被打断立即收） */
@@ -520,6 +610,25 @@ export interface PetBridgeApi {
     onRequestClose(cb: () => void): () => void
     /** 气泡面：订阅尾巴朝向更新（防出屏翻向；仅换样式）；返回取消订阅函数 */
     onSetTail(cb: (tail: BubbleTail) => void): () => void
+    /** 宠物面：订阅提醒气泡生命周期（关闭进未读列表 / 已读回执）；返回取消订阅函数 */
+    onSpeechEvent(cb: (payload: BubbleSpeechEventPayload) => void): () => void
+  }
+  /** 提醒列表窗（2026-10-18）：宠物面推送未读快照；主进程摆窗/转发动作 */
+  reminderList: {
+    /** 宠物面：更新未读快照（items 空或 visible=false → 隐藏列表窗） */
+    update(payload: ReminderListUpdatePayload): void
+    /** 列表面：渲染就绪（主进程收到后补发内容） */
+    ready(): void
+    /** 列表面：内容尺寸上报（主进程据此调窗/防出屏） */
+    reportSize(size: { width: number; height: number }): void
+    /** 列表面：用户动作（ack / ack-all / expand） */
+    action(payload: ReminderListActionPayload): void
+    /** 列表面：请求右键菜单（主进程弹出“全部已读”） */
+    contextMenu(): void
+    /** 列表面：订阅内容（主进程 OPEN）；返回取消订阅函数 */
+    onOpen(cb: (payload: ReminderListOpenPayload) => void): () => void
+    /** 宠物面：订阅列表页用户动作（ack / ack-all / expand）；返回取消订阅函数 */
+    onAction(cb: (payload: ReminderListActionPayload) => void): () => void
   }
   /** 对话域（chat） */
   chat: {
