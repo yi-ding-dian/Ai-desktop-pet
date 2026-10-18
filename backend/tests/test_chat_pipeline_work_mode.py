@@ -101,7 +101,7 @@ def make_config(*, base_url: str = "https://api.deepseek.com/v1") -> AppConfig:
         {
             "llm": {
                 "base_url": base_url,
-                "model": "deepseek-chat",
+                "model": "deepseek-flash",
                 "max_tokens": 768,
             }
         }

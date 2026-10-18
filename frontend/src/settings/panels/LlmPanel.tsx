@@ -109,7 +109,7 @@ export default function LlmPanel({
           <TextField
             value={form.llmModel}
             onValueChange={(v) => setField('llmModel', v)}
-            placeholder={preset?.modelPlaceholder ?? '如 deepseek-chat'}
+            placeholder={preset?.modelPlaceholder ?? '如 deepseek-flash'}
           />
         )}
       </Field>

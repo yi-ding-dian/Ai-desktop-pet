@@ -25,7 +25,9 @@ export const LLM_PROVIDER_PRESETS: ReadonlyArray<LlmProviderPreset> = [
     id: 'deepseek',
     label: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',
-    model: 'deepseek-chat',
+    // deepseek-flash 是推理型模型：同一模型即可返回 reasoning_content，
+    // 深度思考/「已思考」不再需要切换到独立 reasoner。
+    model: 'deepseek-flash',
     keyUrl: 'https://platform.deepseek.com/api_keys'
   },
   {
