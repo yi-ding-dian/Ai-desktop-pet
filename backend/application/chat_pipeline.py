@@ -99,32 +99,23 @@ if TYPE_CHECKING:  # 仅类型注解；运行时经 Protocol/鸭子类型协作�
 class TurnOptions:
     """单轮对话选项（工作模式，2026-10-18）。
 
-    - ``think``：同一模型下追加"先充分推理"提示并抬高输出预算（不切模型）；
-      网关若返回 ``reasoning_content`` 仍会透传为 reasoning 事件；
     - ``search``：是否向模型提供联网工具（False 时移除 web_search / web_fetch）。
 
     定义在 application 层（而不是 import interfaces 的协议模型），保持
     "interfaces 依赖 application、application 不反向依赖"的依赖方向。
     """
 
-    think: bool = False
     search: bool = True
 
 
 #: 受“智能搜索”开关控制的工具名（其余工具不受影响）
 _SEARCH_TOOL_NAMES = frozenset({"web_search", "web_fetch"})
 
-#: 深度思考轮次的最小输出预算（推理本身也占 token，768 容易挤掉正文）
-_THINK_MIN_MAX_TOKENS = 2048
-
 #: 工作模式「智能搜索」开启时的临时 system 提示（不落库、不进历史）
 _SEARCH_HINT = (
     "本轮已开启联网搜索：涉及时事、数据、价格、版本等可能变化的事实时，"
     "优先调用 web_search 核实，不要凭记忆直接断言。"
 )
-
-#: 深度思考轮次的临时 system 提示（非推理模型也适用）
-_THINK_HINT = "请先充分推理、核对关键事实，再给出结论；推理过程可以简洁。"
 
 
 class ReplySink(Protocol):
@@ -282,15 +273,13 @@ class ChatPipeline:
         超限直接本地拒绝（不调 LLM）；上下文超预算先丢历史（notice 提示），
         仍超则拒绝。文件正文只注入本轮，历史里只存"📎 文件名 + 问题"。
 
-        工作模式选项（``options``，2026-10-18）：``think`` 用**同一模型**追加
-        "先充分推理"提示并抬高输出预算（不切模型、不移除工具）；``search``
-        为 False 时只移除联网工具，其余工具照常。None = 旧行为。
+        工作模式选项（``options``，2026-10-18）：``search`` 为 False 时只移除
+        联网工具，其余工具照常。None = 旧行为。
         """
         message_id = f"m_{uuid.uuid4().hex}"
         # 回复开始时间：助手消息落库时用它作 created_at，保证实时与历史回填的时间一致
         reply_created_at = int(time.time() * 1000)
         # 工作模式单轮选项（None = 旧行为：允许搜索、普通回复）
-        think = bool(options is not None and options.think)
         search = True if options is None else options.search
         parser = EmotionTagParser()
         clean_parts: list[str] = []
@@ -502,14 +491,8 @@ class ChatPipeline:
                         }
                         logger.info("意图明确，强制调用工具：{}", forced_tool)
 
-                # 工作模式：深度思考 = 同一模型 + 推理提示 + 更大输出预算。
-                # 不切模型、不改 temperature、不移除工具（用户定稿：深度思考用同一个模型）。
+                # 工作模式：智能搜索开启时追加联网提示（不落库、不进历史）。
                 extra_system: list[str] = []
-                if think:
-                    config = self._config() if self._config is not None else None
-                    base_max = config.llm.max_tokens if config is not None else 768
-                    request_opts["max_tokens"] = max(base_max, _THINK_MIN_MAX_TOKENS)
-                    extra_system.append(_THINK_HINT)
                 if options is not None and options.search and self._tools is not None:
                     extra_system.append(_SEARCH_HINT)
                 if extra_system:
@@ -736,12 +719,8 @@ class ChatPipeline:
                     "联网搜索/抓取结果回传：{} 个工具调用，开始第二轮生成",
                     len(feedback_items),
                 )
-                # 第二轮沿用深度思考的输出预算（同一模型）；不带 tools。
+                # 第二轮不带 tools。
                 follow_up_opts: dict[str, Any] = {}
-                if think:
-                    config = self._config() if self._config is not None else None
-                    base_max = config.llm.max_tokens if config is not None else 768
-                    follow_up_opts["max_tokens"] = max(base_max, _THINK_MIN_MAX_TOKENS)
                 try:
                     async for chunk in self._provider.stream_chat(
                         follow_up, **follow_up_opts

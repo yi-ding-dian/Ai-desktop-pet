@@ -78,13 +78,11 @@ class AttachmentRefData(EventData):
 class UserMessageOptions(EventData):
     """单轮对话选项（工作模式，2026-10-18）。
 
-    - ``think``：本轮追加"先充分推理"提示并抬高输出预算（同一模型，不切换）；
     - ``search``：本轮是否提供联网工具（False 时移除 web_search / web_fetch，
       其余工具不受影响）。
-    旧客户端不传 = None，行为与之前完全一致（允许搜索、不切模型）。
+    旧客户端不传 = None，行为与之前完全一致（允许搜索）。
     """
 
-    think: bool = False
     search: bool = True
 
 

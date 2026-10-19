@@ -225,7 +225,7 @@ export function sendUserMessage(
   const names = refs?.map((item) => item.name).join('、') ?? ''
   const displayText = names ? `📎 ${names}${text ? `\n${text}` : ''}` : text
 
-  // ②b 已发送广播（chat 域会话记录——"展开进教学"预填黑板的数据源；工作窗用同一 localId）
+  // ②b 已发送广播（chat 域会话记录 / 工作窗镜像用——两条发送路径统一从此广播）
   emitSent(displayText, localId)
 
   // ③ 教学模式中：推入头顶气泡 + 镜像给黑板（黑板用自己的气泡 id 建立问题→段落映射）
@@ -240,31 +240,6 @@ export function sendUserMessage(
     devLog(`镜像 user_message（localId=${bubbleId}）：${displayText.slice(0, 24)}`)
   }
   return true
-}
-
-/**
- * 把聊天记录预填给黑板（说话气泡「展开」进教学后由 App 接线层调用，2026-10-16 定稿：
- * "和右键开始教学一样的效果，只不过是有聊天内容而已"）。
- *  - user 消息逐条 pushBubble：顺带进入头顶问题气泡（"显示刚刚的所有问题"），新 localId 作
- *    history 消息 id——头顶点击 → goto(localId) → 黑板经 aliases 命中该问题段落（闭环）；
- *  - assistant 消息以记录自带 id（reply 的 messageId）落段。
- * history 是黑板"整板替换"快照指令（BoardApp 已实现）；主进程有 pendingInbox 缓存，
- * 黑板未就绪时按序回放——seed 无时序竞态（宠物面发送序即主进程处理序）。
- */
-export function seedBoardHistory(
-  items: { id: string; role: 'user' | 'assistant'; text: string }[]
-): void {
-  if (items.length === 0) {
-    devLog('seed 黑板 history：无记录，跳过')
-    return
-  }
-  const messages = items.map((it) =>
-    it.role === 'user'
-      ? { id: pushBubble(it.text), role: 'user' as const, text: it.text }
-      : { id: it.id, role: 'assistant' as const, text: it.text }
-  )
-  reportMirror({ kind: 'history', messages })
-  devLog(`seed 黑板 history：${messages.length} 条（${items.filter((i) => i.role === 'user').length} 问）`)
 }
 
 // ------------------------------------------------------------------ 接线

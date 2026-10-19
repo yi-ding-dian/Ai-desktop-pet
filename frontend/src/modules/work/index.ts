@@ -124,7 +124,6 @@ export function setupWorkPetSide(client: WsClient): () => void {
       return
     }
     const options: UserMessageOptions = {
-      think: payload.options?.think === true,
       search: payload.options?.search !== false
     }
     const question = trimmed || '帮我看看这个文件'

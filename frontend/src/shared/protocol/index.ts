@@ -49,11 +49,9 @@ export interface AttachmentRef {
 
 /**
  * 单轮对话选项（工作模式，2026-10-18）。
- * 缺省 = 旧行为（允许联网、不切思考模型）。
+ * 缺省 = 旧行为（允许联网）。
  */
 export interface UserMessageOptions {
-  /** 本轮追加"先充分推理"提示并抬高输出预算（同一模型，不切换） */
-  think?: boolean
   /** 本轮是否向模型提供联网工具（false = 移除 web_search / web_fetch） */
   search?: boolean
 }

@@ -34,7 +34,6 @@ import {
   speakLifecycleLine,
   setupNameOnboarding,
   setupChatHistory,
-  getChatHistory,
   emotionEmoji,
   showChatNotice
 } from './modules/chat'
@@ -54,7 +53,6 @@ import {
   subscribeTeachingBubbles,
   gotoTeachingBubble,
   notifyTeachingDragStart,
-  seedBoardHistory,
   TeachingBubbles,
   type TeachingBubbleItem
 } from './modules/teaching'
@@ -291,11 +289,6 @@ export default function App(): ReactElement {
   useEffect(() => {
     const offState = subscribeTeachingState((state) => {
       setTeachingState(state)
-      // 说话气泡「展开」进教学（reason='bubble'）：把本次会话记录预填给黑板——
-      // "和右键开始教学一样的效果，只不过是有聊天内容而已"（2026-10-16 用户定稿）
-      if (state.mode === 'teaching' && state.reason === 'bubble') {
-        seedBoardHistory(getChatHistory())
-      }
       if (state.mode !== 'teaching') {
         // 退出教学模式：在跑的讲台走位一并取消（气泡已由 teaching 域清空）
         cancelTeachingWalk('退出教学模式')

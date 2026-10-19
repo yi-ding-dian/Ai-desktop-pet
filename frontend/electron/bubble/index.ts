@@ -29,8 +29,8 @@
  * 气泡贴锚点向上生长）→ **常驻**（用户定稿：回复结束不自动收，看完由用户处理）。交互：
  *  - 悬浮（鼠标移上气泡）→ 气泡上方浮出工具条「⤢ 展开｜✕」（渲染侧 hover + ACTION 回传）；
  *  - ✕（action 'close'）→ 收掉当前消息（清文本，菜单后续关闭不复活）；
- *  - 展开（action 'expand'）→ **带聊天记录进入教学**（enterTeaching('bubble')；黑板滑出+兔子讲台位，
- *    记录预填由宠物面在 state.reason==='bubble' 时自行 seed——经既有镜像通道）；
+ *  - 展开（action 'expand'）→ **打开工作模式窗**（openWork()；独立聊天窗自带完整记录与历史导航，
+ *    宠物同时依附到窗左侧）；气泡硬收且不恢复（进去看记录即替代气泡）；
  *  - 被打断（immediate）立即收；新回复到来原地替换（同窗复用不重播入场）。
  * 悬浮交互需要气泡窗"接鼠标"：用窗口形状（REPORT_SHAPE 上报 → win.setShape 裁到"气泡+条区"，
  * 其余透明区域保持完全穿透——宠物窗"空气让路"同款机制）。**Windows 同样走这条**：setShape 的
@@ -38,7 +38,8 @@
  * 那块 370×218 的透明留白会把桌面点击全吃掉）。
  * 宠物移动（走动/拖拽）时气泡跟随重摆（petWin 'move' + 16ms 节流，不播动画）；不跟随仅限菜单态。
  * 与菜单互斥：弹菜单前说话气泡先硬收（同窗不能同时服务两种内容）；**菜单关闭后自动恢复**
- * （内容不丢——"不消失"闭环）；菜单里点了教学/展开/设置/隐藏则在 menuSuppressRestore 标记下不恢复。
+ * （内容不丢——"不消失"闭环）；菜单里点了教学/设置/隐藏则在 menuSuppressRestore 标记下不恢复；
+ * 说话气泡「展开」进工作模式后同样不恢复（用户进去看记录，气泡让位）。
  * 教学/向导态抑制在聊天域（宠物面不推）——本域不感知业务。
  *
  * 动作分发（气泡窗 → ACTION → 本域执行）：教学 enter/exit（按 teaching 域当前态二选一）、
@@ -130,7 +131,7 @@ const MENU_ACTION_IDS: readonly string[] = [
 ]
 /** 确认气泡动作 id 白名单（PetBubble 组件的通用语义 id：确认/取消） */
 const CONFIRM_ACTION_IDS: readonly string[] = ['confirm', 'cancel']
-/** 说话气泡动作 id 白名单（悬浮工具条：expand=带记录进教学；close=收气泡；reminder-ack=提醒已读） */
+/** 说话气泡动作 id 白名单（悬浮工具条：expand=打开工作模式；close=收气泡；reminder-ack=提醒已读） */
 const SPEECH_ACTION_IDS: readonly string[] = ['expand', 'close', 'reminder-ack']
 
 /** 清空确认文案（用户定稿场景2；确认动作本期只发事件，清空逻辑归后续任务） */
@@ -1283,8 +1284,8 @@ function requestClearChat(): void {
  * 分发气泡动作（白名单按当前内容校验——防渲染面误发）。
  * 教学动作按 teaching 域当前态二选一（菜单 label 由同一状态决定）；动作执行与退场动画并行
  * （先执行再 closeBubble 会让用户等待 280ms 退场——反过来零延迟且观感更顺）。
- * 说话气泡动作（悬浮工具条）：expand = 带记录进教学（enterTeaching('bubble')，prefill 由宠物面
- * 见 reason 后 seed）；close = 收掉当前消息（✕）。
+ * 说话气泡动作（悬浮工具条）：expand = 打开工作模式窗（完整记录 + 历史导航由工作窗自行拉取）；
+ * close = 收掉当前消息（✕）。
  */
 function dispatchAction(id: string): void {
   const payload = currentPayload
@@ -1364,12 +1365,12 @@ function dispatchAction(id: string): void {
       closeBubble('动作：取消')
       break
     case 'expand':
-      // 说话气泡「展开」（悬浮工具条）：带聊天记录进入教学——黑板滑出 + 兔子站讲台位 + 记录预填
-      // （预填由宠物面收到 state.reason='bubble' 后自行 seed，经既有镜像通道）。本气泡硬收，
-      // 且菜单/退出后都不恢复（用户定稿：进去看记录即替代气泡）
+      // 说话气泡「展开」（悬浮工具条）：打开工作模式窗——独立聊天窗自带完整记录/历史导航，
+      // 打开时自行向宠物窗拉历史；宠物同时依附到窗左侧。本气泡硬收，关闭后不恢复
+      // （用户定稿：进去看记录即替代气泡）
       suppressSpeechRestore = true
-      stopSpeech('展开进教学', true)
-      void enterTeaching('bubble')
+      stopSpeech('展开进工作模式', true)
+      openWork()
       break
     case 'close':
       // 说话气泡「✕」：收掉当前消息（清文本——后续菜单关闭不复活）。

@@ -455,8 +455,8 @@ export interface BubbleUpdatePayload {
 
 // ------------------------------------------------------------------ 教学模式（P5，设计文档 §7.5）
 
-/** 进入教学模式的触发来源（日志/调试用）；'bubble' = 说话气泡悬浮条的「展开」（带聊天记录进教学） */
-export type TeachingEnterReason = 'menu' | 'keyword' | 'debug' | 'bubble'
+/** 进入教学模式的触发来源（日志/调试用） */
+export type TeachingEnterReason = 'menu' | 'keyword' | 'debug'
 
 /** 教学模式状态（主进程为唯一权威；两渲染面只读） */
 export interface TeachingStatePayload {
@@ -501,8 +501,6 @@ export interface WorkSourceItem {
 
 /** 工作窗单轮选项（与后端 UserMessageOptions 对齐） */
 export interface WorkTurnOptions {
-  /** 深度思考：切思考模型并展示推理流 */
-  think: boolean
   /** 智能搜索：false = 本轮不提供 web_search / web_fetch */
   search: boolean
 }

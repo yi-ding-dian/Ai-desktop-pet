@@ -3,7 +3,7 @@
  *
  * - 自增高 textarea：Enter 发送、Shift+Enter 换行、IME 组合期不发送；
  * - 附件：回形针 / 拖入 / 粘贴绝对路径（复用 chat 域的 file-support 校验）；
- * - 单轮开关：深度思考 / 智能搜索（状态由父组件持久化）；
+ * - 单轮开关：智能搜索（状态由父组件持久化）；
  * - 流式中发送钮切换为停止（打断经主进程中继到宠物窗）。
  */
 import {
@@ -27,9 +27,7 @@ import type { WorkNotice } from './store'
 
 export interface ComposerProps {
   streaming: boolean
-  think: boolean
   search: boolean
-  onThinkChange: (value: boolean) => void
   onSearchChange: (value: boolean) => void
   onSend: (text: string, attachments: PickedFile[]) => Promise<boolean>
   onStop: () => void
@@ -39,9 +37,7 @@ export interface ComposerProps {
 
 export default function Composer({
   streaming,
-  think,
   search,
-  onThinkChange,
   onSearchChange,
   onSend,
   onStop,
@@ -294,16 +290,6 @@ export default function Composer({
       <div className="work-modes">
         <button
           type="button"
-          className={`work-mode${think ? ' work-mode-on' : ''}`}
-          aria-pressed={think}
-          title="切换到推理模型，并展示思考过程"
-          onClick={() => onThinkChange(!think)}
-        >
-          <ThinkIcon />
-          深度思考
-        </button>
-        <button
-          type="button"
           className={`work-mode${search ? ' work-mode-on' : ''}`}
           aria-pressed={search}
           title="需要事实信息时优先联网核实"
@@ -340,15 +326,6 @@ function StopIcon(): ReactElement {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <rect x="6" y="6" width="12" height="12" rx="2.5" />
-    </svg>
-  )
-}
-
-function ThinkIcon(): ReactElement {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" />
     </svg>
   )
 }

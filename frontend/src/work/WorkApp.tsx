@@ -157,13 +157,6 @@ function reasonText(reason?: string): string {
 
 export default function WorkApp(): ReactElement {
   const [state, dispatch] = useReducer(workReducer, EMPTY_WORK_STATE)
-  const [think, setThink] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('work-think') === '1'
-    } catch {
-      return false
-    }
-  })
   const [search, setSearch] = useState<boolean>(() => {
     try {
       return localStorage.getItem('work-search') !== '0'
@@ -294,13 +287,6 @@ export default function WorkApp(): ReactElement {
   // 开关持久化
   useEffect(() => {
     try {
-      localStorage.setItem('work-think', think ? '1' : '0')
-    } catch {
-      /* 存储不可用：仅本次生效 */
-    }
-  }, [think])
-  useEffect(() => {
-    try {
       localStorage.setItem('work-search', search ? '1' : '0')
     } catch {
       /* 存储不可用：仅本次生效 */
@@ -377,7 +363,7 @@ export default function WorkApp(): ReactElement {
           requestId: makeRequestId(),
           text,
           attachments,
-          options: { think, search }
+          options: { search }
         })
         if (!result.ok) {
           dispatch({
@@ -407,7 +393,7 @@ export default function WorkApp(): ReactElement {
         return false
       }
     },
-    [search, think]
+    [search]
   )
 
   const handleInterrupt = useCallback((): void => {
@@ -764,9 +750,7 @@ export default function WorkApp(): ReactElement {
 
         <Composer
           streaming={streaming}
-          think={think}
           search={search}
-          onThinkChange={setThink}
           onSearchChange={setSearch}
           onSend={handleSend}
           onStop={handleInterrupt}
@@ -855,6 +839,8 @@ interface LinkPreviewState {
   left: number
   top: number
   bottom: number
+  /** 锚点（引用链接）顶部 Y：卡片渲染后按实际高度确认上方是否放得下 */
+  anchorTop: number
   above: boolean
 }
 
@@ -929,12 +915,12 @@ function AssistantMessage({
         (item) => normalizeUrl(item.url) === normalizeUrl(url)
       )
       const fallback = fallbackSource(message.text, url)
-      const width = 320
+      const width = 360 // 与 work.css 的 .work-link-preview width 保持一致（左右各留 8px）
       const left = Math.min(
         Math.max(8, rect.left + rect.width / 2 - width / 2),
         window.innerWidth - width - 8
       )
-      const above = rect.top > 200
+      const above = true // 默认向上：向下会挡住"接下来要读的正文"；渲染后测高，放不下再翻到向下
       setPreview({
         url,
         title:
@@ -948,6 +934,7 @@ function AssistantMessage({
         left,
         top: rect.bottom + 8,
         bottom: window.innerHeight - rect.top + 8,
+        anchorTop: rect.top,
         above
       })
     }, 220)
@@ -963,6 +950,14 @@ function AssistantMessage({
     clearHoverTimer()
     setPreview(null)
   }
+
+  /** 卡片渲染后按实际高度确认：默认向上，仅当上方放不下（高度 + 8px 间距）时翻到向下 */
+  const handlePreviewMeasure = useCallback((height: number): void => {
+    setPreview((prev) => {
+      if (prev === null || !prev.above || prev.anchorTop >= height + 8) return prev
+      return { ...prev, above: false }
+    })
+  }, [])
 
   return (
     <div
@@ -1007,7 +1002,13 @@ function AssistantMessage({
         onCopy={actions.onCopy}
         onDelete={actions.onDelete}
       />
-      {preview !== null ? <LinkPreviewCard key={preview.url} preview={preview} /> : null}
+      {preview !== null ? (
+        <LinkPreviewCard
+          key={preview.url}
+          preview={preview}
+          onMeasure={handlePreviewMeasure}
+        />
+      ) : null}
     </div>
   )
 }
@@ -1054,9 +1055,16 @@ function MessageMeta({
   )
 }
 
-/** 引用/来源链接的悬浮卡片：站点、日期、标题、摘要、URL */
-function LinkPreviewCard({ preview }: { preview: LinkPreviewState }): ReactElement {
+/** 引用/来源链接的悬浮卡片：站点 | 日期、标题、摘要（2026-10-19 用户定稿：不显示 URL 行） */
+function LinkPreviewCard({
+  preview,
+  onMeasure
+}: {
+  preview: LinkPreviewState
+  onMeasure: (height: number) => void
+}): ReactElement {
   const [iconFailed, setIconFailed] = useState(false)
+  const cardRef = useRef<HTMLDivElement | null>(null)
   const site = preview.siteName || hostOf(preview.url)
   const initial = site.replace(/^www\./i, '').charAt(0).toUpperCase() || '🔗'
   let origin = ''
@@ -1065,8 +1073,14 @@ function LinkPreviewCard({ preview }: { preview: LinkPreviewState }): ReactEleme
   } catch {
     /* URL 非法：用字母占位 */
   }
+  // 默认向上；渲染后、绘制前量实际高度，上方放不下时由 onMeasure 翻到向下（不闪）
+  useLayoutEffect(() => {
+    const height = cardRef.current?.offsetHeight ?? 0
+    if (height > 0) onMeasure(height)
+  })
   return (
     <div
+      ref={cardRef}
       className={`work-link-preview${preview.above ? ' work-link-preview-above' : ''}`}
       style={
         preview.above
@@ -1088,13 +1102,19 @@ function LinkPreviewCard({ preview }: { preview: LinkPreviewState }): ReactEleme
           )}
         </span>
         <span className="work-link-preview-site">{site}</span>
-        {preview.date ? <span className="work-link-preview-date">{preview.date}</span> : null}
+        {preview.date ? (
+          <>
+            <span className="work-link-preview-sep" aria-hidden="true">
+              |
+            </span>
+            <span className="work-link-preview-date">{preview.date}</span>
+          </>
+        ) : null}
       </div>
       <div className="work-link-preview-title">{preview.title}</div>
       {preview.snippet ? (
         <div className="work-link-preview-snippet">{preview.snippet}</div>
       ) : null}
-      <div className="work-link-preview-url">{preview.url}</div>
     </div>
   )
 }

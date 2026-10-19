@@ -458,7 +458,6 @@ function normalizeSendPayload(raw: unknown): WorkSendRequestPayload | null {
     text: value.text,
     attachments,
     options: {
-      think: optionsRaw.think === true,
       search: optionsRaw.search !== false
     }
   }

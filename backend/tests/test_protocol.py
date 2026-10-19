@@ -236,18 +236,17 @@ def test_user_message_options_parsed() -> None:
     msg = parse_client_message(
         _raw(
             "user_message",
-            {"text": "hi", "options": {"think": True, "search": False}},
+            {"text": "hi", "options": {"search": False}},
         )
     )
     data = msg.data
     assert isinstance(data, UserMessageData)
     assert data.options is not None
-    assert data.options.think is True
     assert data.options.search is False
 
 
 def test_user_message_options_defaults_and_null() -> None:
-    """不传 / null 都容忍：旧客户端行为不变（允许搜索、不切模型）。"""
+    """不传 / null 都容忍：旧客户端行为不变（允许搜索）。"""
     absent = parse_client_message(_raw("user_message", {"text": "hi"}))
     assert isinstance(absent.data, UserMessageData)
     assert absent.data.options is None
@@ -261,7 +260,6 @@ def test_user_message_options_defaults_and_null() -> None:
     )
     assert isinstance(defaults.data, UserMessageData)
     assert defaults.data.options is not None
-    assert defaults.data.options.think is False
     assert defaults.data.options.search is True
 
 

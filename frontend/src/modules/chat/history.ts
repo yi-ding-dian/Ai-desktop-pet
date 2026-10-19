@@ -1,6 +1,8 @@
 /**
- * 会话记录（chat 域）：本次会话的问答记录（user + assistant 成对）——说话气泡「展开=带聊天记录
- * 进教学」的数据源（2026-10-16 用户定稿："和右键开始教学一样的效果，只不过是有聊天内容而已"）。
+ * 会话记录（chat 域）：本次会话的问答记录（user + assistant 成对），内存会话级。
+ *
+ * 说话气泡「展开」已改为打开工作模式窗（工作窗经 WS `load_history` 自己拉后端历史），
+ * 本模块不再参与展开链路；保留记录能力，作为"清空聊天"（预留）与后续会话视图的数据源。
  *
  * 记录点：
  *  - user：teaching 域的"已发送"广播（统一发送入口 sendUserMessage 成功送出后通知——聊天输入框
@@ -31,7 +33,7 @@ function makeLocalId(): string {
   return uuid ?? `h_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** 取本次会话记录快照（展开进教学时 seed 黑板用；返回副本防外部改动） */
+/** 取本次会话记录快照（清空聊天/后续会话视图用；返回副本防外部改动） */
 export function getChatHistory(): ChatRecord[] {
   return [...records]
 }

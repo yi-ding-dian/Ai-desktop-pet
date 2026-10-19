@@ -924,11 +924,11 @@ body,
   display: none;
 }
 
-/* 引用/来源链接悬浮卡片：站点 favicon、日期、标题、摘要、URL */
+/* 引用/来源链接悬浮卡片：站点 | 日期、标题、摘要（2026-10-19 用户定稿形式，不显示 URL） */
 .work-link-preview {
   position: fixed;
   z-index: 90;
-  width: 320px;
+  width: 360px;
   padding: 10px 12px;
   border: 1px solid var(--ui-border);
   border-radius: 10px;
@@ -976,41 +976,35 @@ body,
   white-space: nowrap;
 }
 
+.work-link-preview-sep {
+  flex: none;
+  color: var(--ui-fg-faint);
+  font-size: 11px;
+}
+
 .work-link-preview-date {
   flex: none;
-  margin-left: auto;
   color: var(--ui-fg-faint);
   font-size: 11px;
 }
 
 .work-link-preview-title {
-  display: -webkit-box;
   overflow: hidden;
   margin-bottom: 4px;
   color: var(--ui-fg);
   font-size: 13px;
   font-weight: 600;
   line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .work-link-preview-snippet {
   display: -webkit-box;
   overflow: hidden;
   color: var(--ui-fg-dim);
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.55;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.work-link-preview-url {
-  overflow: hidden;
-  margin-top: 6px;
-  color: var(--ui-fg-faint);
-  font-family: var(--ui-font-mono);
-  font-size: 10.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-line-clamp: 2;
 }

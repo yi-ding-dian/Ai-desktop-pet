@@ -1,7 +1,6 @@
-"""工作模式（2026-10-18）：单轮选项、深度思考、联网过滤、推理流。
+"""工作模式（2026-10-18）：单轮选项、联网过滤、推理流。
 
 覆盖：
-- ``options.think``：**同一模型** + 推理提示 + 更大输出预算（不切模型、不移除工具）；
 - ``options.search=False``：只移除 web_search/web_fetch，其余工具保留；
 - 推理增量以 ``reasoning`` 事件先于正文 token 推送（网关返回时）。
 """
@@ -131,31 +130,6 @@ def run(
     return sink
 
 
-# ---------------------------------------------------------------- 深度思考
-
-
-def test_think_uses_same_model_with_larger_budget() -> None:
-    """深度思考不切模型：只抬高输出预算、追加推理提示，工具照常保留。"""
-    provider = FakeLLMProvider(pieces=["好"])
-    sink = run(
-        provider,
-        options=TurnOptions(think=True),
-        config=make_config(),
-        tools=build_default_registry(search=SearchStub()),
-    )
-
-    opts = provider.seen_opts[0]
-    assert "model" not in opts  # 沿用配置里的同一个模型
-    assert "temperature" not in opts  # 不改采样参数
-    assert opts["max_tokens"] >= 2048
-    assert "tools" in opts  # 同一模型下工具不受影响
-    system_texts = [
-        m.content for m in provider.seen_messages[0] if m.role == "system"
-    ]
-    assert any("请先充分推理" in text for text in system_texts)
-    assert "error" not in sink.types()
-
-
 # ---------------------------------------------------------------- 联网开关
 
 
@@ -220,7 +194,7 @@ def test_options_none_keeps_legacy_behavior() -> None:
 
 def test_reasoning_events_precede_tokens() -> None:
     provider = ReasoningProvider(reasoning=["先想", "再想"], text=["答", "案"])
-    sink = run(provider, options=TurnOptions(think=True), config=make_config())
+    sink = run(provider, options=None, config=make_config())
 
     types = sink.types()
     first_reasoning = types.index("reasoning")

@@ -8,7 +8,7 @@
  *    具体业务含义由调用方（主进程动作分发）解释）；
  *  - text：说话气泡——聊天回复展示在兔子头部旁（内容经同 session UPDATE 流式刷新）；
  *    悬浮（鼠标移上气泡）时气泡上方淡出工具条「⤢ 展开｜✕」（回传 action 'expand' / 'close'，
- *    2026-10-16 用户定稿：展开=带聊天记录进教学、✕=收掉消息）。
+ *    2026-10-16 用户定稿：展开=打开工作模式、✕=收掉消息）。
  *
  * 动画（motion 参数化；本组件只负责**窗内表演**，窗口显隐由主进程经
  * REQUEST_CLOSE/CLOSED 编排）：
@@ -417,7 +417,7 @@ export default function PetBubble({
               type="button"
               className="pet-bubble-tool"
               data-testid="speech-tool-expand"
-              title="展开（带着聊天记录进入教学）"
+              title="展开（进入工作模式）"
               onClick={() => onAction('expand')}
             >
               <ExpandIcon />
@@ -508,7 +508,7 @@ export default function PetBubble({
 
 // ------------------------------------------------------------------ 悬浮工具条图标（线稿，currentColor）
 
-/** 展开（四向箭头）：带聊天记录进入教学 */
+/** 展开（四向箭头）：打开工作模式 */
 function ExpandIcon(): ReactElement {
   return (
     <svg
