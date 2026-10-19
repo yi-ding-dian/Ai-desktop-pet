@@ -24,5 +24,7 @@ export function droolVertexChunk(): string {
     transformed.x += (sin(uDroolTime) * 0.008 + sin(uDroolTime * 2.1 + 1.7) * 0.0025)
       * droolMask * droolTip;
     transformed.z += cos(uDroolTime * 0.9) * 0.004 * droolMask * droolTip;
+    // 供片元着色器控制口水 alpha（浅睡隐藏 / 深睡淡入）
+    vDroolMask = droolMask;
   `
 }

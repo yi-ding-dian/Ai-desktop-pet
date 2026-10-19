@@ -333,6 +333,11 @@ class BehaviorEngine:
             return f"免打扰时段（{self._config.quiet_hours}）"
         if rules.is_engaged(self._env.pet_state):
             return f"用户交互中（pet_state={self._env.pet_state}）"
+        if self._env.pet_state == "sleeping":
+            # 睡眠优先于普通自主行为：否则调试/用户指令触发的打盹会被
+            # 引擎按 10–40s 的节奏下发的 walk/look_around 抢走。
+            # 用户回来/对话仍会通过 state=idle / thinking 正常唤醒。
+            return "睡眠中（不主动抢占）"
         return None
 
     def _context(self) -> BehaviorContext:

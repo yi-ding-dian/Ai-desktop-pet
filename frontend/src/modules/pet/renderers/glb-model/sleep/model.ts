@@ -15,9 +15,7 @@ import {
   SLEEP_ENTER_OFFSET_Y,
   SLEEP_ENTER_SCALE,
   SLEEP_LIFT_Y,
-  SLEEP_MODEL_URL,
-  SLEEP_TRANSITION_SECONDS,
-  SLEEP_WIDTH_RATIO
+  SLEEP_TRANSITION_SECONDS
 } from './config'
 
 export interface SleepModelHost {
@@ -33,6 +31,8 @@ function smoothstep(t: number): number {
 }
 
 export class SleepModel {
+  /** 日志/调试用：light / deep */
+  private readonly label: string
   private host: SleepModelHost | null = null
   private root: THREE.Group | null = null
   private model: THREE.Object3D | null = null
@@ -45,6 +45,12 @@ export class SleepModel {
   private visible = false
   /** 当前过渡（秒） */
   private transition: { kind: 'enter' | 'exit'; elapsed: number } | null = null
+  /** 口水目标 alpha（模型未就绪时先记住，加载完成后应用，避免一帧闪现） */
+  private droolAlpha = 1
+
+  constructor(label = 'sleep') {
+    this.label = label
+  }
 
   attach(host: SleepModelHost): void {
     this.host = host
@@ -56,26 +62,26 @@ export class SleepModel {
     if (this.root?.parent) this.root.parent.remove(this.root)
   }
 
-  /** 懒加载：站姿模型就绪后调用；standWidth 用于按宽度归一化 */
-  preload(standWidth: number): void {
+  /** 懒加载：站姿模型就绪后调用；standWidth 用于按宽度归一化，widthRatio 区分浅睡/深睡 */
+  preload(standWidth: number, url: string, widthRatio: number): void {
     if (this.disposed || this.state !== 'idle') return
     this.state = 'loading'
     const token = ++this.token
     const loader = new GLTFLoader()
     loader.load(
-      SLEEP_MODEL_URL,
+      url,
       (gltf) => {
         if (this.disposed || token !== this.token) {
           disposeObjectResources(gltf.scene)
           return
         }
-        this.setup(gltf.scene, standWidth)
+        this.setup(gltf.scene, standWidth, widthRatio)
       },
       undefined,
       (err) => {
         if (this.disposed || token !== this.token) return
         this.state = 'failed'
-        console.warn('[pet] 睡姿模型加载失败（回退站姿睡觉）：', SLEEP_MODEL_URL, err)
+        console.warn(`[pet] 睡姿模型(${this.label})加载失败（回退）：`, url, err)
       }
     )
   }
@@ -108,6 +114,12 @@ export class SleepModel {
     this.visible = false
     this.transition = { kind: 'exit', elapsed: 0 }
     this.root.visible = true
+  }
+
+  /** 口水显隐（深睡模型 0→1 淡入；浅睡模型没有口水顶点，调用无害） */
+  setDroolAlpha(value: number): void {
+    this.droolAlpha = value < 0 ? 0 : value > 1 ? 1 : value
+    this.motion?.setDroolAlpha(this.droolAlpha)
   }
 
   update(dt: number): void {
@@ -168,7 +180,7 @@ export class SleepModel {
 
   // ------------------------------------------------------------------ 内部
 
-  private setup(loaded: THREE.Object3D, standWidth: number): void {
+  private setup(loaded: THREE.Object3D, standWidth: number, widthRatio: number): void {
     // ① 材质微调（与站姿模型一致：卡通兔非金属，避免高 metalness 发黑）
     loaded.traverse((object) => {
       const mesh = object as THREE.Mesh
@@ -191,7 +203,7 @@ export class SleepModel {
 
     // ③ 按站姿宽度归一化（趴睡更宽更矮，按高度归一化会显得过大）
     const width = Math.max(0.001, box.max.x - box.min.x)
-    const targetWidth = Math.max(0.2, standWidth * SLEEP_WIDTH_RATIO)
+    const targetWidth = Math.max(0.2, standWidth * widthRatio)
     loaded.scale.multiplyScalar(targetWidth / width)
 
     // ④ 缩放后重新贴地 + 额外抬高
@@ -212,7 +224,8 @@ export class SleepModel {
     this.model = loaded
 
     // ⑥ 腹部呼吸（只作用于睡姿模型 clone 出来的材质）
-    this.motion = applySleepMotion(loaded)
+    this.motion = applySleepMotion(loaded, { droolAlpha: this.label === 'deep' })
+    this.motion?.setDroolAlpha(this.droolAlpha)
 
     this.state = 'ready'
     this.host?.scene.add(root)

@@ -1,16 +1,21 @@
 /**
- * 睡眠状态编排（2026-10-19）：组合睡姿模型与 Zzz 覆盖层。
+ * 睡眠状态编排（2026-10-19）：每次入睡随机选一个睡姿模型，不中途切换。
  *
- * 对外只暴露三件事：
- * - `setState(state)`：进入/退出 sleeping；
- * - `coversStand`：睡姿是否接管画面（渲染器据此隐藏站姿模型/表情/耳朵层）；
- * - `hitTest(raycaster)`：睡姿可见时接管命中判定。
- *
- * 模型未就绪/加载失败时全部回退：`coversStand=false`，站姿模型继续用现有
- * 程序化睡觉姿态（姿势下沉 + 闭眼 + Zzz 由 face 层负责）。
+ * - 50%（可调）选深睡模型（有口水）：入睡后口水先隐藏，满 10 秒用 shader 淡入；
+ * - 50% 选浅睡模型（无口水）：整场睡眠都没有口水；
+ * - 两个模型都保留，选中哪个就只显示哪个；加载失败回退另一个，都失败回退站姿。
  */
 import type * as THREE from 'three'
 import type { PetState } from '../../../../../shared/protocol'
+import {
+  DEEP_MODEL_PROBABILITY,
+  DEEP_SLEEP_DELAY_SECONDS,
+  DROOL_FADE_SECONDS,
+  SLEEP_DEEP_MODEL_URL,
+  SLEEP_LIGHT_MODEL_URL,
+  SLEEP_WIDTH_RATIO_DEEP,
+  SLEEP_WIDTH_RATIO_LIGHT
+} from './config'
 import { SleepModel } from './model'
 import { SleepZzzOverlay } from './zzz'
 
@@ -21,65 +26,109 @@ export interface SleepAttachOptions {
 }
 
 export class SleepController {
-  private readonly model = new SleepModel()
+  private readonly light = new SleepModel('light')
+  private readonly deep = new SleepModel('deep')
   private readonly zzz = new SleepZzzOverlay()
-  private state: PetState = 'idle'
+  private sleeping = false
+  /** 本次睡眠随机选中的模型（进入时决定，睡眠期间不变） */
+  private preferDeep = false
+  /** 本次睡眠已持续秒数（只用于深睡模型口水淡入） */
+  private elapsed = 0
   private attached = false
 
   attach(options: SleepAttachOptions): void {
     this.attached = true
-    this.model.attach({ scene: options.scene })
+    this.light.attach({ scene: options.scene })
+    this.deep.attach({ scene: options.scene })
     this.zzz.attach(options.overlayHost)
-    this.syncVisibility()
+    this.applyVisibility()
   }
 
-  /** 站姿模型就绪后调用（懒加载睡姿 GLB；standWidth 用于按宽度归一化） */
+  /** 站姿模型就绪后调用：两个睡姿模型并行懒加载 */
   preload(standWidth: number): void {
-    this.model.preload(standWidth)
+    this.light.preload(standWidth, SLEEP_LIGHT_MODEL_URL, SLEEP_WIDTH_RATIO_LIGHT)
+    this.deep.preload(standWidth, SLEEP_DEEP_MODEL_URL, SLEEP_WIDTH_RATIO_DEEP)
   }
 
   setState(state: PetState): void {
-    this.state = state
-    this.syncVisibility()
+    const next = state === 'sleeping'
+    if (next === this.sleeping) return
+    this.sleeping = next
+    this.elapsed = 0
+    if (next) {
+      // 每次入睡随机一次；睡眠期间不切换模型
+      this.preferDeep = Math.random() < DEEP_MODEL_PROBABILITY
+      this.deep.setDroolAlpha(0)
+    } else {
+      this.deep.setDroolAlpha(1)
+    }
+    this.applyVisibility()
   }
 
   update(dt: number): void {
-    this.model.update(dt)
-    // 模型可能在 sleeping 期间才加载完成：加载后下一帧进入
-    this.syncVisibility()
+    if (this.sleeping) {
+      this.elapsed += dt
+      if (this.preferDeep) {
+        // 入睡 10 秒后，口水在 0.8 秒内从 0 淡入到 1
+        const progress = Math.min(
+          1,
+          Math.max(0, (this.elapsed - DEEP_SLEEP_DELAY_SECONDS) / DROOL_FADE_SECONDS)
+        )
+        this.deep.setDroolAlpha(progress)
+      }
+    }
+    this.light.update(dt)
+    this.deep.update(dt)
+    this.applyVisibility()
   }
 
-  /** 睡姿是否接管画面（进入过渡开始 → 退出过渡结束） */
+  /** 睡姿是否接管画面（当前选中的模型可见，含过渡） */
   get coversStand(): boolean {
-    return this.model.visibleNow
+    return this.light.visibleNow || this.deep.visibleNow
   }
 
   /** raycaster 必须已 setFromCamera；返回 null 表示睡姿未接管 */
   hitTest(raycaster: THREE.Raycaster): boolean | null {
-    return this.model.hitTest(raycaster)
+    const deepHit = this.deep.hitTest(raycaster)
+    if (deepHit === true) return true
+    const lightHit = this.light.hitTest(raycaster)
+    if (lightHit !== null) return lightHit
+    return deepHit
   }
 
   detach(): void {
     this.zzz.detach()
-    this.model.detach()
+    this.light.detach()
+    this.deep.detach()
     this.attached = false
   }
 
   dispose(): void {
     this.zzz.dispose()
-    this.model.dispose()
+    this.light.dispose()
+    this.deep.dispose()
     this.attached = false
   }
 
-  private syncVisibility(): void {
+  private applyVisibility(): void {
     if (!this.attached) return
-    const sleeping = this.state === 'sleeping'
-    if (sleeping && this.model.ready) {
-      this.model.setVisible(true)
-      this.zzz.setVisible(true)
-    } else {
-      this.model.setVisible(false)
+    if (!this.sleeping) {
+      this.light.setVisible(false)
+      this.deep.setVisible(false)
       this.zzz.setVisible(false)
+      return
     }
+
+    const primary = this.preferDeep ? this.deep : this.light
+    const fallback = this.preferDeep ? this.light : this.deep
+    if (primary.ready) {
+      primary.setVisible(true)
+      fallback.setVisible(false)
+    } else if (fallback.ready) {
+      // 选中的模型还没加载好/加载失败：先用另一个
+      fallback.setVisible(true)
+      primary.setVisible(false)
+    }
+    this.zzz.setVisible(this.light.visibleNow || this.deep.visibleNow)
   }
 }
