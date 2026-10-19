@@ -48,7 +48,7 @@ if not exist "backend\.venv\Scripts\python.exe" (
   set "NEED_PIP=1"
 ) else (
   rem 依赖探针：venv 在但依赖不全（比如上次装到一半）也走安装分支
-  backend\.venv\Scripts\python.exe -c "import fastapi, openai" >nul 2>nul
+  backend\.venv\Scripts\python.exe -c "import fastapi, openai, docx, keyring, httpx, openpyxl" >nul 2>nul
   if errorlevel 1 (
     echo · 虚拟环境在、但依赖不全（可能上次装到一半），补装...
     set "NEED_PIP=1"

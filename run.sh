@@ -66,8 +66,9 @@ if [ ! -x "$PY" ]; then
   [ -x "$PY" ] || PY=backend/.venv/Scripts/python.exe
 fi
 
-# 依赖探针：venv 在但依赖不全（比如上次装到一半）也走安装分支
-if "$PY" -c "import fastapi, openai" >/dev/null 2>&1; then
+# 依赖探针：venv 在但依赖不全（比如上次装到一半、新增依赖没装）也走安装分支。
+# 新增 pyproject 依赖时记得同步加到这里（曾因只查 fastapi/openai 漏掉 python-docx 导致后端启动即崩）。
+if "$PY" -c "import fastapi, openai, docx, keyring, httpx, openpyxl" >/dev/null 2>&1; then
   echo "· 已存在，跳过"
 else
   echo "· 安装后端依赖（清华镜像）…"
