@@ -159,25 +159,30 @@ function workAttachPoint(rect: Rect): Point {
 
 /**
  * 宠物依附到工作窗左侧（与教学模式讲台同一套几何：图像右缘贴窗左下角、脚底与窗底平齐）。
- * 只有工作窗首次显示时才记原位；重复 show（最小化恢复）不会覆盖原位。
+ *
+ * 只有首次依附时记原位（关闭/最小化回位目标）；之后再次调用（用户在工作模式中把宠物
+ * 拖走后再点菜单「工作模式」/恢复窗口）会重新吸附到左侧，但不覆盖原位。
+ * 已经贴在工作窗左侧时直接跳过，避免重复启动滑步动画。
  */
 function placePet(rect: Rect): void {
-  if (petPlaced) return
   // 教学模式优先：两边同时在场时不去抢讲台位
   if (getTeachingMode() !== 'normal') return
   const pet = petWin
   if (pet === null || pet.isDestroyed()) return
   const bounds = pet.getBounds()
-  petHomeRect = {
-    x: bounds.x,
-    y: bounds.y,
-    width: PET_WINDOW_SIZE.width,
-    height: PET_WINDOW_SIZE.height
+  if (!petPlaced) {
+    petHomeRect = {
+      x: bounds.x,
+      y: bounds.y,
+      width: PET_WINDOW_SIZE.width,
+      height: PET_WINDOW_SIZE.height
+    }
+    petPlaced = true
   }
-  petPlaced = true
   const point = workAttachPoint(rect)
+  if (bounds.x === point.x && bounds.y === point.y) return
   console.log(
-    `[work] 宠物依附工作窗左侧：${bounds.x},${bounds.y} → ${point.x},${point.y}（原位 ${petHomeRect.x},${petHomeRect.y}）`
+    `[work] 宠物依附工作窗左侧：${bounds.x},${bounds.y} → ${point.x},${point.y}（原位 ${petHomeRect?.x ?? bounds.x},${petHomeRect?.y ?? bounds.y}）`
   )
   void runRelocateAnimation(
     pet,
@@ -398,12 +403,13 @@ function loadWorkPage(win: BrowserWindow): void {
 export function openWork(): void {
   const existing = workWin
   if (existing !== null && !existing.isDestroyed()) {
+    // 本来就在显示：show() 不会再触发依附，需要手动补（用户可能已把宠物拖走）
+    const alreadyVisible = existing.isVisible() && !existing.isMinimized()
     if (existing.isMinimized()) existing.restore()
     existing.show()
     existing.focus()
     notifyPresence(true)
-    // 教学模式退出等边缘时序下可能没被占用：补一次依附（已占用时是空操作）
-    if (!petPlaced) placePet(framelessBounds(existing))
+    if (alreadyVisible) placePet(framelessBounds(existing))
     return
   }
   createWorkWindow()
