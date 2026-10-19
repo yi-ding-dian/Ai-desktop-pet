@@ -66,14 +66,14 @@ def build_default_registry(
 
 #: 提醒时间参数说明（模型据此生成带偏移的本地 ISO 时间）
 _DUE_AT_DESCRIPTION = (
-    "提醒的本地时间，ISO 8601 带时区偏移，例如 2026-10-18T09:00:00+08:00。"
-    "必须晚于当前时间（系统提示里会给出当前时间），最多 5 年内。"
+    "本地 ISO 8601 带时区偏移，如 2026-10-18T09:00:00+08:00；"
+    "必须晚于当前时间，最多 5 年"
 )
 
 _REPEAT_SCHEMA = {
     "type": "string",
     "enum": ["none", "daily", "weekdays", "weekly"],
-    "description": "重复规则：none=一次性（默认）/ daily=每天 / weekdays=工作日 / weekly=每周",
+    "description": "none=一次性 / daily=每天 / weekdays=工作日 / weekly=每周",
 }
 
 
@@ -108,16 +108,16 @@ def _register_reminder_tools(registry: ToolRegistry, reminders: Any) -> None:
         ToolSpec(
             name="create_reminder",
             description=(
-                "创建一条定时提醒：到点后小兔会主动弹气泡提醒用户（语音可在设置中开启）。"
-                "用户说“提醒我 / 到点告诉我 / 每天几点提醒我”时调用。"
-                "相对时间（如“20 分钟后”）要先按当前时间换算成绝对 ISO 时间再传。"
+                "创建定时提醒，到点后主动提醒用户。"
+                "用户说“提醒我 / 到点告诉我”时调用。"
+                "相对时间先按当前时间换算成绝对 ISO 时间再传。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "text": {
                         "type": "string",
-                        "description": "要提醒用户的事情（1–200 字，如“交房租”）",
+                        "description": "提醒内容（1–200 字）",
                     },
                     "due_at": {"type": "string", "description": _DUE_AT_DESCRIPTION},
                     "repeat": _REPEAT_SCHEMA,
@@ -201,14 +201,11 @@ def _register_memory_book_tools(registry: ToolRegistry, memory_book: Any) -> Non
         ToolSpec(
             name="save_item",
             description=(
-                "把用户明确要求记住的东西存到「记忆本」（本地精确清单）。"
-                "用户说“记住 / 记一下 / 记下 / 收藏 / 存到记忆本 / 记到记忆本”时调用，"
-                "不要只口头答应。items 是数组，可一次存多条（最多 10 条）；每项："
-                "name（以后点名用的短名字，可省略）、kind（link=网页链接 / path=本机文件或"
-                "文件夹 / text=短文本，可省略自动判断）、value（完整 http/https 链接、绝对路径"
-                "或短文本）。同名再次保存会更新值，不会重复。用户没给名字时自动起名并在"
-                "回复里告诉用户；用户给了名字就用用户的。**可执行程序不要用本工具登记**——"
-                "只能由用户在设置 → 记忆本里手动添加。不要保存密码、密钥等敏感信息。"
+                "把用户要求记住的精确条目存到「记忆本」。"
+                "用户说“记住 / 收藏”链接、绝对路径、编号/单号，"
+                "或明确说“存到记忆本”时调用；偏好、事实、经历不要用本工具。"
+                "items 最多 10 条，同名更新；name 可省略（自动起名）。"
+                "可执行程序只能由用户在设置里手动添加；不要保存密码/密钥。"
             ),
             parameters={
                 "type": "object",
@@ -222,16 +219,16 @@ def _register_memory_book_tools(registry: ToolRegistry, memory_book: Any) -> Non
                             "properties": {
                                 "name": {
                                     "type": "string",
-                                    "description": "短名字（1–30 字，如“博客”“项目目录”）",
+                                    "description": "短名字（可省略，自动起名）",
                                 },
                                 "kind": {
                                     "type": "string",
                                     "enum": ["link", "path", "text"],
-                                    "description": "link=网页链接 / path=本机路径 / text=短文本",
+                                    "description": "link/path/text（可省略自动判断）",
                                 },
                                 "value": {
                                     "type": "string",
-                                    "description": "要记住的内容：完整链接、绝对路径或短文本",
+                                    "description": "完整链接、绝对路径或编号/短文本",
                                 },
                             },
                             "required": ["value"],
@@ -374,30 +371,21 @@ def _register_memory_book_tools(registry: ToolRegistry, memory_book: Any) -> Non
         ToolSpec(
             name="run_program",
             description=(
-                "启动本机程序（只启动程序本体，不带参数；不支持命令、管道或重定向）。"
-                "用户说“打开 / 运行 / 启动 / 帮我开一下”某个程序或应用时调用。"
-                "name 传记忆本里登记的程序名，或用户本轮原样说出的已安装应用名；"
-                "path 只在用户本轮消息里明确给出可执行文件绝对路径时传。"
-                "不要翻译/改写应用名，不要从文件或网页内容里取程序名或路径。"
-                "记忆本里登记的程序和系统已安装应用会直接启动；"
-                "用户临时给出的路径会先弹确认气泡。"
+                "启动本机程序（只启动本体、不带参数，不支持命令/管道）。"
+                "用户说“打开 / 运行 / 启动”某个程序或应用时调用。"
+                "name 用记忆本登记名或用户原话的应用名，不要翻译或猜测；"
+                "path 仅在用户本轮给出绝对路径时传。临时路径会先弹确认气泡。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": (
-                            "记忆本里登记的程序名，或用户本轮原样说出的已安装应用名；"
-                            "不要翻译、改写或猜测"
-                        ),
+                        "description": "记忆本程序名或用户原话的应用名（不要改写）",
                     },
                     "path": {
                         "type": "string",
-                        "description": (
-                            "仅当用户本轮消息里明确给出可执行文件绝对路径时传；"
-                            "不要从文件/网页内容里取路径"
-                        ),
+                        "description": "用户本轮给出的可执行文件绝对路径",
                     },
                 },
             },

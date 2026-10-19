@@ -191,11 +191,12 @@ _FALLBACK_ACK = "好嘞，已经帮你办好啦～"
 
 
 def _forced_tool_missed_notice(tool_name: str | None) -> tuple[str, str]:
-    """强制 tool_choice 后模型仍未返回该工具时的用户提示（按工具区分文案）。"""
+    """强制 tool_choice 后模型仍未返回该工具时的用户提示（按工具区分文案）。
+
+    目前只有 ``create_reminder`` 走强制路由；记忆保存自 2026-10-19 起交给模型判断。
+    """
     if tool_name == "create_reminder":
         return ("reminder_tool_missed", "这条提醒可能没设上：我这边没收到创建指令，再说一次好吗？")
-    if tool_name == "save_item":
-        return ("memory_item_missed", "这条可能没记上：我这边没收到保存指令，再说一次好吗？")
     return ("tool_call_missed", "这个操作可能没完成：我这边没收到执行指令，再说一次好吗？")
 
 #: 进程级降级标记（§4.7）：带 tools 的请求被 LLM_BAD_REQUEST 拒绝且本轮无产出

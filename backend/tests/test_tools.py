@@ -370,9 +370,9 @@ def test_match_forced_tool_misses(text: str) -> None:
         "记住这个链接好吗 https://example.com",
     ],
 )
-def test_match_forced_tool_hits_save_item(text: str) -> None:
-    """明确的保存指令 → 强制 save_item（防模型只口头答应“记住了”）。"""
-    assert match_forced_tool(text) == "save_item"
+def test_match_forced_tool_leaves_save_decision_to_model(text: str) -> None:
+    """保存不再强制（2026-10-19）：精确条目/偏好都由模型按提示词判断。"""
+    assert match_forced_tool(text) is None
 
 
 @pytest.mark.parametrize(
@@ -395,6 +395,6 @@ def test_match_forced_tool_does_not_force_save_item(text: str) -> None:
     assert match_forced_tool(text) != "save_item"
 
 
-def test_reminder_has_priority_over_save_item() -> None:
-    """“记住明天 9 点提醒我”是提醒，不是记忆本保存。"""
+def test_reminder_still_forced() -> None:
+    """提醒仍走强制路由（模型曾只口头答应、不真正创建）。"""
     assert match_forced_tool("记住明天9点提醒我开会") == "create_reminder"
