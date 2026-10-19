@@ -218,7 +218,7 @@ class MemoryExtractor:
         - ``prompt``：专用提示词全文（application 从 llm/prompts 加载后注入）；
         - ``similarity_threshold``：去重阈值（字符 bigram Dice，向量接入后换余弦）；
         - ``is_forgotten``：记忆本"遗忘名单"过滤器（application 注入，memory 域
-          不 import notebook 域）。返回 True 的待入库记忆直接跳过——用户已经
+          不 import memory_book 域）。返回 True 的待入库记忆直接跳过——用户已经
           明确删掉的链接/路径，不能后台从旧对话里又捞回来。
         """
         self._store = store

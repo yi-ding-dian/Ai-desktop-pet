@@ -84,6 +84,11 @@ const TOOL_EXECUTORS = new Map<string, ToolExecutor>([
         speakLocal('这个版本还不支持打开链接或文件。')
         return
       }
+      if (kind === 'program') {
+        // 后端 prepare_open 已拒绝程序条目；这里只做版本漂移兜底
+        speakLocal('这是一个程序，说“运行它”我就会启动。')
+        return
+      }
       devLog(`open_item → ${kind}: ${value}`)
       try {
         const result =
@@ -130,9 +135,60 @@ const TOOL_EXECUTORS = new Map<string, ToolExecutor>([
       // 主进程已确认移入回收站：让后端移除记忆本记录、清理长期记忆。
       // 断线时回传失败，记录会在下次打开时显示“路径不存在”，可手动删。
       try {
-        client.send('notebook_file_deleted', { path })
+        client.send('memory_book_file_deleted', { path })
       } catch (err) {
-        devLog(`notebook_file_deleted 回传失败：${String(err)}`)
+        devLog(`memory_book_file_deleted 回传失败：${String(err)}`)
+      }
+    }
+  ],
+  [
+    'run_program',
+    async (args) => {
+      // 后端 prepare_run_program 已把来源解析成三种 kind：
+      // program=记忆本登记（免确认）；app=已安装应用（主进程匹配、免确认）；
+      // path=用户临时给出的路径（主进程弹确认气泡）。
+      const kind = str(args, 'kind')
+      const name = str(args, 'name')
+      const path = str(args, 'path')
+      const launcher = getPetBridge().launcher
+      if (!launcher?.runProgram) {
+        speakLocal('这个版本还不支持启动程序。')
+        return
+      }
+
+      if (kind === 'app') {
+        if (!name) {
+          speakLocal('要运行哪个程序？')
+          return
+        }
+        devLog(`run_program → 安装应用：${name}`)
+        try {
+          const result = await launcher.runProgram({ mode: 'name', name })
+          if (!result.ok) speakLocal(result.message || `没能启动『${name}』。`)
+        } catch (err) {
+          devLog(`run_program 失败：${String(err)}`)
+          speakLocal('没能启动这个程序。')
+        }
+        return
+      }
+
+      if (!path) {
+        speakLocal('没找到要运行的程序。')
+        return
+      }
+      devLog(`run_program → ${kind}: ${path}`)
+      try {
+        const result = await launcher.runProgram({
+          mode: 'path',
+          path,
+          name: name || undefined,
+          // 只有记忆本登记条目免确认；临时路径由主进程弹确认气泡
+          trusted: kind === 'program'
+        })
+        if (!result.ok) speakLocal(result.message || '没能启动这个程序。')
+      } catch (err) {
+        devLog(`run_program 失败：${String(err)}`)
+        speakLocal('没能启动这个程序。')
       }
     }
   ]

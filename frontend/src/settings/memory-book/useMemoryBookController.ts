@@ -5,57 +5,59 @@
  * 打开与外链/本机路径走 pet-bridge；真实文件删除走主进程原生确认框
  * （``settings.deletePath``），确认并成功后让后端移除对应记录。
  *
- * 所有写操作都由后端回 ``notebook_result`` + 最新 ``notebook_items``；
+ * 所有写操作都由后端回 ``memory_book_result`` + 最新 ``memory_book_items``；
  * 前端不做乐观更新——列表以服务端快照为准，避免多端（宠物/设置页）不一致。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getPetBridge } from '../../shared/pet-bridge'
 import type {
-  NotebookItemData,
-  NotebookItemInput,
-  NotebookKind
+  MemoryBookItemData,
+  MemoryBookItemInput,
+  MemoryBookKind
 } from '../../shared/protocol'
 import type { WsConnectionState } from '../../shared/ws-client'
 import {
-  createNotebookBackendClient,
-  type NotebookBackendClient
-} from '../api/notebook-client'
+  createMemoryBookBackendClient,
+  type MemoryBookBackendClient
+} from './memory-book-client'
 
-export type NotebookFilter = 'all' | NotebookKind
+export type MemoryBookFilter = 'all' | MemoryBookKind
 
-export interface NotebookNotice {
+export interface MemoryBookNotice {
   kind: 'info' | 'success' | 'error'
   text: string
 }
 
-export interface NotebookController {
+export interface MemoryBookController {
   connection: WsConnectionState
-  items: NotebookItemData[]
+  items: MemoryBookItemData[]
   count: number
   loading: boolean
-  notice: NotebookNotice | null
-  filter: NotebookFilter
-  setFilter: (filter: NotebookFilter) => void
+  notice: MemoryBookNotice | null
+  filter: MemoryBookFilter
+  setFilter: (filter: MemoryBookFilter) => void
   refresh: () => void
-  saveItem: (input: NotebookItemInput) => void
+  saveItem: (input: MemoryBookItemInput) => void
   renameItem: (oldName: string, newName: string) => void
   deleteRecord: (names: string[]) => void
-  deleteFile: (item: NotebookItemData) => void
-  openItem: (item: NotebookItemData) => void
+  deleteFile: (item: MemoryBookItemData) => void
+  openItem: (item: MemoryBookItemData) => void
+  /** program 条目：直接启动（用户亲手登记，免确认；2026-10-19） */
+  runItem: (item: MemoryBookItemData) => void
   dismissNotice: () => void
 }
 
-export function useNotebookController(): NotebookController {
-  const clientRef = useRef<NotebookBackendClient | null>(null)
+export function useMemoryBookController(): MemoryBookController {
+  const clientRef = useRef<MemoryBookBackendClient | null>(null)
   const [connection, setConnection] = useState<WsConnectionState>('idle')
-  const [items, setItems] = useState<NotebookItemData[]>([])
+  const [items, setItems] = useState<MemoryBookItemData[]>([])
   const [count, setCount] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [notice, setNotice] = useState<NotebookNotice | null>(null)
-  const [filter, setFilter] = useState<NotebookFilter>('all')
+  const [notice, setNotice] = useState<MemoryBookNotice | null>(null)
+  const [filter, setFilter] = useState<MemoryBookFilter>('all')
 
   useEffect(() => {
-    const client = createNotebookBackendClient()
+    const client = createMemoryBookBackendClient()
     clientRef.current = client
 
     const offConn = client.onConnectionChange((state) => {
@@ -80,7 +82,7 @@ export function useNotebookController(): NotebookController {
         setNotice({ kind: 'error', text: '操作没有成功，再试一次好吗？' })
       }
       if (!data.ok) setLoading(false)
-      // 成功时服务端随后推 notebook_items，loading 在那里结束
+      // 成功时服务端随后推 memory_book_items，loading 在那里结束
     })
     const offError = client.onError((data) => {
       setNotice({ kind: 'error', text: data.message || '后端出错了' })
@@ -126,7 +128,7 @@ export function useNotebookController(): NotebookController {
   }, [sendOrWarn])
 
   const saveItem = useCallback(
-    (input: NotebookItemInput) => {
+    (input: MemoryBookItemInput) => {
       const client = clientRef.current
       if (!client) return
       if (!input.value.trim()) {
@@ -163,9 +165,13 @@ export function useNotebookController(): NotebookController {
     [sendOrWarn]
   )
 
-  const openItem = useCallback((item: NotebookItemData) => {
+  const openItem = useCallback((item: MemoryBookItemData) => {
     if (item.kind === 'text') {
       setNotice({ kind: 'info', text: '这是一段文字，不是链接或文件。' })
+      return
+    }
+    if (item.kind === 'program') {
+      setNotice({ kind: 'info', text: '这是程序条目，请点「运行」。' })
       return
     }
     if (item.kind === 'path' && !item.path_exists) {
@@ -190,8 +196,42 @@ export function useNotebookController(): NotebookController {
       })
   }, [])
 
+  const runItem = useCallback((item: MemoryBookItemData) => {
+    if (item.kind !== 'program') return
+    if (!item.path_exists) {
+      setNotice({ kind: 'error', text: `程序不存在或不可执行：${item.value}` })
+      return
+    }
+    const launcher = getPetBridge().launcher
+    if (!launcher?.runProgram) {
+      setNotice({ kind: 'error', text: '这个版本还不支持启动程序。' })
+      return
+    }
+    void launcher
+      .runProgram({
+        mode: 'path',
+        path: item.value,
+        name: item.name,
+        // 用户亲手登记在记忆本里的程序：设置页点「运行」即明确操作，免确认
+        trusted: true
+      })
+      .then((result) => {
+        if (!result.ok) {
+          setNotice({ kind: 'error', text: result.message || '没能启动这个程序。' })
+          return
+        }
+        setNotice({
+          kind: 'success',
+          text: `已经启动『${result.appName || item.name}』。`
+        })
+      })
+      .catch((err: unknown) => {
+        setNotice({ kind: 'error', text: `启动失败：${String(err)}` })
+      })
+  }, [])
+
   const deleteFile = useCallback(
-    (item: NotebookItemData) => {
+    (item: MemoryBookItemData) => {
       const settings = getPetBridge().settings
       if (!settings?.deletePath) {
         setNotice({ kind: 'error', text: '这个版本还不支持删除文件。' })
@@ -246,6 +286,7 @@ export function useNotebookController(): NotebookController {
     deleteRecord,
     deleteFile,
     openItem,
+    runItem,
     dismissNotice
   }
 }

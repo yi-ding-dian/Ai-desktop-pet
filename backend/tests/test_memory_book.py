@@ -1,4 +1,4 @@
-"""modules/notebook + application/notebook_service 单测（2026-10-18）。
+"""modules/memory_book + application/memory_book_service 单测（2026-10-18）。
 
 覆盖：
 - 存储：链接/路径/文本保存、自动起名、同名更新、改名冲突、删除、遗忘名单；
@@ -9,29 +9,30 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from backend.application.notebook_service import NotebookService
+from backend.application.memory_book_service import MemoryBookService
 from backend.modules.memory.extractor import ExtractedMemory, MemoryExtractor
 from backend.modules.memory.profile import ProfileStore
 from backend.modules.memory.store import MemoryStore
-from backend.modules.notebook import (
+from backend.modules.memory_book import (
     NameConflict,
-    NotebookStore,
-    build_notebook_block,
+    MemoryBookStore,
+    build_memory_book_block,
     normalize_link,
 )
 from backend.shared.db import connect_db
 
 
-def make_env(tmp_path) -> tuple[sqlite3.Connection, NotebookStore, NotebookService, MemoryStore]:
+def make_env(tmp_path) -> tuple[sqlite3.Connection, MemoryBookStore, MemoryBookService, MemoryStore]:
     conn = connect_db(tmp_path / "pet.db")
-    store = NotebookStore(conn)
+    store = MemoryBookStore(conn)
     memories = MemoryStore(conn)
-    service = NotebookService(store, memories)
+    service = MemoryBookService(store, memories)
     return conn, store, service, memories
 
 
@@ -357,17 +358,129 @@ def test_forget_by_path_removes_record_and_purges_memory(tmp_path) -> None:
 # ---------------------------------------------------------------- 注入格式
 
 
-def test_notebook_block_hides_links_and_paths_but_shows_text(tmp_path) -> None:
+def test_memory_book_block_hides_links_and_paths_but_shows_text(tmp_path) -> None:
     _conn, store, _service, _memories = make_env(tmp_path)
     folder = tmp_path / "项目"
     folder.mkdir()
     store.save(name="博客", kind="link", value="https://secret.example.com/x")
     store.save(name="项目", kind="path", value=str(folder))
     store.save(name="单号", kind="text", value="SF123456789")
-    block = build_notebook_block(store.list_all())
+    block = build_memory_book_block(store.list_all())
     assert block is not None
     assert "博客（链接）" in block
     assert "项目（文件夹）" in block
     assert "secret.example.com" not in block
     assert str(folder) not in block
     assert "SF123456789" in block
+
+
+# ---------------------------------------------------------------- 程序条目（2026-10-19）
+
+_posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX 执行位语义")
+
+
+def make_executable(tmp_path, name: str = "firefox") -> Path:
+    path = tmp_path / name
+    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+@_posix_only
+def test_save_program_requires_executable(tmp_path) -> None:
+    _conn, store, _service, _memories = make_env(tmp_path)
+    exe = make_executable(tmp_path)
+
+    outcome = store.save(kind="program", value=str(exe))
+    assert outcome.item.kind == "program"
+    assert outcome.item.name == "firefox"
+    assert outcome.item.is_dir is False
+    assert outcome.item.kind_label == "程序"
+    assert store.path_ok(outcome.item) is True
+
+    # 同义词/中文别名归一为 program
+    aliased = store.save(name="浏览器", kind="程序", value=str(exe))
+    assert aliased.item.kind == "program"
+
+    # 没传 kind 时仍然猜成 path，不会自动变成免确认的 program
+    auto = store.save(name="自动", value=str(exe))
+    assert auto.item.kind == "path"
+
+
+@_posix_only
+def test_save_program_rejects_bad_targets(tmp_path) -> None:
+    _conn, store, _service, _memories = make_env(tmp_path)
+
+    plain = tmp_path / "plain.txt"
+    plain.write_text("not executable", encoding="utf-8")
+    plain.chmod(0o644)
+    with pytest.raises(ValueError, match="可执行权限"):
+        store.save(kind="program", value=str(plain))
+
+    with pytest.raises(ValueError, match="文件夹"):
+        store.save(kind="program", value=str(tmp_path))
+
+    desktop = tmp_path / "app.desktop"
+    desktop.write_text("[Desktop Entry]\n", encoding="utf-8")
+    desktop.chmod(0o755)
+    with pytest.raises(ValueError, match="启动器"):
+        store.save(kind="program", value=str(desktop))
+
+    with pytest.raises(ValueError, match="绝对路径"):
+        store.save(kind="program", value="./firefox")
+
+    with pytest.raises(ValueError, match="不存在"):
+        store.save(kind="program", value=str(tmp_path / "missing"))
+
+
+@_posix_only
+def test_program_path_ok_flips_when_file_loses_exec_bit_or_disappears(tmp_path) -> None:
+    _conn, store, _service, _memories = make_env(tmp_path)
+    exe = make_executable(tmp_path)
+    item = store.save(name="程序", kind="program", value=str(exe)).item
+
+    exe.chmod(0o644)
+    assert store.path_ok(item) is False
+    exe.chmod(0o755)
+    assert store.path_ok(item) is True
+
+    exe.unlink()
+    assert store.path_ok(item) is False
+
+
+@_posix_only
+def test_save_from_tool_program_needs_settings_permission(tmp_path) -> None:
+    _conn, _store, service, _memories = make_env(tmp_path)
+    exe = make_executable(tmp_path)
+    items = [{"name": "程序", "kind": "program", "value": str(exe)}]
+
+    denied = service.save_from_tool(items)
+    assert denied["ok"] is False
+    assert "设置" in denied["message"]
+    assert service.count() == 0
+
+    allowed = service.save_from_tool(items, allow_program=True)
+    assert allowed["ok"] is True
+    assert service.count() == 1
+
+
+@_posix_only
+def test_open_and_delete_path_reject_program_item(tmp_path) -> None:
+    _conn, store, service, _memories = make_env(tmp_path)
+    exe = make_executable(tmp_path)
+    store.save(name="程序", kind="program", value=str(exe))
+
+    opened = service.prepare_open({"name": "程序"}, "打开程序")
+    assert opened["ok"] is False
+    assert opened["code"] == "item_is_program"
+    assert "运行" in opened["message"]
+
+    deleted = service.prepare_delete_path({"name": "程序"}, "把程序文件删了")
+    assert deleted["ok"] is False
+    assert deleted["code"] == "item_is_program"
+
+    # 删记录只移除条目，程序文件仍在
+    removed = service.delete_from_tool(["程序"], "删掉程序", trust=True)
+    assert removed["ok"] is True
+    assert exe.exists()
+    assert service.count() == 0

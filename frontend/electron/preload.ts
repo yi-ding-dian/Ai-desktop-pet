@@ -25,6 +25,10 @@ import {
   type DeletePathResult,
   type FramelessMovePayload,
   type FramelessResizePayload,
+  type LauncherListRequest,
+  type LauncherListResult,
+  type LauncherRunRequest,
+  type LauncherRunResult,
   type OpenResult,
   type PetBridgeApi,
   type PetSayLinePayload,
@@ -177,6 +181,18 @@ const api: PetBridgeApi = {
     /** 宠物面：删除本机文件/文件夹（先弹气泡确认；确认后移入回收站） */
     deletePathWithConfirm(path: string, name?: string): Promise<DeletePathResult> {
       return ipcRenderer.invoke(IPC.SYSTEM_DELETE_PATH_CONFIRM, { path, name })
+    }
+  },
+
+  launcher: {
+    /** 已安装应用列表（设置页选择器；主进程扫描 .desktop 并缓存） */
+    listApps(request?: LauncherListRequest): Promise<LauncherListResult> {
+      return ipcRenderer.invoke(IPC.LAUNCHER_LIST_APPS, request ?? {})
+    },
+
+    /** 启动程序：按应用名或绝对路径（临时路径由主进程弹确认气泡） */
+    runProgram(request: LauncherRunRequest): Promise<LauncherRunResult> {
+      return ipcRenderer.invoke(IPC.LAUNCHER_RUN, request)
     }
   },
 

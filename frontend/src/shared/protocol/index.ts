@@ -203,66 +203,66 @@ export interface AudioChunkData {}
 
 // ---------------------------------------------------------------- 记忆本（2026-10-18）
 
-/** 记忆本条目类型 */
-export type NotebookKind = 'link' | 'path' | 'text'
+/** 记忆本条目类型（program：设置页手动登记的可执行程序，2026-10-19） */
+export type MemoryBookKind = 'link' | 'path' | 'text' | 'program'
 
-/** 记忆本条目（设置页列表；与后端 NotebookItemData 对齐） */
-export interface NotebookItemData {
+/** 记忆本条目（设置页列表；与后端 MemoryBookItemData 对齐） */
+export interface MemoryBookItemData {
   id: number
   name: string
-  kind: NotebookKind
+  kind: MemoryBookKind
   value: string
   /** kind=path 时区分文件夹/文件 */
   is_dir: boolean
   created_at: number
   updated_at: number
-  /** path 类条目当前是否还存在（失效标 ⚠） */
+  /** path/program 条目当前是否可用（path=存在；program=存在且可执行；失效标 ⚠） */
   path_exists: boolean
 }
 
-/** 记忆本列表快照（notebook_list 的响应；保存成功后服务端也会主动刷新） */
-export interface NotebookItemsData {
-  items: NotebookItemData[]
+/** 记忆本列表快照（memory_book_list 的响应；保存成功后服务端也会主动刷新） */
+export interface MemoryBookItemsData {
+  items: MemoryBookItemData[]
   count: number
 }
 
 /** 记忆本写操作结果（保存/改名/删除记录/真实文件已删） */
-export interface NotebookResultData {
+export interface MemoryBookResultData {
   ok: boolean
   code: string
   message: string
 }
 
 /** 设置页：拉取记忆本 */
-export interface NotebookListData {
-  kind?: NotebookKind | null
+export interface MemoryBookListData {
+  kind?: MemoryBookKind | null
 }
 
 /** 设置页：保存一条（与工具 save_item 的单条同构；name 可省略自动起名） */
-export interface NotebookItemInput {
+export interface MemoryBookItemInput {
   name?: string
-  kind?: NotebookKind | null
+  kind?: MemoryBookKind | null
   value: string
 }
 
 /** 设置页：批量保存/同名更新 */
-export interface NotebookSaveData {
-  items: NotebookItemInput[]
+export interface MemoryBookSaveData {
+  items: MemoryBookItemInput[]
 }
 
 /** 设置页：改名 */
-export interface NotebookRenameData {
+export interface MemoryBookRenameData {
   old_name: string
   new_name: string
 }
 
 /** 设置页：删除**记录**（不动磁盘文件） */
-export interface NotebookDeleteData {
+export interface MemoryBookDeleteData {
   names: string[]
 }
 
 /** 宠物面：主进程已确认删除真实文件（移入回收站）——后端移除记录/清记忆 */
-export interface NotebookFileDeletedData {
+export interface MemoryBookFileDeletedData {
   path: string
 }
 
@@ -534,10 +534,10 @@ export interface ServerEventMap {
   reminders: RemindersData
   /** 某一天的全部提醒事件（今日视图） */
   reminder_history: ReminderHistoryData
-  /** 记忆本列表快照（notebook_list 响应 / 保存成功后的主动刷新） */
-  notebook_items: NotebookItemsData
+  /** 记忆本列表快照（memory_book_list 响应 / 保存成功后的主动刷新） */
+  memory_book_items: MemoryBookItemsData
   /** 记忆本写操作结果 */
-  notebook_result: NotebookResultData
+  memory_book_result: MemoryBookResultData
   /** 一次性提示（文件分析丢历史等）；前端顶部/输入框上方轻提示 */
   notice: NoticeData
   history: HistoryData
@@ -574,11 +574,11 @@ export interface ClientEventMap {
   ack_reminders: AckRemindersData
   get_reminder_history: GetReminderHistoryData
   delete_reminder_item: DeleteReminderItemData
-  notebook_list: NotebookListData
-  notebook_save: NotebookSaveData
-  notebook_rename: NotebookRenameData
-  notebook_delete: NotebookDeleteData
-  notebook_file_deleted: NotebookFileDeletedData
+  memory_book_list: MemoryBookListData
+  memory_book_save: MemoryBookSaveData
+  memory_book_rename: MemoryBookRenameData
+  memory_book_delete: MemoryBookDeleteData
+  memory_book_file_deleted: MemoryBookFileDeletedData
   audio_chunk: AudioChunkData
 }
 

@@ -43,6 +43,9 @@ class ConnectionContext:
         self.voice = voice
         self.id = f"c_{uuid.uuid4().hex[:8]}"
         self.authed = False
+        #: 连接角色（hello 里的 client_role；未 hello 前按 pet 兼容）——
+        #: 设置页是唯一允许创建 program（免确认运行程序）条目的来源
+        self.client_role = "pet"
         self.session_id: str | None = None
         self.close_request: tuple[int, str] | None = None
         self._send_lock = asyncio.Lock()

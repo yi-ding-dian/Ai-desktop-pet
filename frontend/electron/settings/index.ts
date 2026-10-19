@@ -448,7 +448,7 @@ async function restartApp(): Promise<void> {
 // ------------------------------------------------------------------ IPC 接线（渲染 → 主）
 
 /** sender 是否当前受管设置窗（保存上报等"设置面专属"消息只认它） */
-function isSettingsSender(sender: WebContents): boolean {
+export function isSettingsSender(sender: WebContents): boolean {
   return Boolean(
     settingsWin && !settingsWin.isDestroyed() && sender.id === settingsWin.webContents.id
   )

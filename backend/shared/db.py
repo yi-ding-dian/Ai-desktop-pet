@@ -102,14 +102,14 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_reminder_events_fired ON reminder_events(fired_at)",
     # 记忆本（2026-10-18）：用户明确要求记住的链接 / 本机路径 / 短文本。
     # 名字是主键（name_key 归一化后唯一），值原样保存——打开/删除按名字取精确值，
-    # 不经过模型改写（与长期记忆「自然语言模糊召回」分工见 modules/notebook/store.py）。
+    # 不经过模型改写（与长期记忆「自然语言模糊召回」分工见 modules/memory_book/store.py）。
     """
     CREATE TABLE IF NOT EXISTS saved_items (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT NOT NULL,
       name_key    TEXT NOT NULL,              -- 归一化名字（去空白 + casefold），唯一键
-      kind        TEXT NOT NULL,              -- link / path / text
-      value       TEXT NOT NULL,              -- 原样保存的链接、绝对路径或短文本
+      kind        TEXT NOT NULL,              -- link / path / text / program
+      value       TEXT NOT NULL,              -- 原样保存的链接、绝对路径、短文本或程序路径
       is_dir      INTEGER NOT NULL DEFAULT 0, -- kind=path 时区分文件夹/文件（展示用）
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL

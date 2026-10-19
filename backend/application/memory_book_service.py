@@ -21,18 +21,20 @@ from typing import Any, Iterable
 from loguru import logger
 
 from backend.modules.memory.store import MemoryStore
-from backend.modules.notebook import (
+from backend.modules.memory_book import (
     KINDS,
     ItemNotFound,
     NameConflict,
-    NotebookError,
-    NotebookStore,
+    MemoryBookError,
+    MemoryBookStore,
     SavedItem,
-    build_notebook_block,
+    build_memory_book_block,
     deletable_block_reason,
     normalize_link,
     normalize_name,
     normalize_path,
+    normalize_program_path,
+    resolve_kind,
 )
 
 #: 一次工具调用最多处理的条目数（防模型一次塞爆）
@@ -67,17 +69,22 @@ def _path_key(text: str) -> str:
     return os.path.normcase(str(text or "").replace("\\", "/"))
 
 
-class NotebookService:
+class MemoryBookService:
     """记忆本工具用例：保存/列表/改名/删记录 + 打开/删文件的前置解析。"""
 
-    def __init__(self, store: NotebookStore, memories: MemoryStore | None = None) -> None:
+    def __init__(self, store: MemoryBookStore, memories: MemoryStore | None = None) -> None:
         self._store = store
         self._memories = memories
 
     # ---------------------------------------------------------------- 工具：保存
 
-    def save_from_tool(self, items: Any) -> dict[str, Any]:
-        """批量保存/同名更新；返回 ``{ok, code, message}``（汇总为一条通知）。"""
+    def save_from_tool(self, items: Any, *, allow_program: bool = False) -> dict[str, Any]:
+        """批量保存/同名更新；返回 ``{ok, code, message}``（汇总为一条通知）。
+
+        ``allow_program``：只有设置页（WS ``client_role=settings``）传 True。
+        对话工具路径一律拒绝 ``program``——否则模型被网页/文件内容诱导后，可以
+        批量登记"免确认可运行"的程序。
+        """
         entries = self._coerce_items(items)
         if not entries:
             return {
@@ -97,9 +104,14 @@ class NotebookService:
             if not value:
                 failed.append("（有一项没给内容）")
                 continue
+            if not allow_program and resolve_kind(kind) == "program":
+                failed.append(
+                    f"{value[:40]}：程序条目只能在设置 → 记忆本里手动添加"
+                )
+                continue
             try:
                 outcome = self._store.save(name=name, kind=kind, value=value)
-            except (ValueError, NotebookError) as exc:
+            except (ValueError, MemoryBookError) as exc:
                 failed.append(f"{value[:40]}：{exc}")
                 continue
 
@@ -171,6 +183,8 @@ class NotebookService:
             status = ""
             if item.kind == "path" and not self._store.path_ok(item):
                 status = "  ⚠ 路径不存在"
+            elif item.kind == "program" and not self._store.path_ok(item):
+                status = "  ⚠ 程序不存在或不可执行"
             lines.append(f"{index}. {item.name}（{item.kind_label}）{status}")
             preview = " ".join(item.value.split())[:_VALUE_PREVIEW]
             lines.append(f"   {preview}")
@@ -201,7 +215,7 @@ class NotebookService:
             }
         except NameConflict as exc:
             return {"ok": False, "code": "item_name_conflict", "message": str(exc)}
-        except (ValueError, NotebookError) as exc:
+        except (ValueError, MemoryBookError) as exc:
             return {"ok": False, "code": "item_rename_failed", "message": str(exc)}
         return {
             "ok": True,
@@ -297,6 +311,15 @@ class NotebookService:
                     "code": "item_not_openable",
                     "message": f"『{item.name}』是一段文字，不是链接或文件；你可以直接问我它的内容。",
                 }
+            if item.kind == "program":
+                return {
+                    "ok": False,
+                    "code": "item_is_program",
+                    "message": (
+                        f"『{item.name}』是一个程序，不是链接或文件。"
+                        f"说“运行 {item.name}”我就会启动它。"
+                    ),
+                }
             if item.kind == "path" and not self._store.path_ok(item):
                 return {
                     "ok": False,
@@ -327,6 +350,98 @@ class NotebookService:
             }
         return {"ok": True, "args": {"kind": "link", "value": normalized}}
 
+    # ---------------------------------------------------------------- 运行前解析
+
+    def prepare_run_program(
+        self, args: dict[str, Any], user_text: str
+    ) -> dict[str, Any]:
+        """``run_program`` 的前置解析：三种来源 → 前端可执行参数。
+
+        返回的 ``args.kind``：
+
+        - ``program``：命中了记忆本里用户手动登记的程序（免确认）；
+        - ``app``：用户本轮点名的已安装应用，由主进程在 ``.desktop`` 里匹配（免确认）；
+        - ``path``：用户本轮给出的临时绝对路径（主进程会弹确认气泡）。
+
+        授权规则：
+        - 记忆本命中即放行（与 ``open_item`` 一致；条目本身是用户授权过的）；
+        - 系统应用名 / 临时路径必须出现在用户本轮原话里——防止文件/网页内容诱导。
+        """
+        name = _string(args, "name")
+        raw_path = _string(args, "path")
+        if not name and not raw_path:
+            return {
+                "ok": False,
+                "code": "run_program_missing",
+                "message": "要运行哪个程序？告诉我名字或可执行文件的绝对路径。",
+            }
+        if name and raw_path:
+            return {
+                "ok": False,
+                "code": "run_program_ambiguous_args",
+                "message": "一次只能运行一个程序：给我名字，或者给绝对路径。",
+            }
+
+        if name:
+            item = self._store.find_by_name(name)
+            if item is not None:
+                if item.kind != "program":
+                    return {
+                        "ok": False,
+                        "code": "item_not_program",
+                        "message": (
+                            f"『{item.name}』是一条{item.kind_label}，不是程序。"
+                            + (
+                                f"想打开它请说“打开 {item.name}”。"
+                                if item.kind in ("link", "path")
+                                else ""
+                            )
+                        ),
+                    }
+                if not self._store.path_ok(item):
+                    return {
+                        "ok": False,
+                        "code": "program_missing",
+                        "message": (
+                            f"『{item.name}』现在运行不了：{item.value}\n"
+                            "可能被移动/删除，或没有执行权限。可以在设置 → 记忆本里更新。"
+                        ),
+                    }
+                return {
+                    "ok": True,
+                    "args": {"kind": "program", "name": item.name, "path": item.value},
+                }
+
+            if not self._name_mentioned(name, user_text):
+                return {
+                    "ok": False,
+                    "code": "name_not_in_message",
+                    "message": (
+                        "只能运行你本轮消息里点名说出的应用，或者先在设置 → 记忆本里登记。"
+                        "这样别人写在文件/网页里的应用名不能诱导我启动。"
+                    ),
+                }
+            return {"ok": True, "args": {"kind": "app", "name": name}}
+
+        # 临时绝对路径：必须是用户本轮话里明确给出的 + 真正的可执行文件
+        try:
+            target = normalize_program_path(raw_path)
+        except ValueError as exc:
+            return {"ok": False, "code": "bad_program", "message": str(exc)}
+        if not self._path_mentioned(raw_path, user_text):
+            return {
+                "ok": False,
+                "code": "path_not_in_message",
+                "message": (
+                    "只能运行你本轮消息里明确给出的路径，或者先在设置 → 记忆本里登记。"
+                    "这样别人写在文件/网页里的路径不能诱导我运行。"
+                ),
+            }
+        return {
+            "ok": True,
+            "args": {"kind": "path", "name": target.name, "path": str(target)},
+        }
+
     # ---------------------------------------------------------------- 删文件前解析
 
     def prepare_delete_path(self, args: dict[str, Any], user_text: str) -> dict[str, Any]:
@@ -349,6 +464,15 @@ class NotebookService:
                     "ok": False,
                     "code": "item_not_found",
                     "message": self._not_found_message(name),
+                }
+            if item.kind == "program":
+                return {
+                    "ok": False,
+                    "code": "item_is_program",
+                    "message": (
+                        f"『{item.name}』是程序条目，只能从记忆本删除记录，"
+                        "不会删除磁盘上的程序文件。"
+                    ),
                 }
             if item.kind != "path":
                 return {
@@ -451,7 +575,7 @@ class NotebookService:
 
     def build_prompt_block(self) -> str | None:
         """system prompt 用的记忆本清单（无条目返回 None）。"""
-        return build_notebook_block(self._store.list_all())
+        return build_memory_book_block(self._store.list_all())
 
     def count(self) -> int:
         """条目总数（日志/设置页快照用）。"""
@@ -515,7 +639,12 @@ class NotebookService:
 
     @staticmethod
     def _kind_label(kind: str | None) -> str:
-        return {"link": "链接", "path": "文件/文件夹", "text": "文字"}.get(kind or "", "")
+        return {
+            "link": "链接",
+            "path": "文件/文件夹",
+            "text": "文字",
+            "program": "程序",
+        }.get(kind or "", "")
 
     def _not_found_message(self, name: str) -> str:
         """找不到条目时的可展示提示：尽量给出相近名字。"""
@@ -537,10 +666,27 @@ class NotebookService:
 
     @staticmethod
     def _path_mentioned(path: str, user_text: str) -> bool:
-        """用户本轮是否明确给出了这个路径（临时路径删除的硬保护）。"""
-        raw = str(path or "")
+        """用户本轮是否明确给出了这个路径（临时路径的硬保护）。
+
+        兼容三种写法：用户原样输入、``~``/环境变量展开后、realpath 解析后
+        （例如用户说 ``~/bin/app``，模型传来的是 ``/home/me/bin/app``）。
+        """
+        raw = str(path or "").strip()
+        if not raw:
+            return False
         text = _text_key(user_text)
-        return _path_key(raw) in _path_key(user_text) or raw.casefold() in text
+        candidates = {raw}
+        try:
+            expanded = os.path.expandvars(os.path.expanduser(raw.strip("\"'")))
+            candidates.add(expanded)
+            candidates.add(os.path.realpath(os.path.abspath(expanded)))
+        except (OSError, ValueError):
+            pass
+        return any(
+            _path_key(candidate) in _path_key(user_text) or candidate.casefold() in text
+            for candidate in candidates
+            if candidate
+        )
 
     @staticmethod
     def _url_mentioned(url: str, user_text: str) -> bool:

@@ -88,7 +88,7 @@ from backend.modules.voice.splitter import SentenceSplitter
 from backend.shared.errors import LlmError, LlmErrorCode
 
 if TYPE_CHECKING:  # 仅类型注解；运行时经 Protocol/鸭子类型协作（避免循环 import）
-    from backend.application.notebook_service import NotebookService
+    from backend.application.memory_book_service import MemoryBookService
     from backend.application.voice import ReplyVoice, VoiceOut
     from backend.modules.memory.profile import ProfileStore
     from backend.modules.memory.store import MemoryStore
@@ -230,7 +230,7 @@ class ChatPipeline:
     ``tools``（可选注入，§4.7 工具机制）：内置工具注册表；缺省 None 时
     行为与旧版完全一致（不做指令快通道、请求不携带 tools）。
 
-    ``notebook``（可选注入，2026-10-18 记忆本）：每轮把"名字 + 类型"清单注入
+    ``memory_book``（可选注入，2026-10-18 记忆本）：每轮把"名字 + 类型"清单注入
     system（链接 URL / 本机路径不注入）；``open_item`` / ``delete_path`` 的
     名字 → 精确值解析也由它完成。缺省 None 时行为与旧版完全一致。
     """
@@ -243,7 +243,7 @@ class ChatPipeline:
         profile: ProfileStore | None = None,
         pet_name: Callable[[], str | None] | None = None,
         tools: ToolRegistry | None = None,
-        notebook: NotebookService | None = None,
+        memory_book: MemoryBookService | None = None,
         config: Callable[[], AppConfig] | None = None,
     ) -> None:
         self._provider = provider
@@ -251,7 +251,7 @@ class ChatPipeline:
         self._profile = profile
         self._pet_name = pet_name
         self._tools = tools
-        self._notebook = notebook
+        self._memory_book = memory_book
         # 配置活引用（文件限额 / 上下文预算每轮动态读，设置保存后下一轮即生效）；
         # None = 测试/未装配场景，使用保守默认值。
         self._config = config
@@ -1060,9 +1060,9 @@ class ChatPipeline:
         memory_block = await self._build_memory_block(user_text)
         if memory_block is not None:
             messages.append(ChatMessage(role="system", content=memory_block))
-        notebook_block = self._build_notebook_block()
-        if notebook_block is not None:
-            messages.append(ChatMessage(role="system", content=notebook_block))
+        memory_book_block = self._build_memory_book_block()
+        if memory_book_block is not None:
+            messages.append(ChatMessage(role="system", content=memory_book_block))
         time_block = self._time_block()
         if time_block is not None:
             messages.append(ChatMessage(role="system", content=time_block))
@@ -1106,16 +1106,16 @@ class ChatPipeline:
                 logger.exception("记忆 last_used_at 更新失败（不影响本轮对话）")
         return block
 
-    def _build_notebook_block(self) -> str | None:
+    def _build_memory_book_block(self) -> str | None:
         """记忆本清单 → 第三条 system 文本；未装配/为空返回 None。
 
         只注入名字 + 类型（文本条目附值）；链接 URL 与本机路径不注入——打开时
         模型只传名字，由 ``open_item`` 的 prepare 从后端取精确值。
         """
-        if self._notebook is None:
+        if self._memory_book is None:
             return None
         try:
-            block = self._notebook.build_prompt_block()
+            block = self._memory_book.build_prompt_block()
         except Exception:
             logger.exception("记忆本注入失败（本轮跳过）")
             return None
@@ -1123,7 +1123,7 @@ class ChatPipeline:
             logger.debug("记忆本注入：无条目，跳过")
             return None
         try:
-            logger.info("记忆本注入：{} 条", self._notebook.count())
+            logger.info("记忆本注入：{} 条", self._memory_book.count())
         except Exception:
             pass
         return block
@@ -1150,9 +1150,9 @@ class ChatPipeline:
         ]
         if memory_block is not None:
             messages.append(ChatMessage(role="system", content=memory_block))
-        notebook_block = self._build_notebook_block()
-        if notebook_block is not None:
-            messages.append(ChatMessage(role="system", content=notebook_block))
+        memory_book_block = self._build_memory_book_block()
+        if memory_book_block is not None:
+            messages.append(ChatMessage(role="system", content=memory_book_block))
         time_block = self._time_block()
         if time_block is not None:
             messages.append(ChatMessage(role="system", content=time_block))

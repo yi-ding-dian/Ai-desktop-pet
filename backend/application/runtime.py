@@ -44,7 +44,7 @@ from backend.shared.secrets import get_llm_key
 
 if TYPE_CHECKING:  # 仅类型注解（运行时经鸭子类型调用，避免多余 import 环）
     from backend.application.memory_service import MemoryService
-    from backend.application.notebook_service import NotebookService
+    from backend.application.memory_book_service import MemoryBookService
     from backend.application.search_service import SearchService
     from backend.modules.behavior.engine import BehaviorEngine
 
@@ -125,7 +125,7 @@ class Runtime:
         config: AppConfig,
         *,
         reminder_store: ReminderStore | None = None,
-        notebook: NotebookService | None = None,
+        memory_book: MemoryBookService | None = None,
         search: SearchService | None = None,
     ) -> None:
         self._config = config
@@ -143,13 +143,13 @@ class Runtime:
             else None
         )
         # 记忆本服务（2026-10-18）：由 main 装配后注入；工具随之注册。
-        self._notebook = notebook
+        self._memory_book = memory_book
         # 联网搜索服务（2026-10-18）：由 main 用 bind_search 注入（它需要读
         # runtime.config.search 的活引用，构造顺序在 Runtime 之后）；工具随后注册。
         self._search = search
         # §4.7：内置工具（装配后只读）；未装配提醒/记忆本/搜索时注册表与旧版一致
         self._tools = build_default_registry(
-            self._reminders, self._notebook, self._search
+            self._reminders, self._memory_book, self._search
         )
         self._engine: BehaviorEngine | None = None
         self._memory: MemoryService | None = None
@@ -206,7 +206,7 @@ class Runtime:
         """
         self._search = service
         self._tools = build_default_registry(
-            self._reminders, self._notebook, self._search
+            self._reminders, self._memory_book, self._search
         )
 
     def voice_factory(self) -> VoiceOut:

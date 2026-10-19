@@ -28,6 +28,7 @@ import { destroyBubble, initBubble } from './bubble'
 import { destroyReminderList, initReminderList } from './reminder-list'
 import { destroyWork, initWork } from './work'
 import { destroyFileSelection, initFileSelection } from './files'
+import { destroyLauncher, initLauncher } from './launcher'
 import { applyWindowsAppIdentity } from './platform'
 import { PET_WINDOW_SIZE, type PlatformWindow } from './window'
 import { initFramelessWindows } from './window/frameless'
@@ -232,6 +233,9 @@ if (!app.requestSingleInstanceLock()) {
     initReminderList(petWin)
     // 文件分析（P1）：原生选择框 + 粘贴路径校验（只 stat 元信息，正文由后端读取限额）
     initFileSelection()
+    // 程序启动（2026-10-19）：已安装应用列表 + 运行程序 IPC（唯一执行边界；
+    // 确认气泡依赖 bubble 域，故放在 initBubble 之后）
+    initLauncher(petWin)
     // 后端子进程与窗口并行启动（design §3.4）；就绪后经 IPC 下发 port/token
     backendManager.start()
 
@@ -315,6 +319,8 @@ if (!app.requestSingleInstanceLock()) {
     destroyReminderList()
     // 文件选择 IPC（幂等清理）
     destroyFileSelection()
+    // 程序启动 IPC（幂等清理；清扫描缓存/限流桶）
+    destroyLauncher()
     // 自绘托盘菜单窗（若存在）直接销毁
     destroyTrayMenu()
     // 空气让路状态机：停定时器/解绑窗口事件 + 移除 IPC 监听

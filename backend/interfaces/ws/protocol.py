@@ -193,13 +193,13 @@ class DeleteReminderItemData(EventData):
 # ---------------------------------------------------------------- §3.2 记忆本（2026-10-18）
 
 
-class NotebookListData(EventData):
+class MemoryBookListData(EventData):
     """设置页：拉取记忆本条目。"""
 
     kind: str | None = None
 
 
-class NotebookItemInput(EventData):
+class MemoryBookItemInput(EventData):
     """设置页新增/更新一条记忆本条目（与工具 save_item 的 item 同构）。"""
 
     name: str = ""
@@ -207,26 +207,26 @@ class NotebookItemInput(EventData):
     value: str
 
 
-class NotebookSaveData(EventData):
+class MemoryBookSaveData(EventData):
     """设置页保存（同名更新）。"""
 
-    items: list[NotebookItemInput] = Field(default_factory=list)
+    items: list[MemoryBookItemInput] = Field(default_factory=list)
 
 
-class NotebookRenameData(EventData):
+class MemoryBookRenameData(EventData):
     """设置页改名。"""
 
     old_name: str
     new_name: str
 
 
-class NotebookDeleteData(EventData):
+class MemoryBookDeleteData(EventData):
     """设置页删除**记录**（不动磁盘文件；设置页按钮即明确操作）。"""
 
     names: list[str] = Field(default_factory=list)
 
 
-class NotebookFileDeletedData(EventData):
+class MemoryBookFileDeletedData(EventData):
     """宠物面：主进程已确认删除真实文件（移入回收站）——后端据此移除记录/清记忆。"""
 
     path: str
@@ -420,7 +420,7 @@ class ReminderHistoryData(EventData):
     pending_count: int = 0
 
 
-class NotebookItemData(EventData):
+class MemoryBookItemData(EventData):
     """记忆本条目快照（设置页列表）。``path_exists`` 只对 path 类有意义。"""
 
     id: int
@@ -433,14 +433,14 @@ class NotebookItemData(EventData):
     path_exists: bool = True
 
 
-class NotebookItemsData(EventData):
-    """记忆本列表响应（notebook_list / 保存成功后的刷新）。"""
+class MemoryBookItemsData(EventData):
+    """记忆本列表响应（memory_book_list / 保存成功后的刷新）。"""
 
-    items: list[NotebookItemData] = Field(default_factory=list)
+    items: list[MemoryBookItemData] = Field(default_factory=list)
     count: int = 0
 
 
-class NotebookResultData(EventData):
+class MemoryBookResultData(EventData):
     """记忆本写操作结果（保存/改名/删除/文件已删）。"""
 
     ok: bool
@@ -568,11 +568,11 @@ CLIENT_EVENT_MODELS: dict[str, type[EventData]] = {
     "ack_reminders": AckRemindersData,
     "get_reminder_history": GetReminderHistoryData,
     "delete_reminder_item": DeleteReminderItemData,
-    "notebook_list": NotebookListData,
-    "notebook_save": NotebookSaveData,
-    "notebook_rename": NotebookRenameData,
-    "notebook_delete": NotebookDeleteData,
-    "notebook_file_deleted": NotebookFileDeletedData,
+    "memory_book_list": MemoryBookListData,
+    "memory_book_save": MemoryBookSaveData,
+    "memory_book_rename": MemoryBookRenameData,
+    "memory_book_delete": MemoryBookDeleteData,
+    "memory_book_file_deleted": MemoryBookFileDeletedData,
     "audio_chunk": AudioChunkData,
 }
 
@@ -593,8 +593,8 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "proactive": ProactiveData,
     "reminders": RemindersData,
     "reminder_history": ReminderHistoryData,
-    "notebook_items": NotebookItemsData,
-    "notebook_result": NotebookResultData,
+    "memory_book_items": MemoryBookItemsData,
+    "memory_book_result": MemoryBookResultData,
     "notice": NoticeData,
     "sources": SourcesData,
     "history": HistoryData,

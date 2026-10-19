@@ -1,4 +1,5 @@
-"""记忆本存储（2026-10-18）：用户明确要求记住的链接 / 本机路径 / 短文本。
+"""记忆本存储（2026-10-18）：用户明确要求记住的链接 / 本机路径 / 短文本 /
+可执行程序（2026-10-19）。
 
 **与长期记忆的分工（重要）**：
 
@@ -9,7 +10,7 @@
 
 表结构见 ``shared/db.py`` 的 ``saved_items`` / ``forgotten_values``。
 本文件只做存储与校验；"该不该删真实文件""删完怎么清记忆"等编排在
-``application/notebook_service.py``。
+``application/memory_book_service.py``。
 """
 
 from __future__ import annotations
@@ -22,10 +23,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from backend.modules.notebook.paths import normalize_existing_path, normalize_path
+from backend.modules.memory_book.paths import normalize_existing_path, normalize_path
+from backend.modules.memory_book.programs import normalize_program_path, program_ok
 
-#: 条目类型
-KINDS = ("link", "path", "text")
+#: 条目类型（program：用户手动登记的免确认可执行程序，2026-10-19）
+KINDS = ("link", "path", "text", "program")
 
 #: 模型偶尔会传同义词（url/file/folder/note…）：宽容归一，避免整条保存失败
 _KIND_ALIASES = {
@@ -42,6 +44,12 @@ _KIND_ALIASES = {
     "memo": "text",
     "文字": "text",
     "文本": "text",
+    "app": "program",
+    "application": "program",
+    "program": "program",
+    "程序": "program",
+    "应用": "program",
+    "可执行文件": "program",
 }
 
 #: 名字长度上限（用户以后点名用，太长反而不好说）
@@ -134,7 +142,11 @@ def normalize_text(value: str) -> str:
 
 
 def detect_kind(value: str) -> str:
-    """根据值猜类型（模型没传 kind 时兜底）：链接 → 路径 → 文本。"""
+    """根据值猜类型（模型没传 kind 时兜底）：链接 → 路径 → 文本。
+
+    **不会**猜出 ``program``：程序条目只能由设置页显式创建（见 store.save），
+    避免模型被网页/文件内容诱导后批量登记"免确认可运行"的路径。
+    """
     text = str(value or "").strip()
     if re.match(r"https?://", text, re.IGNORECASE) or _DOMAIN_RE.fullmatch(text):
         return "link"
@@ -144,6 +156,16 @@ def detect_kind(value: str) -> str:
     return "text"
 
 
+def resolve_kind(raw: str | None) -> str | None:
+    """把模型/用户传来的 kind 归一化（同义词 → KINDS）；空值返回 None。"""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    return _KIND_ALIASES.get(text.lower(), text)
+
+
 def _auto_name_base(kind: str, value: str, *, is_dir: bool = False) -> str:
     """没给名字时的自动起名：链接取域名、路径取末级目录名、文本取前 12 字。"""
     if kind == "link":
@@ -151,7 +173,7 @@ def _auto_name_base(kind: str, value: str, *, is_dir: bool = False) -> str:
         if host.startswith("www."):
             host = host[4:]
         return host
-    if kind == "path":
+    if kind in ("path", "program"):
         path = Path(value)
         if path.name:
             return path.name
@@ -164,15 +186,15 @@ def _auto_name_base(kind: str, value: str, *, is_dir: bool = False) -> str:
 # ---------------------------------------------------------------- 数据模型
 
 
-class NotebookError(ValueError):
+class MemoryBookError(ValueError):
     """记忆本业务错误（名字冲突/条目不存在等）；message 可直接给用户看。"""
 
 
-class ItemNotFound(NotebookError):
+class ItemNotFound(MemoryBookError):
     """按名字找不到条目。"""
 
 
-class NameConflict(NotebookError):
+class NameConflict(MemoryBookError):
     """改名目标已被占用。"""
 
 
@@ -194,6 +216,8 @@ class SavedItem:
             return "链接"
         if self.kind == "path":
             return "文件夹" if self.is_dir else "文件"
+        if self.kind == "program":
+            return "程序"
         return "文字"
 
 
@@ -223,7 +247,7 @@ def _row_to_item(row: sqlite3.Row) -> SavedItem:
 # ---------------------------------------------------------------- 存储
 
 
-class NotebookStore:
+class MemoryBookStore:
     """saved_items / forgotten_values 两张表的读写。"""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
@@ -251,9 +275,9 @@ class NotebookStore:
             raise ValueError("要记住的内容不能为空")
 
         if kind is not None:
-            kind = _KIND_ALIASES.get(str(kind).strip().lower(), str(kind).strip())
+            kind = resolve_kind(kind)
         if kind is not None and kind not in KINDS:
-            raise ValueError("类型只能是 link / path / text")
+            raise ValueError(f"类型只能是 {' / '.join(KINDS)}")
         resolved_kind = kind or detect_kind(raw_value)
 
         if resolved_kind == "link":
@@ -264,6 +288,9 @@ class NotebookStore:
             normalized_value = str(path)
             if len(normalized_value) > MAX_PATH_LEN:
                 raise ValueError("路径太长了")
+        elif resolved_kind == "program":
+            normalized_value = str(normalize_program_path(raw_value))
+            is_dir = False
         else:
             normalized_value = normalize_text(raw_value)
             is_dir = False
@@ -350,7 +377,9 @@ class NotebookStore:
         return result
 
     def path_ok(self, item: SavedItem) -> bool:
-        """路径条目当前是否仍然存在（供列表/注入时标注）。"""
+        """路径/程序条目当前是否仍然可用（供列表/注入时标注）。"""
+        if item.kind == "program":
+            return program_ok(item.value)
         if item.kind != "path":
             return True
         try:
@@ -452,4 +481,4 @@ class NotebookStore:
             candidate = f"{cleaned[: MAX_NAME_LEN - len(suffix)]}{suffix}"
             if self._find_by_key(name_key(candidate)) is None:
                 return candidate
-        raise NotebookError("自动起名失败：同类条目太多了，请给个名字")
+        raise MemoryBookError("自动起名失败：同类条目太多了，请给个名字")

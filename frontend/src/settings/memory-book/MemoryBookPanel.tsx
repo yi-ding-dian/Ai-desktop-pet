@@ -11,39 +11,44 @@
 import { useMemo, useState, type ReactElement } from 'react'
 import { EmptyState, IconButton, Notice } from '../../shared/ui'
 import Section from '../components/section'
+import ApplicationPicker from './ApplicationPicker'
 import { SelectField, TextField } from '../components/fields'
 import {
-  useNotebookController,
-  type NotebookFilter
-} from '../hooks/useNotebookController'
-import type { NotebookItemData, NotebookKind } from '../../shared/protocol'
-import './notebook-panel.css'
+  useMemoryBookController,
+  type MemoryBookFilter
+} from './useMemoryBookController'
+import type { MemoryBookItemData, MemoryBookKind } from '../../shared/protocol'
+import './memory-book-panel.css'
 
-const FILTERS: ReadonlyArray<{ id: NotebookFilter; label: string }> = [
+const FILTERS: ReadonlyArray<{ id: MemoryBookFilter; label: string }> = [
   { id: 'all', label: '全部' },
   { id: 'link', label: '链接' },
   { id: 'path', label: '文件/文件夹' },
-  { id: 'text', label: '文字' }
+  { id: 'text', label: '文字' },
+  { id: 'program', label: '程序' }
 ]
 
 const KIND_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: '', label: '自动判断' },
   { value: 'link', label: '网页链接' },
   { value: 'path', label: '本机路径' },
-  { value: 'text', label: '短文本' }
+  { value: 'text', label: '短文本' },
+  { value: 'program', label: '程序（可执行文件）' }
 ]
 
-const VALUE_PLACEHOLDER: Record<NotebookKind, string> = {
+const VALUE_PLACEHOLDER: Record<MemoryBookKind, string> = {
   link: 'https://example.com',
   path: 'D:\\项目 或 /home/me/项目（必须是绝对路径且存在）',
-  text: '要记住的短文本，如快递单号'
+  text: '要记住的短文本，如快递单号',
+  program: '/usr/bin/firefox（可执行文件的绝对路径）'
 }
 
 const AUTO_PLACEHOLDER = '链接 / 绝对路径 / 短文本（自动判断）'
 
-function kindLabel(item: NotebookItemData): string {
+function kindLabel(item: MemoryBookItemData): string {
   if (item.kind === 'link') return '链接'
   if (item.kind === 'path') return item.is_dir ? '文件夹' : '文件'
+  if (item.kind === 'program') return '程序'
   return '文字'
 }
 
@@ -61,14 +66,15 @@ function formatTime(ms: number): string {
   }
 }
 
-export default function NotebookPanel(): ReactElement {
-  const ctrl = useNotebookController()
+export default function MemoryBookPanel(): ReactElement {
+  const ctrl = useMemoryBookController()
   const [name, setName] = useState('')
-  const [kind, setKind] = useState<NotebookKind | ''>('')
+  const [kind, setKind] = useState<MemoryBookKind | ''>('')
   const [value, setValue] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingName, setEditingName] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   const filteredItems = useMemo(
     () =>
@@ -97,8 +103,8 @@ export default function NotebookPanel(): ReactElement {
       title="记忆本"
       desc="你说「记住…」时存在这里；打开/删除都按名字取精确值，链接和路径不会被改写。"
     >
-      <div className="notebook-toolbar">
-        <div className="notebook-filters" role="group" aria-label="按类型筛选">
+      <div className="memory-book-toolbar">
+        <div className="memory-book-filters" role="group" aria-label="按类型筛选">
           {FILTERS.map((item) => (
             <button
               key={item.id}
@@ -109,7 +115,7 @@ export default function NotebookPanel(): ReactElement {
               {item.label}
             </button>
           ))}
-          <span className="notebook-count">共 {ctrl.count} 条</span>
+          <span className="memory-book-count">共 {ctrl.count} 条</span>
         </div>
         <button
           type="button"
@@ -122,12 +128,12 @@ export default function NotebookPanel(): ReactElement {
       </div>
 
       {!connected ? (
-        <div className="notebook-hint">
+        <div className="memory-book-hint">
           正在连接后端…（连接后自动读取；也可以先在宠物对话里说“记住…”）
         </div>
       ) : null}
 
-      <div className="notebook-add">
+      <div className="memory-book-add">
         <TextField
           value={name}
           onValueChange={setName}
@@ -135,7 +141,7 @@ export default function NotebookPanel(): ReactElement {
         />
         <SelectField
           value={kind}
-          onValueChange={(next) => setKind(next as NotebookKind | '')}
+          onValueChange={(next) => setKind(next as MemoryBookKind | '')}
           options={KIND_OPTIONS}
         />
         <TextField
@@ -143,6 +149,16 @@ export default function NotebookPanel(): ReactElement {
           onValueChange={setValue}
           placeholder={kind ? VALUE_PLACEHOLDER[kind] : AUTO_PLACEHOLDER}
         />
+        {kind === 'program' ? (
+          <button
+            type="button"
+            className="pui-btn"
+            disabled={!connected}
+            onClick={() => setPickerOpen((open) => !open)}
+          >
+            从已安装应用中选择
+          </button>
+        ) : null}
         <button
           type="button"
           className="pui-btn pui-btn-primary"
@@ -152,6 +168,18 @@ export default function NotebookPanel(): ReactElement {
           保存
         </button>
       </div>
+
+      {pickerOpen ? (
+        <ApplicationPicker
+          onClose={() => setPickerOpen(false)}
+          onPick={(app) => {
+            setName(app.name)
+            setValue(app.execPath)
+            setKind('program')
+            setPickerOpen(false)
+          }}
+        />
+      ) : null}
 
       {ctrl.notice ? (
         <Notice
@@ -174,14 +202,14 @@ export default function NotebookPanel(): ReactElement {
           hint="跟小兔说「记住这个链接叫…」就会出现在这里。"
         />
       ) : (
-        <div className="notebook-table-wrap">
-          <table className="notebook-table">
+        <div className="memory-book-table-wrap">
+          <table className="memory-book-table">
             <colgroup>
-              <col className="notebook-col-name" />
-              <col className="notebook-col-kind" />
+              <col className="memory-book-col-name" />
+              <col className="memory-book-col-kind" />
               <col />
-              <col className="notebook-col-time" />
-              <col className="notebook-col-ops" />
+              <col className="memory-book-col-time" />
+              <col className="memory-book-col-ops" />
             </colgroup>
             <thead>
               <tr>
@@ -197,8 +225,8 @@ export default function NotebookPanel(): ReactElement {
                 <tr key={item.id}>
                   {editingId === item.id ? (
                     <td colSpan={5}>
-                      <div className="notebook-rename">
-                        <span className="notebook-rename-label">
+                      <div className="memory-book-rename">
+                        <span className="memory-book-rename-label">
                           重命名「{item.name}」
                         </span>
                         <TextField
@@ -226,28 +254,42 @@ export default function NotebookPanel(): ReactElement {
                     </td>
                   ) : (
                     <>
-                      <td className="notebook-name" title={item.name}>
+                      <td className="memory-book-name" title={item.name}>
                         {item.name}
                       </td>
-                      <td className="notebook-kind">{kindLabel(item)}</td>
-                      <td className="notebook-value" title={item.value}>
-                        <div className="notebook-value-line">
-                          <span className="notebook-value-text">
+                      <td className="memory-book-kind">{kindLabel(item)}</td>
+                      <td className="memory-book-value" title={item.value}>
+                        <div className="memory-book-value-line">
+                          <span className="memory-book-value-text">
                             {item.value}
                           </span>
                           {item.kind === 'path' && !item.path_exists ? (
-                            <span className="notebook-warn">
+                            <span className="memory-book-warn">
                               ⚠ 路径不存在
+                            </span>
+                          ) : null}
+                          {item.kind === 'program' && !item.path_exists ? (
+                            <span className="memory-book-warn">
+                              ⚠ 程序不存在或不可执行
                             </span>
                           ) : null}
                         </div>
                       </td>
-                      <td className="notebook-time">
+                      <td className="memory-book-time">
                         {formatTime(item.updated_at)}
                       </td>
-                      <td className="notebook-ops">
-                        <div className="notebook-actions">
-                          {item.kind !== 'text' ? (
+                      <td className="memory-book-ops">
+                        <div className="memory-book-actions">
+                          {item.kind === 'program' ? (
+                            <button
+                              type="button"
+                              className="pui-btn pui-btn-sm pui-btn-primary"
+                              disabled={!item.path_exists}
+                              onClick={() => ctrl.runItem(item)}
+                            >
+                              运行
+                            </button>
+                          ) : item.kind !== 'text' ? (
                             <button
                               type="button"
                               className="pui-btn pui-btn-sm"
@@ -282,8 +324,8 @@ export default function NotebookPanel(): ReactElement {
                           </button>
                         </div>
                         {confirmDeleteId === item.id ? (
-                          <div className="notebook-delete-confirm">
-                            <span className="notebook-delete-title">
+                          <div className="memory-book-delete-confirm">
+                            <span className="memory-book-delete-title">
                               确定要删除吗？
                             </span>
                             {item.kind === 'path' ? (
@@ -310,16 +352,23 @@ export default function NotebookPanel(): ReactElement {
                                 </button>
                               </>
                             ) : (
-                              <button
-                                type="button"
-                                className="pui-btn pui-btn-sm pui-btn-danger"
-                                onClick={() => {
-                                  ctrl.deleteRecord([item.name])
-                                  setConfirmDeleteId(null)
-                                }}
-                              >
-                                删除记录
-                              </button>
+                              <>
+                                {item.kind === 'program' ? (
+                                  <span className="memory-book-delete-hint">
+                                    只删除记忆本记录，不会删除程序文件。
+                                  </span>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="pui-btn pui-btn-sm pui-btn-danger"
+                                  onClick={() => {
+                                    ctrl.deleteRecord([item.name])
+                                    setConfirmDeleteId(null)
+                                  }}
+                                >
+                                  删除记录
+                                </button>
+                              </>
                             )}
                             <button
                               type="button"

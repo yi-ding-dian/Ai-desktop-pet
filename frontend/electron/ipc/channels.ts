@@ -43,6 +43,10 @@ export const IPC = {
   SYSTEM_DELETE_PATH_CONFIRM: 'system:delete-path-confirm',
   /** 设置面：删除本机文件/文件夹——主进程原生确认框，确认后移入回收站 */
   SETTINGS_DELETE_PATH: 'settings:delete-path',
+  /** 列出已安装应用（invoke → LauncherListResult；launcher 域，2026-10-19） */
+  LAUNCHER_LIST_APPS: 'launcher:list-apps',
+  /** 启动本机程序（invoke → LauncherRunResult；launcher 域，2026-10-19） */
+  LAUNCHER_RUN: 'launcher:run',
   /** 查询后端状态快照（invoke → BackendSnapshot；渲染进程晚订阅时补状态） */
   BACKEND_GET_SNAPSHOT: 'backend:get-snapshot',
   /** 教学模式：请求进入（payload: TeachingEnterReason；宠物面"关键词"或内部） */
@@ -716,6 +720,54 @@ export interface DeletePathRequest {
   name?: string
 }
 
+/** 已安装应用条目（launcher 域；2026-10-19） */
+export interface LauncherAppEntry {
+  /** desktop id（子目录用 '-' 连接） */
+  id: string
+  /** 本地化显示名 */
+  name: string
+  /** Exec 目标解析后的绝对路径；'' = 无法定位 */
+  execPath: string
+  /** 去掉字段码后仍有字面参数（设置页选择器回填时的提示依据） */
+  hasArgs: boolean
+  needsTerminal: boolean
+  available: boolean
+  /** flatpak/snap/env 等 wrapper：单独启动程序本体没有意义 */
+  wrapper: boolean
+}
+
+export interface LauncherListRequest {
+  refresh?: boolean
+}
+
+export interface LauncherListResult {
+  ok: boolean
+  code: string
+  message?: string
+  apps: LauncherAppEntry[]
+}
+
+/**
+ * 启动请求：
+ * - `name`：按已安装应用名匹配（主进程自行扫描 .desktop，渲染进程不能传路径）；
+ * - `path`：直接启动一个可执行文件。`trusted=true` 表示来自记忆本登记条目
+ *   （免确认）；用户临时给出的路径必须为 false，主进程会弹确认气泡。
+ */
+export type LauncherRunRequest =
+  | { mode: 'name'; name: string }
+  | { mode: 'path'; path: string; name?: string; trusted: boolean }
+
+export interface LauncherRunResult {
+  ok: boolean
+  /** path 模式：是否经过用户确认；用户取消时为 false */
+  confirmed?: boolean
+  code: string
+  message?: string
+  appName?: string
+  /** 重名候选（最多 5 个） */
+  candidates?: string[]
+}
+
 /**
  * 用户选中的文件（文件分析 P1）。
  * 只在主进程 stat 元信息，不读正文；正文由本地后端按路径读取并执行限额。
@@ -802,6 +854,16 @@ export interface PetBridgeApi {
      * **用户点删除后**才把目标移入系统回收站（可恢复）。取消/超时什么都不做。
      */
     deletePathWithConfirm(path: string, name?: string): Promise<DeletePathResult>
+  }
+  /**
+   * 程序启动（launcher 域，2026-10-19）：
+   * - `listApps`：设置页「从已安装应用中选择」用；
+   * - `runProgram`：按名启动已安装应用，或按路径启动可执行文件
+   *   （记忆本 `trusted=true` 免确认；临时路径由主进程弹确认气泡）。
+   */
+  launcher: {
+    listApps(request?: LauncherListRequest): Promise<LauncherListResult>
+    runProgram(request: LauncherRunRequest): Promise<LauncherRunResult>
   }
   /**
    * 魔法球捕获动画（ball-animation 域）：

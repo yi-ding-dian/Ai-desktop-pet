@@ -3,7 +3,7 @@
  *
  * 十个分区（设计文档 §7.6.1）：LLM / 搜索 / 文件 / 宠物 / 声音 / 行为 / 记忆 / 记忆本 / 主题 / 关于。
  * 数据流与全部状态在 useSettingsController（唯一控制器）；本文件只做布局、分区切换与状态文案。
- * 「记忆本」面板自带 WS 连接与数据流（useNotebookController），不混入配置保存状态。
+ * 「记忆本」面板自带 WS 连接与数据流（useMemoryBookController），不混入配置保存状态。
  */
 import { useEffect, useState, type ReactElement } from 'react'
 import { Button, NavList, Sidebar, Toolbar } from '../shared/ui'
@@ -15,7 +15,7 @@ import PetPanel from './panels/PetPanel'
 import VoicePanel from './panels/VoicePanel'
 import BehaviorPanel from './panels/BehaviorPanel'
 import MemoryPanel from './panels/MemoryPanel'
-import NotebookPanel from './panels/NotebookPanel'
+import MemoryBookPanel from './memory-book/MemoryBookPanel'
 import ThemePanel from './panels/ThemePanel'
 import AboutPanel from './panels/AboutPanel'
 
@@ -27,7 +27,7 @@ type PanelId =
   | 'voice'
   | 'behavior'
   | 'memory'
-  | 'notebook'
+  | 'memory-book'
   | 'theme'
   | 'about'
 
@@ -39,7 +39,7 @@ const PANELS: ReadonlyArray<{ id: PanelId; label: string }> = [
   { id: 'voice', label: '声音' },
   { id: 'behavior', label: '行为' },
   { id: 'memory', label: '记忆' },
-  { id: 'notebook', label: '记忆本' },
+  { id: 'memory-book', label: '记忆本' },
   { id: 'theme', label: '主题' },
   { id: 'about', label: '关于' }
 ]
@@ -128,8 +128,8 @@ export default function SettingsApp(): ReactElement {
         )
       case 'memory':
         return <MemoryPanel form={ctrl.form} setField={ctrl.setField} />
-      case 'notebook':
-        return <NotebookPanel />
+      case 'memory-book':
+        return <MemoryBookPanel />
       case 'theme':
         return <ThemePanel />
       case 'about':

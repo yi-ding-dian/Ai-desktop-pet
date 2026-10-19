@@ -28,11 +28,11 @@ from backend.interfaces.ws.protocol import (
     HelloAckData,
     HelloData,
     LoadHistoryData,
-    NotebookDeleteData,
-    NotebookFileDeletedData,
-    NotebookListData,
-    NotebookRenameData,
-    NotebookSaveData,
+    MemoryBookDeleteData,
+    MemoryBookFileDeletedData,
+    MemoryBookListData,
+    MemoryBookRenameData,
+    MemoryBookSaveData,
     NoteAssistantMessageData,
     PetEventData,
     SetConfigData,
@@ -40,10 +40,11 @@ from backend.interfaces.ws.protocol import (
     UserMessageData,
 )
 from backend.modules.files import FileRef
+from backend.modules.memory_book import KINDS
 from backend.shared.errors import ErrorCode, ProtocolError
 
 if TYPE_CHECKING:  # 避免与 server 运行时循环 import（类型注解专用）
-    from backend.application.notebook_service import NotebookService
+    from backend.application.memory_book_service import MemoryBookService
     from backend.application.reminder_service import ReminderDelivery, ReminderService
     from backend.interfaces.ws.server import ConnectionContext
     from backend.modules.behavior.engine import BehaviorEngine
@@ -196,7 +197,7 @@ def build_dispatcher(
     history: HistoryStore | None = None,
     settings: SettingsService | None = None,
     reminders: ReminderService | None = None,
-    notebook: NotebookService | None = None,
+    memory_book: MemoryBookService | None = None,
     profile: ProfileStore | None = None,
     memory_enabled: Callable[[], bool] | None = None,
 ) -> Dispatcher:
@@ -208,8 +209,8 @@ def build_dispatcher(
     ``settings``：设置面板用例（§7.6，可为 None——未装配时 get_config /
     set_config / test_llm 走 NOT_IMPLEMENTED 兜底，与旧版行为一致）。
     ``reminders``：提醒调度服务（2026-10-18，可为 None——未装配存储时无提醒功能）。
-    ``notebook``：记忆本服务（2026-10-18，可为 None——未装配时设置页记忆本请求
-    与 ``notebook_file_deleted`` 均走 NOT_IMPLEMENTED；工具也不会注册）。
+    ``memory_book``：记忆本服务（2026-10-18，可为 None——未装配时设置页记忆本请求
+    与 ``memory_book_file_deleted`` 均走 NOT_IMPLEMENTED；工具也不会注册）。
     ``profile``：用户画像存储（2026-10-18 启动称呼引导，可为 None——未装配时
     get_profile 走 NOT_IMPLEMENTED；前端静默跳过称呼引导）。
     ``memory_enabled``：后台记忆提取开关的活引用（get_profile 回给前端，用于判断
@@ -250,6 +251,7 @@ def build_dispatcher(
         session = sessions.start(ctx.session_id)
         ctx.session_id = session.id
         ctx.authed = True
+        ctx.client_role = data.client_role
         await ctx.send_event(
             "hello_ack",
             HelloAckData(
@@ -438,61 +440,64 @@ def build_dispatcher(
             reply_to=msg.envelope.id,
         )
 
-    # ---------- 记忆本（2026-10-18；未装配 notebook 时不注册） ----------
+    # ---------- 记忆本（2026-10-18；未装配 memory_book 时不注册） ----------
 
-    async def on_notebook_list(ctx: ConnectionContext, msg: ClientMessage) -> None:
+    async def on_memory_book_list(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """设置页：拉取记忆本快照（可按类型过滤）。"""
-        assert notebook is not None
-        data = cast(NotebookListData, msg.data)
-        kind = data.kind if data.kind in ("link", "path", "text") else None
+        assert memory_book is not None
+        data = cast(MemoryBookListData, msg.data)
+        kind = data.kind if data.kind in KINDS else None
         await ctx.send_event(
-            "notebook_items", notebook.snapshot(kind), reply_to=msg.envelope.id
+            "memory_book_items", memory_book.snapshot(kind), reply_to=msg.envelope.id
         )
 
-    async def on_notebook_save(ctx: ConnectionContext, msg: ClientMessage) -> None:
+    async def on_memory_book_save(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """设置页：保存/同名更新，回结果 + 最新快照。"""
-        assert notebook is not None
-        data = cast(NotebookSaveData, msg.data)
-        result = notebook.save_from_tool([item.model_dump() for item in data.items])
-        await ctx.send_event("notebook_result", result, reply_to=msg.envelope.id)
+        assert memory_book is not None
+        data = cast(MemoryBookSaveData, msg.data)
+        result = memory_book.save_from_tool(
+            [item.model_dump() for item in data.items],
+            allow_program=ctx.client_role == "settings",
+        )
+        await ctx.send_event("memory_book_result", result, reply_to=msg.envelope.id)
         if result.get("ok"):
             await ctx.send_event(
-                "notebook_items", notebook.snapshot(), reply_to=msg.envelope.id
+                "memory_book_items", memory_book.snapshot(), reply_to=msg.envelope.id
             )
 
-    async def on_notebook_rename(ctx: ConnectionContext, msg: ClientMessage) -> None:
+    async def on_memory_book_rename(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """设置页：改名；成功回最新快照。"""
-        assert notebook is not None
-        data = cast(NotebookRenameData, msg.data)
-        result = notebook.rename_from_tool(data.old_name, data.new_name)
-        await ctx.send_event("notebook_result", result, reply_to=msg.envelope.id)
+        assert memory_book is not None
+        data = cast(MemoryBookRenameData, msg.data)
+        result = memory_book.rename_from_tool(data.old_name, data.new_name)
+        await ctx.send_event("memory_book_result", result, reply_to=msg.envelope.id)
         if result.get("ok"):
             await ctx.send_event(
-                "notebook_items", notebook.snapshot(), reply_to=msg.envelope.id
+                "memory_book_items", memory_book.snapshot(), reply_to=msg.envelope.id
             )
 
-    async def on_notebook_delete(ctx: ConnectionContext, msg: ClientMessage) -> None:
+    async def on_memory_book_delete(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """设置页：删除记录（按钮即明确操作，trust=True 跳过"点名"保护）。"""
-        assert notebook is not None
-        data = cast(NotebookDeleteData, msg.data)
-        result = notebook.delete_from_tool(data.names, trust=True)
-        await ctx.send_event("notebook_result", result, reply_to=msg.envelope.id)
+        assert memory_book is not None
+        data = cast(MemoryBookDeleteData, msg.data)
+        result = memory_book.delete_from_tool(data.names, trust=True)
+        await ctx.send_event("memory_book_result", result, reply_to=msg.envelope.id)
         if result.get("ok"):
             await ctx.send_event(
-                "notebook_items", notebook.snapshot(), reply_to=msg.envelope.id
+                "memory_book_items", memory_book.snapshot(), reply_to=msg.envelope.id
             )
 
-    async def on_notebook_file_deleted(
+    async def on_memory_book_file_deleted(
         ctx: ConnectionContext, msg: ClientMessage
     ) -> None:
         """宠物面：主进程已确认删除真实文件——移除记忆本记录并清理长期记忆。"""
-        assert notebook is not None
-        data = cast(NotebookFileDeletedData, msg.data)
-        result = notebook.forget_by_path(data.path)
-        await ctx.send_event("notebook_result", result, reply_to=msg.envelope.id)
+        assert memory_book is not None
+        data = cast(MemoryBookFileDeletedData, msg.data)
+        result = memory_book.forget_by_path(data.path)
+        await ctx.send_event("memory_book_result", result, reply_to=msg.envelope.id)
         if result.get("ok"):
             await ctx.send_event(
-                "notebook_items", notebook.snapshot(), reply_to=msg.envelope.id
+                "memory_book_items", memory_book.snapshot(), reply_to=msg.envelope.id
             )
 
     # ---------- 设置面板（§7.6；未装配 settings 时不注册，走 NOT_IMPLEMENTED） ----------
@@ -604,12 +609,12 @@ def build_dispatcher(
         dispatcher.register("get_config", on_get_config)
         dispatcher.register("set_config", on_set_config)
         dispatcher.register("test_llm", on_test_llm)
-    if notebook is not None:
-        dispatcher.register("notebook_list", on_notebook_list)
-        dispatcher.register("notebook_save", on_notebook_save)
-        dispatcher.register("notebook_rename", on_notebook_rename)
-        dispatcher.register("notebook_delete", on_notebook_delete)
-        dispatcher.register("notebook_file_deleted", on_notebook_file_deleted)
+    if memory_book is not None:
+        dispatcher.register("memory_book_list", on_memory_book_list)
+        dispatcher.register("memory_book_save", on_memory_book_save)
+        dispatcher.register("memory_book_rename", on_memory_book_rename)
+        dispatcher.register("memory_book_delete", on_memory_book_delete)
+        dispatcher.register("memory_book_file_deleted", on_memory_book_file_deleted)
     if profile is not None:
         dispatcher.register("get_profile", on_get_profile)
     return dispatcher

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from backend.modules.notebook.store import SavedItem
+from backend.modules.memory_book.store import SavedItem
 
 #: 单次注入的条目上限（超出部分只告诉模型"还有 N 条"，打开仍可按名字进行）
 MAX_INJECT_ITEMS = 50
@@ -26,6 +26,7 @@ TEXT_VALUE_PREVIEW = 120
 
 _HEADER = (
     "[记忆本] 用户明确让你记住的条目（本地清单）。需要打开时调用 open_item 并传 name；"
+    "条目类型是“程序”时，用户说“运行/打开”就用 run_program 并传这个 name。"
     "不要改写条目里的值，也不要把链接/路径念错。用户问某个条目的具体地址/内容时调用 list_items。"
     "不要主动逐条复述清单，除非用户问起。"
 )
@@ -38,7 +39,7 @@ def _line(item: SavedItem) -> str:
     return f"- {item.name}（{item.kind_label}）"
 
 
-def build_notebook_block(
+def build_memory_book_block(
     items: Sequence[SavedItem],
     *,
     max_items: int = MAX_INJECT_ITEMS,

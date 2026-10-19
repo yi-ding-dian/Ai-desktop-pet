@@ -3,7 +3,7 @@
  *
  * 与 config-client 同构：设置窗经 preload `backend.getSnapshot()` 拿 port/token，
  * 自建一条 role='settings' 的 WS 连接（设置页的配置连接与记忆本连接互不影响；
- * 后端支持多连接）。收发 `notebook_items` / `notebook_result` / `error`。
+ * 后端支持多连接）。收发 `memory_book_items` / `memory_book_result` / `error`。
  *
  * 容错：window.pet 缺失（浏览器直开页面 / 旧 preload）时降级为离线客户端，
  * 所有 send 返回 false，页面照常渲染。
@@ -12,28 +12,28 @@ import { getPetBridge } from '../../shared/pet-bridge'
 import { WsClient, type WsConnectionState } from '../../shared/ws-client'
 import type {
   ErrorData,
-  NotebookItemInput,
-  NotebookItemsData,
-  NotebookKind,
-  NotebookResultData
+  MemoryBookItemInput,
+  MemoryBookItemsData,
+  MemoryBookKind,
+  MemoryBookResultData
 } from '../../shared/protocol'
 import type { PetBridgeApi } from '../../../electron/ipc/channels'
 
-export interface NotebookBackendClient {
+export interface MemoryBookBackendClient {
   readonly connection: WsConnectionState
   onConnectionChange(cb: (state: WsConnectionState) => void): () => void
-  onItems(cb: (data: NotebookItemsData) => void): () => void
-  onResult(cb: (data: NotebookResultData) => void): () => void
+  onItems(cb: (data: MemoryBookItemsData) => void): () => void
+  onResult(cb: (data: MemoryBookResultData) => void): () => void
   onError(cb: (data: ErrorData) => void): () => void
-  requestList(kind?: NotebookKind | null): boolean
-  save(items: NotebookItemInput[]): boolean
+  requestList(kind?: MemoryBookKind | null): boolean
+  save(items: MemoryBookItemInput[]): boolean
   rename(oldName: string, newName: string): boolean
   delete(names: string[]): boolean
   dispose(): void
 }
 
-function createOfflineClient(): NotebookBackendClient {
-  console.warn('[notebook] pet-bridge 不可用，记忆本面板进入离线态')
+function createOfflineClient(): MemoryBookBackendClient {
+  console.warn('[memory-book] pet-bridge 不可用，记忆本面板进入离线态')
   const noop = (): (() => void) => () => {}
   const fail = (): boolean => false
   return {
@@ -50,7 +50,7 @@ function createOfflineClient(): NotebookBackendClient {
   }
 }
 
-export function createNotebookBackendClient(): NotebookBackendClient {
+export function createMemoryBookBackendClient(): MemoryBookBackendClient {
   let bridge: PetBridgeApi | null = null
   try {
     bridge = getPetBridge()
@@ -77,7 +77,7 @@ export function createNotebookBackendClient(): NotebookBackendClient {
         })
       }
     })
-    .catch((err: unknown) => console.error('[notebook] 获取后端快照失败：', err))
+    .catch((err: unknown) => console.error('[memory-book] 获取后端快照失败：', err))
 
   const offReady = bridge.backend.onReady?.((ready) => {
     if (disposed) return
@@ -99,14 +99,14 @@ export function createNotebookBackendClient(): NotebookBackendClient {
       return client.connectionState
     },
     onConnectionChange: (cb) => client.onStateChange(cb),
-    onItems: (cb) => client.on('notebook_items', (data) => cb(data)),
-    onResult: (cb) => client.on('notebook_result', (data) => cb(data)),
+    onItems: (cb) => client.on('memory_book_items', (data) => cb(data)),
+    onResult: (cb) => client.on('memory_book_result', (data) => cb(data)),
     onError: (cb) => client.on('error', (data) => cb(data)),
-    requestList: (kind) => client.send('notebook_list', { kind: kind ?? null }),
-    save: (items) => client.send('notebook_save', { items }),
+    requestList: (kind) => client.send('memory_book_list', { kind: kind ?? null }),
+    save: (items) => client.send('memory_book_save', { items }),
     rename: (oldName, newName) =>
-      client.send('notebook_rename', { old_name: oldName, new_name: newName }),
-    delete: (names) => client.send('notebook_delete', { names }),
+      client.send('memory_book_rename', { old_name: oldName, new_name: newName }),
+    delete: (names) => client.send('memory_book_delete', { names }),
     dispose: (): void => {
       disposed = true
       offReady?.()

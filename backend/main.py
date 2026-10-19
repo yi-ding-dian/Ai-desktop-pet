@@ -26,7 +26,7 @@ from loguru import logger
 from backend import __version__
 from backend.application.chat_pipeline import ChatPipeline
 from backend.application.memory_service import MemoryService
-from backend.application.notebook_service import NotebookService
+from backend.application.memory_book_service import MemoryBookService
 from backend.application.runtime import Runtime
 from backend.application.search_service import SearchService
 from backend.application.session import SessionManager
@@ -37,7 +37,7 @@ from backend.modules.behavior import BehaviorEngine
 from backend.modules.chat.history import HistoryStore
 from backend.modules.memory.profile import ProfileStore
 from backend.modules.memory.store import MemoryStore
-from backend.modules.notebook import NotebookStore
+from backend.modules.memory_book import MemoryBookStore
 from backend.modules.reminders import ReminderStore
 from backend.modules.search import DeepSeekSearchProvider
 from backend.shared.config import load_config
@@ -71,11 +71,11 @@ def main() -> int:
     memory_store = MemoryStore(conn)
     profile_store = ProfileStore(conn)
     reminder_store = ReminderStore(conn)
-    notebook_store = NotebookStore(conn)
-    notebook_store.purge_expired_forgotten()  # 清理过期的遗忘名单（30 天 TTL）
+    memory_book_store = MemoryBookStore(conn)
+    memory_book_store.purge_expired_forgotten()  # 清理过期的遗忘名单（30 天 TTL）
     # 记忆本用例（2026-10-18）：保存/改名/删记录 + 打开/删文件前解析；
     # 删除真实文件由 Electron 主进程在用户确认后移入回收站（本服务不删文件）。
-    notebook_service = NotebookService(notebook_store, memory_store)
+    memory_book_service = MemoryBookService(memory_book_store, memory_store)
     logger.info("数据库就绪：{}", db_path)
 
     # 会话管理由 HistoryStore 支撑：进程重启后 load_history 可回填、历史不丢
@@ -85,7 +85,7 @@ def main() -> int:
     # LLM provider 经可热替换的槽（LlmSlot）被流水线/记忆提取/测试连接共享，
     # base_url/model/采样参数热更、key 经读取链惰性获取（keyring 更新即时生效）
     runtime = Runtime(
-        app_config, reminder_store=reminder_store, notebook=notebook_service
+        app_config, reminder_store=reminder_store, memory_book=memory_book_service
     )
     # 联网搜索（2026-10-18）：工具注册表在 Runtime 构造时构建；SearchService 需要
     # 读 runtime.config.search 的活引用，所以 Runtime 之后再 bind（必须在建 pipeline 前）。
@@ -113,7 +113,7 @@ def main() -> int:
         profile=profile_store,
         pet_name=runtime.pet_name,  # 每轮动态注入 pet.name（§7.6.3 改名即生效）
         tools=runtime.tools,  # 工具机制（§4.7）：快通道 / 模型 tools / 降级链
-        notebook=notebook_service,  # 记忆本：system 注入 + open_item/delete_path 前置解析
+        memory_book=memory_book_service,  # 记忆本：system 注入 + open_item/delete_path 前置解析
         # 文件限额 / 上下文预算活引用：设置保存后下一轮即生效（§7.6.3）
         config=lambda: runtime.config,
     )
@@ -146,7 +146,7 @@ def main() -> int:
         idle_seconds=app_config.memory.idle_seconds,
         check_interval_seconds=app_config.memory.check_interval_seconds,
         # 记忆本"遗忘名单"过滤：用户删掉的链接/路径不被后台从旧对话里重新提取
-        is_forgotten=notebook_service.is_forgotten,
+        is_forgotten=memory_book_service.is_forgotten,
     )
     runtime.bind_memory(memory_service)
     if app_config.memory.enabled:
@@ -170,7 +170,7 @@ def main() -> int:
         history=history_store,
         settings=settings,
         reminders=runtime.reminders,
-        notebook=notebook_service,
+        memory_book=memory_book_service,
         # 启动称呼引导（2026-10-18）：画像里是否有用户名字 + 记忆提取开关（活引用，热更即生效）
         profile=profile_store,
         memory_enabled=lambda: runtime.config.memory.enabled,

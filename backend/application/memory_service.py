@@ -81,7 +81,7 @@ class MemoryService:
         - ``history``：从 messages 表读取比内存 deque 更长的对话片段（推荐传入）；
         - ``prompt``：提取提示词（缺省从 llm/prompts 加载；测试可注入简版）；
         - ``is_forgotten``：记忆本遗忘名单过滤器（application 装配注入；记忆域
-          不 import notebook 域）。命中则这条待入库记忆跳过。
+          不 import memory_book 域）。命中则这条待入库记忆跳过。
         """
         self._sessions = sessions
         self._history = history

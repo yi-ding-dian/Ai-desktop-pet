@@ -156,7 +156,7 @@ def test_default_registry_without_service_keeps_old_tools() -> None:
 # ---------------------------------------------------------------- 记忆本工具（2026-10-18）
 
 
-class FakeNotebookServiceTools:
+class FakeMemoryBookServiceTools:
     """记忆本服务替身：只验证工具定义/参数转发/前置解析接线，不碰存储。"""
 
     def save_from_tool(self, items):
@@ -177,9 +177,12 @@ class FakeNotebookServiceTools:
     def prepare_delete_path(self, args, user_text):
         return {"ok": True, "args": {"kind": "file", "path": "D:\\a.txt", "name": args.get("name", "")}}
 
+    def prepare_run_program(self, args, user_text):
+        return {"ok": True, "args": {"kind": "app", "name": args.get("name", "")}}
 
-def test_default_registry_registers_notebook_tools() -> None:
-    registry = build_default_registry(notebook=FakeNotebookServiceTools())
+
+def test_default_registry_registers_memory_book_tools() -> None:
+    registry = build_default_registry(memory_book=FakeMemoryBookServiceTools())
     assert [s.name for s in registry.all()] == [
         "open_settings",
         "open_work",
@@ -189,17 +192,20 @@ def test_default_registry_registers_notebook_tools() -> None:
         "delete_item",
         "open_item",
         "delete_path",
+        "run_program",
     ]
     assert registry.get("save_item").executor == "backend"
     assert registry.get("delete_item").needs_user_text is True
     assert registry.get("open_item").executor == "frontend"
     assert registry.get("open_item").prepare is not None
     assert registry.get("delete_path").prepare is not None
+    assert registry.get("run_program").executor == "frontend"
+    assert registry.get("run_program").prepare is not None
 
 
-def test_notebook_tool_handlers_forward() -> None:
-    notebook = FakeNotebookServiceTools()
-    registry = build_default_registry(notebook=notebook)
+def test_memory_book_tool_handlers_forward() -> None:
+    memory_book = FakeMemoryBookServiceTools()
+    registry = build_default_registry(memory_book=memory_book)
     save = registry.get("save_item")
     assert save is not None and save.handler is not None
     assert save.handler({"items": [{"value": "https://a.com"}]})["message"] == "存了 1 条"

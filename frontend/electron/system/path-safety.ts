@@ -2,7 +2,7 @@
  * 本机路径 / URL 安全（2026-10-18，主进程）：打开外链、打开路径、删除路径前的
  * **纯判定**。真正执行在 ipc 域（shell.openExternal / openPath / trashItem）。
  *
- * 为什么主进程还要再判一次：后端 `modules/notebook/paths.py` 已经判过，但渲染
+ * 为什么主进程还要再判一次：后端 `modules/memory_book/paths.py` 已经判过，但渲染
  * 进程/模型工具链不能成为唯一信任边界。这里独立复核：
  * - 只允许 http/https 外链（拒绝 file: / javascript: / 带用户名密码的 URL）；
  * - 路径必须是绝对路径、真实存在、普通文件或文件夹；
