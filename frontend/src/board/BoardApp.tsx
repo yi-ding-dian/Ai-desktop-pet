@@ -16,9 +16,21 @@
  * 折叠 ≠ 下课：折叠前记录滚动锚点，展开且内容未变时原位恢复。
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react'
 import { getPetBridge } from '../shared/pet-bridge'
-import type { PetBridgeApi, TeachingBoardInbox, TeachingMirrorEvent } from '../../electron/ipc/channels'
+import type {
+  PetBridgeApi,
+  PickedFile,
+  TeachingBoardInbox,
+  TeachingMirrorEvent
+} from '../../electron/ipc/channels'
+import {
+  MAX_ATTACHMENTS,
+  SUPPORTED_FILE_HINT,
+  filesBridge,
+  looksLikeAbsolutePath,
+  unsupportedReason
+} from '../modules/chat/file-support'
 import {
   Button,
   EmptyState,
@@ -114,6 +126,12 @@ export default function BoardApp(): JSX.Element {
   const [folded, setFolded] = useState(false)
   const [items, setItems] = useState<BoardItem[]>([])
   const [draft, setDraft] = useState('')
+  /** 本轮待发送附件（只存路径/显示名；正文由后端读取——讲课/讲文档场景） */
+  const [attachments, setAttachments] = useState<PickedFile[]>([])
+  /** 附件提示（类型不支持/超数量/拖入不可用），4s 自动消失 */
+  const [attachNotice, setAttachNotice] = useState<string | null>(null)
+  const [dragActive, setDragActive] = useState(false)
+  const dragDepth = useRef(0)
 
   // ---- refs：事件回调（订阅一次）与渲染解耦，全部经 refs 读写
   const foldedRef = useRef(false)
@@ -346,12 +364,125 @@ export default function BoardApp(): JSX.Element {
 
   // ---- 输入条
 
+  // ---- 输入条附件（讲课/讲文档：黑板也能带文件提问，流程与工作窗一致）
+
+  const showAttachNotice = (text: string): void => {
+    setAttachNotice(text)
+    window.setTimeout(() => {
+      setAttachNotice((current) => (current === text ? null : current))
+    }, 4000)
+  }
+
+  const addFiles = (files: PickedFile[]): void => {
+    if (files.length === 0) return
+    const supported: PickedFile[] = []
+    const rejected: PickedFile[] = []
+    for (const file of files) {
+      if (unsupportedReason(file) === null) supported.push(file)
+      else rejected.push(file)
+    }
+    if (rejected.length > 0) {
+      const names = rejected.slice(0, 3).map((file) => file.name).join('、')
+      showAttachNotice(`「${names}」暂时看不了～${SUPPORTED_FILE_HINT}`)
+    }
+    if (supported.length === 0) return
+    const next = [...attachments]
+    let overflow = false
+    for (const file of supported) {
+      if (next.some((item) => item.path === file.path)) continue
+      if (next.length >= MAX_ATTACHMENTS) {
+        overflow = true
+        continue
+      }
+      next.push(file)
+    }
+    if (overflow) showAttachNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件`)
+    setAttachments(next)
+  }
+
+  const handlePick = async (): Promise<void> => {
+    const bridge = filesBridge()
+    if (!bridge?.pick) {
+      showAttachNotice('当前版本不支持选择文件～')
+      return
+    }
+    try {
+      addFiles(await bridge.pick())
+    } catch (err) {
+      console.warn('[board] 选择文件失败：', err)
+      showAttachNotice('打开文件选择框失败，再试一次好吗？')
+    }
+  }
+
+  const handlePaste = async (event: ClipboardEvent<HTMLInputElement>): Promise<void> => {
+    const raw = event.clipboardData.getData('text/plain').trim()
+    if (!raw || !looksLikeAbsolutePath(raw)) return
+    event.preventDefault()
+    const bridge = filesBridge()
+    if (!bridge?.stat) return
+    try {
+      const file = await bridge.stat(raw)
+      if (file !== null) addFiles([file])
+    } catch {
+      /* stat 失败：按普通文本粘贴处理 */
+    }
+  }
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>): void => {
+    if (foldedRef.current || !event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+
+  const handleDragEnter = (event: DragEvent<HTMLDivElement>): void => {
+    if (foldedRef.current || !event.dataTransfer.types.includes('Files')) return
+    dragDepth.current += 1
+    setDragActive(true)
+  }
+
+  const handleDragLeave = (): void => {
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragActive(false)
+  }
+
+  const handleDrop = async (event: DragEvent<HTMLDivElement>): Promise<void> => {
+    event.preventDefault()
+    dragDepth.current = 0
+    setDragActive(false)
+    if (foldedRef.current) return
+    const files = Array.from(event.dataTransfer.files)
+    if (files.length === 0) return
+    const bridge = filesBridge()
+    if (!bridge?.pathFor || !bridge.stat) {
+      showAttachNotice('当前版本不支持拖入文件～')
+      return
+    }
+    const paths = files
+      .slice(0, MAX_ATTACHMENTS * 4)
+      .map((file) => bridge.pathFor?.(file) ?? '')
+      .filter((path) => path.length > 0)
+    if (paths.length === 0) {
+      showAttachNotice('没有识别到本地文件（网页里的文件请先保存到本地）～')
+      return
+    }
+    const checked = await Promise.all(paths.map((path) => bridge.stat?.(path)))
+    addFiles(checked.filter((item): item is PickedFile => item != null))
+  }
+
+  const removeAttachment = (path: string): void => {
+    setAttachments((previous) => previous.filter((file) => file.path !== path))
+  }
+
   const submit = (): void => {
     const text = draft.trim()
-    if (!text) return
+    if (!text && attachments.length === 0) return
     // 黑板不自建消息：发送经主进程转发到宠物面执行 WS 发送，回声再镜像回来（单一来源）
-    teaching()?.requestSend?.(text)
+    teaching()?.requestSend?.(
+      text || '帮我看看这个文件',
+      attachments.map((file) => ({ path: file.path, name: file.name }))
+    )
     setDraft('')
+    setAttachments([])
   }
 
   const onInputKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
@@ -374,7 +505,14 @@ export default function BoardApp(): JSX.Element {
   const { onResizeStart } = useFramelessResize()
 
   return (
-    <WindowFrame variant={folded ? 'plain' : 'board'} className="board-root">
+    <WindowFrame
+      variant={folded ? 'plain' : 'board'}
+      className={`board-root${dragActive ? ' board-drag-active' : ''}`}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={(event) => void handleDrop(event)}
+    >
       {folded ? (
         // 折叠角标：div[role=button]（刻意不用 <button>——Chromium 131 之前 button 不能作为
         // flex 容器布局子元素，Electron 33（Chromium 130）下图标与竖排文字会横排/塌陷；
@@ -430,23 +568,57 @@ export default function BoardApp(): JSX.Element {
             )}
           </div>
 
+          {/* 附件栏（讲课/讲文档）：只显示文件名，正文由后端读取 */}
+          {attachments.length > 0 || attachNotice ? (
+            <div className="board-attach-bar">
+              {attachments.map((file) => (
+                <span className="board-attach-chip" key={file.path} title={file.path}>
+                  <span className="board-attach-name">{file.name}</span>
+                  <button
+                    type="button"
+                    className="board-attach-remove"
+                    aria-label={`移除 ${file.name}`}
+                    onClick={() => removeAttachment(file.path)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {attachNotice ? <span className="board-attach-notice">{attachNotice}</span> : null}
+            </div>
+          ) : null}
+
           <footer className="board-composer">
-            <Input
-              className="board-input"
-              value={draft}
-              placeholder="问点什么…"
-              onValueChange={setDraft}
-              onKeyDown={onInputKeyDown}
-            />
+            <div className="board-input-wrap">
+              <button
+                type="button"
+                className="board-attach-btn"
+                title="添加文件（文本/代码、图片、Word、Excel）"
+                aria-label="添加文件"
+                onClick={() => void handlePick()}
+              >
+                <PaperclipIcon />
+              </button>
+              <Input
+                className="board-input board-input-with-attach"
+                value={draft}
+                placeholder="问点什么…"
+                onValueChange={setDraft}
+                onKeyDown={onInputKeyDown}
+                onPaste={(event) => void handlePaste(event)}
+              />
+            </div>
             <Button
               variant="primary"
               className="board-send"
-              disabled={!draft.trim()}
+              disabled={!draft.trim() && attachments.length === 0}
               onClick={submit}
             >
               发送
             </Button>
           </footer>
+
+          {dragActive ? <div className="board-drop-hint">松开添加文件</div> : null}
         </>
       )}
     </WindowFrame>
@@ -498,6 +670,25 @@ function ReplyCard({ item }: { item: ReplyItem }): JSX.Element {
         </div>
       )}
     </section>
+  )
+}
+
+/** 输入条回形针：添加附件（讲课/讲文档） */
+function PaperclipIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
   )
 }
 

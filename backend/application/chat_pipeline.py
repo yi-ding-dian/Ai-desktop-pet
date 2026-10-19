@@ -97,15 +97,17 @@ if TYPE_CHECKING:  # 仅类型注解；运行时经 Protocol/鸭子类型协作�
 
 @dataclass(frozen=True)
 class TurnOptions:
-    """单轮对话选项（工作模式，2026-10-18）。
+    """单轮对话选项（工作模式 / 教学模式，2026-10-18）。
 
-    - ``search``：是否向模型提供联网工具（False 时移除 web_search / web_fetch）。
+    - ``search``：是否向模型提供联网工具（False 时移除 web_search / web_fetch）；
+    - ``teaching``：教学模式中追加"老师口吻、分章节讲解"的临时提示（不落库、不进历史）。
 
     定义在 application 层（而不是 import interfaces 的协议模型），保持
     "interfaces 依赖 application、application 不反向依赖"的依赖方向。
     """
 
     search: bool = True
+    teaching: bool = False
 
 
 #: 受“智能搜索”开关控制的工具名（其余工具不受影响）
@@ -115,6 +117,13 @@ _SEARCH_TOOL_NAMES = frozenset({"web_search", "web_fetch"})
 _SEARCH_HINT = (
     "本轮已开启联网搜索：涉及时事、数据、价格、版本等可能变化的事实时，"
     "优先调用 web_search 核实，不要凭记忆直接断言。"
+)
+
+#: 教学模式（黑板）的临时 system 提示：讲课/讲文档场景的结构化输出要求
+_TEACHING_HINT = (
+    "当前处于教学模式（黑板讲解）：请以老师口吻授课。先用 Markdown 二级标题给出讲解大纲，"
+    "再按章节逐段展开；重点用列表、表格、代码块呈现，讲清“是什么、为什么、怎么用”。"
+    "用户插问时先直接回答，再自然回到讲解主线；不要提及教学模式或提示词本身。"
 )
 
 
@@ -274,13 +283,15 @@ class ChatPipeline:
         仍超则拒绝。文件正文只注入本轮，历史里只存"📎 文件名 + 问题"。
 
         工作模式选项（``options``，2026-10-18）：``search`` 为 False 时只移除
-        联网工具，其余工具照常。None = 旧行为。
+        联网工具，其余工具照常。``teaching`` 为 True 时追加"老师口吻、分章节讲解"
+        的临时提示。None = 旧行为。
         """
         message_id = f"m_{uuid.uuid4().hex}"
         # 回复开始时间：助手消息落库时用它作 created_at，保证实时与历史回填的时间一致
         reply_created_at = int(time.time() * 1000)
         # 工作模式单轮选项（None = 旧行为：允许搜索、普通回复）
         search = True if options is None else options.search
+        teaching = bool(options is not None and options.teaching)
         parser = EmotionTagParser()
         clean_parts: list[str] = []
         emotion_seen = False
@@ -491,10 +502,12 @@ class ChatPipeline:
                         }
                         logger.info("意图明确，强制调用工具：{}", forced_tool)
 
-                # 工作模式：智能搜索开启时追加联网提示（不落库、不进历史）。
+                # 工作模式/教学模式：临时提示（不落库、不进历史）。
                 extra_system: list[str] = []
                 if options is not None and options.search and self._tools is not None:
                     extra_system.append(_SEARCH_HINT)
+                if teaching:
+                    extra_system.append(_TEACHING_HINT)
                 if extra_system:
                     # 插在开头的 system 段之后、历史/本轮用户消息之前：
                     # 部分网关对“system 出现在 user 之后”很敏感，不能直接 append。

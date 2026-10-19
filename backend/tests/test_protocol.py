@@ -236,13 +236,14 @@ def test_user_message_options_parsed() -> None:
     msg = parse_client_message(
         _raw(
             "user_message",
-            {"text": "hi", "options": {"search": False}},
+            {"text": "hi", "options": {"search": False, "teaching": True}},
         )
     )
     data = msg.data
     assert isinstance(data, UserMessageData)
     assert data.options is not None
     assert data.options.search is False
+    assert data.options.teaching is True
 
 
 def test_user_message_options_defaults_and_null() -> None:
@@ -261,6 +262,7 @@ def test_user_message_options_defaults_and_null() -> None:
     assert isinstance(defaults.data, UserMessageData)
     assert defaults.data.options is not None
     assert defaults.data.options.search is True
+    assert defaults.data.options.teaching is False
 
 
 # ---------------------------------------------------------------- 二进制音频帧（§3.5）

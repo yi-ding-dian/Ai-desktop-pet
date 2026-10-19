@@ -470,6 +470,15 @@ export interface TeachingStatePayload {
 }
 
 /**
+ * 黑板输入条发送载荷（黑板 → 主 → 宠物面）：
+ * 附件只传路径与显示名，正文由后端在本机读取（与聊天输入框/工作窗同款）。
+ */
+export interface TeachingSendRequestPayload {
+  text: string
+  attachments: { path: string; name: string }[]
+}
+
+/**
  * 镜像事件（宠物面 → 主 → 黑板面）：
  * 对话主体仍在宠物窗口的 WS 连接上，黑板是"哑显示"——宠物面收到这些事件后镜像一份。
  */
@@ -905,10 +914,10 @@ export interface PetBridgeApi {
     goto(messageId: string): void
     /** 宠物面：拖拽开始（教学模式中触发黑板折叠让路；非教学模式主进程忽略） */
     notifyDragStart(): void
-    /** 黑板面：输入条发送（主进程路由给宠物窗口执行 WS 发送） */
-    requestSend(text: string): void
+    /** 黑板面：输入条发送（主进程路由给宠物窗口执行 WS 发送；attachments 只传路径/显示名） */
+    requestSend(text: string, attachments?: { path: string; name: string }[]): void
     /** 宠物面：订阅"黑板输入条发送请求"（黑板打字 → 主进程路由 → 宠物面执行 WS 发送）；返回取消订阅函数 */
-    onSendRequest(cb: (payload: { text: string }) => void): () => void
+    onSendRequest(cb: (payload: TeachingSendRequestPayload) => void): () => void
     /** 黑板面：角标点击请求恢复展开 */
     requestUnfold(): void
     /** 黑板面：渲染就绪（主进程收到后下发首批数据） */

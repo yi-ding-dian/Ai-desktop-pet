@@ -28,6 +28,7 @@ import {
   type TeachingBoardInbox,
   type TeachingEnterReason,
   type TeachingMirrorEvent,
+  type TeachingSendRequestPayload,
   type TeachingStatePayload
 } from '../ipc/channels'
 import {
@@ -641,6 +642,31 @@ function normalizeEnterReason(reason: unknown): TeachingEnterReason {
     : 'keyword'
 }
 
+/**
+ * 规范化黑板发送载荷：兼容旧版纯字符串 text；附件只保留 path/name 且最多 3 条
+ * （与 files.max_per_turn 一致，后端仍会二次校验）。文本与附件都空则丢弃。
+ */
+function normalizeSendPayload(raw: unknown): TeachingSendRequestPayload | null {
+  const value = typeof raw === 'string' ? { text: raw } : raw
+  if (typeof value !== 'object' || value === null) return null
+  const record = value as Record<string, unknown>
+  const text = typeof record.text === 'string' ? record.text : ''
+  const attachments = Array.isArray(record.attachments)
+    ? record.attachments
+        .slice(0, 3)
+        .map((item) => {
+          if (typeof item !== 'object' || item === null) return null
+          const entry = item as Record<string, unknown>
+          const path = typeof entry.path === 'string' ? entry.path : ''
+          const name = typeof entry.name === 'string' ? entry.name : ''
+          return path.length > 0 ? { path, name } : null
+        })
+        .filter((item): item is { path: string; name: string } => item !== null)
+    : []
+  if (text.trim().length === 0 && attachments.length === 0) return null
+  return { text, attachments }
+}
+
 /** 注册教学模式 IPC 处理器（main.ts 在 app ready 后调用一次） */
 export function initTeaching(pet: BrowserWindow): void {
   petWin = pet
@@ -698,11 +724,12 @@ export function initTeaching(pet: BrowserWindow): void {
     void unfoldBoard('unfold')
   })
 
-  ipcMain.on(IPC.TEACHING_REQUEST_SEND, (event, text: string) => {
+  ipcMain.on(IPC.TEACHING_REQUEST_SEND, (event, payload: unknown) => {
     if (!isBoardSender(event.sender)) return
-    if (typeof text !== 'string' || text.trim().length === 0) return
+    const normalized = normalizeSendPayload(payload)
+    if (normalized === null) return
     // 转发给宠物窗口渲染侧执行既有 WS user_message 发送（黑板自身不连 WS，§7.5.2）
-    sendTo(petWin, IPC_EVENTS.TEACHING_SEND_REQUEST, { text })
+    sendTo(petWin, IPC_EVENTS.TEACHING_SEND_REQUEST, normalized)
   })
 
   console.log('[teaching] IPC 处理器已注册')

@@ -76,14 +76,16 @@ class AttachmentRefData(EventData):
 
 
 class UserMessageOptions(EventData):
-    """单轮对话选项（工作模式，2026-10-18）。
+    """单轮对话选项（工作模式 / 教学模式，2026-10-18）。
 
     - ``search``：本轮是否提供联网工具（False 时移除 web_search / web_fetch，
-      其余工具不受影响）。
+      其余工具不受影响）；
+    - ``teaching``：教学模式中追加"老师口吻、分章节讲解"的临时提示（不落库）。
     旧客户端不传 = None，行为与之前完全一致（允许搜索）。
     """
 
     search: bool = True
+    teaching: bool = False
 
 
 class UserMessageData(EventData):

@@ -301,7 +301,10 @@ def build_dispatcher(
                 voice=ctx.voice,
                 attachments=attachments,
                 options=(
-                    TurnOptions(search=data.options.search)
+                    TurnOptions(
+                        search=data.options.search,
+                        teaching=data.options.teaching,
+                    )
                     if data.options is not None
                     else None
                 ),

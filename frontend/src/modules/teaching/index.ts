@@ -205,12 +205,17 @@ export function sendUserMessage(
   // localId 同时作为 client_id 发给后端：message_saved 回传 DB 行 id 时按它挂回消息
   const localId = makeLocalId()
   const refs = attachments?.map((item) => ({ path: item.path, name: item.name }))
+  // 教学模式中自动带上 teaching 选项（后端据此追加"老师口吻、分章节讲解"的临时提示）；
+  // 与工作模式的单轮开关（search）合并，避免互相覆盖
+  const mergedOptions: UserMessageOptions = {
+    ...(options ?? {}),
+    ...(isTeachingMode() ? { teaching: true } : {})
+  }
   const payload = {
     text,
     client_id: localId,
     ...(refs && refs.length > 0 ? { attachments: refs } : {}),
-    // 工作模式的单轮开关；宠物胶囊/黑板路径不传 = 旧行为
-    ...(options ? { options } : {})
+    ...(Object.keys(mergedOptions).length > 0 ? { options: mergedOptions } : {})
   }
   if (!client.send('user_message', payload)) return false
 
@@ -267,11 +272,15 @@ export function setupTeachingPetSide(client: WsClient): () => void {
   const offState = bridge.teaching?.onState?.(handleState)
 
   // ② 黑板输入条 → 宠物面执行发送（与聊天输入框走同一入口：关键词 + 发送 + 镜像 + 气泡）
-  const offSend = bridge.teaching?.onSendRequest?.(({ text }) => {
+  //   附件只传路径/显示名；正文由后端读取（讲课/讲文档场景）
+  const offSend = bridge.teaching?.onSendRequest?.(({ text, attachments }) => {
     const trimmed = text.trim()
-    if (!trimmed) return
-    const sent = sendUserMessage(client, trimmed)
-    devLog(`黑板输入条发送（sent=${sent}）：${trimmed.slice(0, 24)}`)
+    const refs = (attachments ?? []).map((item) => ({ path: item.path, name: item.name }))
+    if (!trimmed && refs.length === 0) return
+    const sent = sendUserMessage(client, trimmed || '帮我看看这个文件', refs)
+    devLog(
+      `黑板输入条发送（sent=${sent}，附件 ${refs.length}）：${trimmed.slice(0, 24) || '（仅附件）'}`
+    )
   })
 
   // ③ 对话镜像（仅教学模式中上报；token 无条件累积，供 reply_end.fullText 兜底）

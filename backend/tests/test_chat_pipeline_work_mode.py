@@ -169,6 +169,23 @@ def test_search_true_adds_hint_and_keeps_web_tools() -> None:
     assert any("本轮已开启联网搜索" in text for text in system_texts)
 
 
+def test_teaching_adds_teaching_hint() -> None:
+    """教学模式：追加"老师口吻、分章节讲解"的临时提示（不切模型、不移除工具）。"""
+    provider = FakeLLMProvider(pieces=["好"])
+    sink = run(
+        provider,
+        options=TurnOptions(teaching=True),
+        config=make_config(),
+        tools=build_default_registry(search=SearchStub()),
+    )
+
+    system_texts = [
+        m.content for m in provider.seen_messages[0] if m.role == "system"
+    ]
+    assert any("当前处于教学模式" in text for text in system_texts)
+    assert "error" not in sink.types()
+
+
 def test_options_none_keeps_legacy_behavior() -> None:
     """旧调用（无 options）不加提示、不移除工具、不切模型。"""
     provider = FakeLLMProvider(pieces=["好"])

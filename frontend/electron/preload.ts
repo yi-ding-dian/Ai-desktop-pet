@@ -40,6 +40,7 @@ import {
   type TeachingBoardInbox,
   type TeachingEnterReason,
   type TeachingMirrorEvent,
+  type TeachingSendRequestPayload,
   type TeachingStatePayload,
   type TrayMenuAction,
   type WindowDebugState,
@@ -280,13 +281,15 @@ const api: PetBridgeApi = {
       ipcRenderer.send(IPC.TEACHING_DRAG_START)
     },
 
-    requestSend(text: string): void {
-      ipcRenderer.send(IPC.TEACHING_REQUEST_SEND, text)
+    requestSend(text: string, attachments: { path: string; name: string }[] = []): void {
+      ipcRenderer.send(IPC.TEACHING_REQUEST_SEND, { text, attachments })
     },
 
-    onSendRequest(cb: (payload: { text: string }) => void): () => void {
-      const listener = (_event: Electron.IpcRendererEvent, payload: { text: string }): void =>
-        cb(payload)
+    onSendRequest(cb: (payload: TeachingSendRequestPayload) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: TeachingSendRequestPayload
+      ): void => cb(payload)
       ipcRenderer.on(IPC_EVENTS.TEACHING_SEND_REQUEST, listener)
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.TEACHING_SEND_REQUEST, listener)

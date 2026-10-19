@@ -54,6 +54,8 @@ export interface AttachmentRef {
 export interface UserMessageOptions {
   /** 本轮是否向模型提供联网工具（false = 移除 web_search / web_fetch） */
   search?: boolean
+  /** 教学模式：后端追加"老师口吻、分章节讲解"的临时提示（不落库、不进历史） */
+  teaching?: boolean
 }
 
 /** 用户文字输入（可携带本轮附件与单轮选项） */

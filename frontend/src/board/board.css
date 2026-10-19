@@ -213,6 +213,113 @@ body,
   opacity: 0.38;
 }
 
+/* ---------------------------------------------------------------- 附件（讲课/讲文档） */
+
+.board-attach-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px 0;
+}
+
+.board-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  padding: 3px 6px 3px 9px;
+  border: 1px solid var(--ui-border);
+  border-radius: 999px;
+  background: var(--ui-panel);
+  color: var(--ui-fg-dim);
+  font-size: 11.5px;
+}
+
+.board-attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-attach-remove {
+  flex: none;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-fg-faint);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.board-attach-remove:hover {
+  color: var(--ui-fg);
+}
+
+.board-attach-notice {
+  color: var(--ui-danger);
+  font-size: 11.5px;
+}
+
+/* 输入框与内嵌附件按钮：回形针放在输入框最左侧内部（2026-10-19 用户定稿） */
+.board-input-wrap {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.board-input-wrap .board-input {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.board-input-with-attach {
+  padding-left: 38px;
+}
+
+.board-attach-btn {
+  position: absolute;
+  top: 50%;
+  left: 5px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-fg-dim);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.board-attach-btn:hover {
+  background: var(--ui-panel-strong);
+  color: var(--ui-fg);
+}
+
+/* 拖入文件：覆盖板书区（避开标题栏与输入条），不拦截鼠标事件 */
+.board-drop-hint {
+  position: absolute;
+  inset: 52px 14px 64px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--ui-accent);
+  border-radius: 14px;
+  background: var(--ui-panel-faint);
+  color: var(--ui-fg);
+  font-size: 14px;
+  pointer-events: none;
+}
+
 /* ---------------------------------------------------------------- 折叠态角标（窗口 24×140，页面铺满） */
 
 /* div[role=button]（非原生 button）：Chromium 131 之前 button 不能作为 flex 容器布局
