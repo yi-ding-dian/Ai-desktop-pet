@@ -118,6 +118,8 @@ export class FaceOverlay {
   private blinkEnabled = true
   /** 调试：强制眨眼相位（0=睁 … 1=全闭；null = 正常随机眨眼） */
   private blinkForced: number | null = null
+  /** 睡姿模型接管时隐藏整层（优先于 update 的 display 写入） */
+  private suppressed = false
 
   /**
    * 调试钩子：冻结眨眼相位（供离屏截图验证 / 人工调参 / devtools 演示）。
@@ -179,6 +181,16 @@ export class FaceOverlay {
     if (this.frameG) this.frameG.setAttribute('data-state', state)
   }
 
+  /**
+   * 睡眠时切到睡姿模型：隐藏 SVG 表情层（睡姿模型自带闭眼）。
+   * 只改 display，不动内部状态；唤醒后恢复。
+   */
+  setSuppressed(value: boolean): void {
+    if (this.suppressed === value) return
+    this.suppressed = value
+    if (this.svg) this.svg.style.display = value ? 'none' : ''
+  }
+
   /** 把当前情绪/强度写入 DOM（data 属性 + 腮红透明度；可重复调用，幂等） */
   private applyEmotionDom(): void {
     const frameG = this.frameG
@@ -201,6 +213,12 @@ export class FaceOverlay {
     const svg = this.svg
     const frameG = this.frameG
     if (!svg || !frameG) return
+
+    // 睡姿模型接管：整层保持隐藏（优先于下面的 display 重置）
+    if (this.suppressed) {
+      svg.style.display = 'none'
+      return
+    }
 
     if (!frame) {
       svg.style.display = 'none'

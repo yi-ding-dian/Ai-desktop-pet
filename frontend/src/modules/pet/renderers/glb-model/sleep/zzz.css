@@ -1,0 +1,84 @@
+/* 睡眠 Zzz 覆盖层（2026-10-19）：三个字符错峰上浮、渐显渐隐。 */
+
+.pet-sleep-zzz {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 30;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.pet-sleep-zzz.is-visible {
+  opacity: 1;
+}
+
+.pet-sleep-zzz-char {
+  position: absolute;
+  color: #fff;
+  font-family: 'Comic Sans MS', 'Segoe Print', 'Bradley Hand', cursive;
+  font-weight: 700;
+  line-height: 1;
+  /* 白色字 + 2px 深色描边：浅色壁纸和深色壁纸都能看清 */
+  text-shadow:
+    0 1px 2px rgba(30, 45, 70, 0.9),
+    2px 0 0 #4a5a78,
+    -2px 0 0 #4a5a78,
+    0 2px 0 #4a5a78,
+    0 -2px 0 #4a5a78,
+    1px 1px 0 #4a5a78,
+    -1px -1px 0 #4a5a78,
+    1px -1px 0 #4a5a78,
+    -1px 1px 0 #4a5a78,
+    0 0 8px rgba(150, 190, 255, 0.55);
+  transform-origin: 50% 80%;
+  animation: pet-zzz-float 3.6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+/* 底部小 z、中间 Z、顶部大 Z */
+.pet-sleep-zzz-char-1 {
+  left: 0;
+  top: 12px;
+  font-size: 14px;
+  animation-delay: 0s;
+}
+
+.pet-sleep-zzz-char-2 {
+  left: 9px;
+  top: 2px;
+  font-size: 18px;
+  animation-delay: 0.8s;
+}
+
+.pet-sleep-zzz-char-3 {
+  left: 19px;
+  top: -10px;
+  font-size: 22px;
+  animation-delay: 1.6s;
+}
+
+@keyframes pet-zzz-float {
+  0% {
+    opacity: 0;
+    transform: translate(0, 4px) scale(0.6) rotate(-8deg);
+  }
+  18% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(26px, -34px) scale(1.12) rotate(8deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-sleep-zzz-char {
+    animation: none;
+    opacity: 0.9;
+  }
+}

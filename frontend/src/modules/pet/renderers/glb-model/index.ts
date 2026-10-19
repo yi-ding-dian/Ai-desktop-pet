@@ -40,6 +40,8 @@ import {
 import { FACE_EX, FACE_EY_DOWN, FACE_ORIGIN, FACE_PROBE } from './face/config'
 import { FaceOverlay, type FaceFrame } from './face/overlay'
 import { EarsOverlay } from './ears/overlay'
+import { SleepController } from './sleep'
+import { disposeObjectResources } from './dispose-resources'
 
 /** dev 态日志（转发到主进程日志，便于无 devtools 验证）；生产构建自动剔除 */
 const devLog = (msg: string): void => {
@@ -138,6 +140,11 @@ export class GlbModelRenderer implements PetRenderer {
   /** 顶点级"耳骨"：程序化微动原耳顶点（挂在模型几何上；见 ears/overlay.ts） */
   private readonly ears = new EarsOverlay()
 
+  // ---- 睡姿子模块（独立目录 sleep/；失败时回退站姿睡觉） ----
+  private readonly sleep = new SleepController()
+  /** 站姿模型宽度（睡姿模型按它归一化，避免切换前后体量跳变） */
+  private standWidth = 0.73
+
   constructor() {
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.05, 50)
@@ -174,6 +181,8 @@ export class GlbModelRenderer implements PetRenderer {
     // SVG 表情层的 stage（相对定位包装层）先建好：画布与表情 SVG 都挂在它里面，
     // 这样绝对定位的 SVG 有可靠基准，且不依赖外部容器的 position 样式
     const stage = this.face.attach(container)
+    // 睡姿子模块：Zzz 覆盖层挂到 stage（相对定位），模型资源懒加载
+    this.sleep.attach({ scene: this.scene, overlayHost: stage })
     if (!this.webgl && !this.webglFailed) {
       try {
         this.webgl = new THREE.WebGLRenderer({
@@ -228,6 +237,7 @@ export class GlbModelRenderer implements PetRenderer {
     if (this.root && this.root.parent === this.scene) this.scene.remove(this.root)
     this.webgl?.domElement.remove()
     this.face.detach() // 移除表情层（stage+SVG；情绪/眨眼状态保留）
+    this.sleep.detach() // 移除 Zzz 覆盖层；睡姿模型出场景但保留资源
     this.container = null
     this.lastTs = null
   }
@@ -237,6 +247,7 @@ export class GlbModelRenderer implements PetRenderer {
     this.disposed = true // 先置位：加载竞态回调与 contextlost 监听据此静默
     this.loadToken++ // 使在途加载回调失效
     this.face.dispose()
+    this.sleep.dispose()
     this.disposeModelResources()
     if (this.webgl) {
       // 显式丢弃 WebGL 上下文（Chromium 有活跃上下文上限；HMR 反复重建防累积）
@@ -270,6 +281,8 @@ export class GlbModelRenderer implements PetRenderer {
     this.face.setState(state)
     // 同步到耳朵形变层（sleeping 微趴等，见 ears/config.ts）
     this.ears.setState(state)
+    // 同步到睡姿子模块（模型就绪时切换趴睡；未就绪/失败则回退站姿睡觉）
+    this.sleep.setState(state)
     devLog(`state -> ${state}`)
   }
 
@@ -364,6 +377,9 @@ export class GlbModelRenderer implements PetRenderer {
     }
 
     this.loadState = 'ready'
+    // 睡姿模型懒加载（站姿模型已就绪，宽度可用于归一化；不阻塞当前渲染）
+    this.standWidth = Math.max(0.01, box.max.x - box.min.x)
+    this.sleep.preload(this.standWidth)
     devLog(
       `renderer(glb-model) 模型就绪：高 ${height.toFixed(2)}，相机距离 ${dist.toFixed(2)}，` +
         `三角面 ${countTriangles(loaded)}`
@@ -397,6 +413,12 @@ export class GlbModelRenderer implements PetRenderer {
     // 行为引擎移动窗口时渲染进程可直接读出"真实步速"，保持 PetRenderer 接口零改动）
     this.measureMoveSpeed(ts)
     this.updatePose(dt)
+    // 睡姿子模块：过渡/腹部呼吸；接管画面时隐藏站姿模型与 2D 形变层
+    this.sleep.update(dt)
+    const sleepCovers = this.sleep.coversStand
+    if (this.root) this.root.visible = !sleepCovers
+    this.face.setSuppressed(sleepCovers)
+    this.ears.setSuppressed(sleepCovers)
     // 耳朵形变层：耳态阻尼/微行为（仅姿态变化时重写耳朵顶点；见 ears/overlay.ts）
     this.ears.update(dt)
     this.renderOnce()
@@ -545,6 +567,9 @@ export class GlbModelRenderer implements PetRenderer {
     this.camera.updateMatrixWorld()
     root.updateMatrixWorld()
     this.raycaster.setFromCamera(this.hitNdc, this.camera)
+    // 睡姿接管时只对睡姿模型求交（站姿已隐藏，不能回退到它的射线结果）
+    const sleepHit = this.sleep.hitTest(this.raycaster)
+    if (sleepHit !== null) return sleepHit
     // 含耳朵形变后的顶点（EarsOverlay 直接改原几何；其已放宽 boundingSphere，见 ears/overlay.ts）
     return this.raycaster.intersectObject(root, true).length > 0
   }
@@ -642,28 +667,4 @@ function countTriangles(obj: THREE.Object3D): number {
     else if (geo.attributes.position) tris += geo.attributes.position.count / 3
   })
   return Math.round(tris)
-}
-
-/** 释放一棵对象树中的全部几何/材质/贴图（Set 去重，避免共享资源重复释放） */
-function disposeObjectResources(obj: THREE.Object3D): void {
-  const geometries = new Set<THREE.BufferGeometry>()
-  const materials = new Set<THREE.Material>()
-  const textures = new Set<THREE.Texture>()
-  obj.traverse((o) => {
-    const mesh = o as THREE.Mesh
-    if (!(mesh as THREE.Mesh).isMesh) return
-    if (mesh.geometry) geometries.add(mesh.geometry)
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-    for (const mat of mats) {
-      if (!mat) continue
-      materials.add(mat)
-      // 收集材质上的所有贴图（map/normalMap/roughnessMap/…；遍历字段比逐个列举更耐扩展）
-      for (const value of Object.values(mat)) {
-        if (value && (value as THREE.Texture).isTexture) textures.add(value as THREE.Texture)
-      }
-    }
-  })
-  geometries.forEach((g) => g.dispose())
-  materials.forEach((m) => m.dispose())
-  textures.forEach((t) => t.dispose())
 }

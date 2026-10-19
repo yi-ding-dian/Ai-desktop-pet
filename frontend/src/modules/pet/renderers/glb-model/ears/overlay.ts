@@ -262,6 +262,8 @@ export class EarsOverlay {
   private twitchNext = -1
   /** 上次提交的"姿态签名"（标量组；相同则跳过顶点重写） */
   private lastSig: number[] | null = null
+  /** 睡姿模型接管时暂停耳形变（恢复原始耳形） */
+  private suppressed = false
 
   /**
    * 挂载：从几何收集耳朵顶点并建立绑定；随后立即落位到当前目标耳态
@@ -365,10 +367,38 @@ export class EarsOverlay {
     this.state = state
   }
 
+  /**
+   * 睡姿模型接管时暂停耳形变：把耳朵顶点恢复到原始位置并跳过后续 update。
+   * 唤醒后 `lastSig=null` 强制下一帧重新写入。
+   */
+  setSuppressed(value: boolean): void {
+    if (this.suppressed === value) return
+    this.suppressed = value
+    if (value) this.restoreRest()
+    else this.lastSig = null
+  }
+
+  /** 把耳朵区域顶点写回 attach 时保存的原始位置 */
+  private restoreRest(): void {
+    const indices = this.indices
+    const rest = this.rest
+    const array = this.writeArr
+    const position = this.position
+    if (!indices || !rest || !array || !position) return
+    for (let k = 0; k < indices.length; k++) {
+      const base = indices[k] * this.writeStride + this.writeOffset
+      array[base] = rest[k * 3]
+      array[base + 1] = rest[k * 3 + 1]
+      array[base + 2] = rest[k * 3 + 2]
+    }
+    position.needsUpdate = true
+  }
+
   // ------------------------------------------------------------------ 每帧更新
 
-  /** 每帧更新（渲染器 tick 调用；未挂载时为 no-op）。 */
+  /** 每帧更新（渲染器 tick 调用；未挂载/睡姿接管时为 no-op）。 */
   update(dt: number): void {
+    if (this.suppressed) return
     const bind = this.position
     if (!bind || !this.earL || !this.earR) return
 
