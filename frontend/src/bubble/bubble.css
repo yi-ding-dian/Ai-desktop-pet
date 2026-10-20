@@ -431,3 +431,16 @@ body,
   max-height: 320px;
   overflow: hidden;
 }
+
+/* 提醒气泡的彩色闹钟：系统缺彩色 emoji 字体（fc-match ⏰ 落到 Unifont），
+   ⏰ emoji 只能显示为灰色线框；改由前端内置 SVG 渲染（不依赖系统字体）。 */
+.pet-bubble-text .pet-bubble-message.pet-bubble-message-reminder::before {
+  content: '';
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 5px;
+  vertical-align: -3px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='13' r='8.5' fill='%23ffd166' stroke='%23e8590c' stroke-width='2'/%3E%3Ccircle cx='12' cy='13' r='5.3' fill='%23fff7e6'/%3E%3Cpath d='M12 13V9.6M12 13l2.6 2.1' stroke='%23e8590c' stroke-width='1.8' stroke-linecap='round'/%3E%3Cpath d='M4.6 6.4l2.7 2.1M19.4 6.4l-2.7 2.1' stroke='%23e63946' stroke-width='2.6' stroke-linecap='round'/%3E%3Cpath d='M9 21.4l-1.2 1.8M15 21.4l1.2 1.8' stroke='%23e8590c' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}

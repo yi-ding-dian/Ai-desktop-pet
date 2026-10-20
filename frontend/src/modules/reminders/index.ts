@@ -309,7 +309,10 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
   }
 
   const showBubble = (item: PendingReminder): boolean => {
-    if (!speakReminder(item.text, REMINDER_TTL_MS, item.meta)) return false
+    // 系统没有彩色 emoji 字体：气泡里的 ⏰ 会渲染成灰色线框（Unifont）。
+    // 去掉 emoji，由 .pet-bubble-message-reminder::before 画内置彩色闹钟。
+    const text = item.text.replace(/^⏰\s*/, '')
+    if (!speakReminder(text, REMINDER_TTL_MS, item.meta)) return false
     setActive(item.meta)
     lastShownAt = Date.now()
     console.log(`[reminders] 提醒气泡已展示：${item.text}`)
