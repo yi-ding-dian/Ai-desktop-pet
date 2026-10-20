@@ -15,7 +15,7 @@ import {
 } from 'electron'
 import { IPC, IPC_EVENTS, type PetWindowEdge, type WindowDebugState } from './channels'
 import { backendManager } from '../backend-process'
-import { openConfirmBubble } from '../bubble'
+import { openConfirmBubble, setEdgeSpeechSuppression } from '../bubble'
 import {
   isDangerousExecutable,
   isSafeHttpUrl,
@@ -389,6 +389,12 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     if (ctx.window.isDestroyed()) return
     const edge = computeWindowEdge()
     const near = computeNearSnap(edge)
+    // 贴上/下边吸附时抑制聊天气泡（2026-10-20 用户需求）：吸附后气泡只能压在兔子身上
+    // （上边翻到下方、下边压在头上）；左右吸附气泡横向错开，照常显示。
+    // 拖拽中不抑制（气泡照常跟随），松手吸附瞬间即收起；离开上/下边后自动恢复内容。
+    const suppressSpeech =
+      !dragging && (edge === 'top' || edge === 'bottom') && (near || snappedEdge === edge)
+    setEdgeSpeechSuppression(suppressSpeech)
     if (edge === lastEdge && near === lastNear) return
     lastEdge = edge
     lastNear = near

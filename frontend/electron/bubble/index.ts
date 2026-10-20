@@ -249,6 +249,16 @@ let shapeRects: Rect[] = []
 /** Windows 复用策略的预热定时器（will-quit 清理，避免退出过程中又建窗） */
 let warmTimer: NodeJS.Timeout | null = null
 
+/**
+ * 贴上/下边吸附抑制（2026-10-20 用户需求）：宠物吸附在屏幕**上边/下边**时不显示聊天气泡——
+ * 吸附后宠物贴在屏幕边，气泡只能放在兔子身上（上边翻到下方、下边压在头上），与兔子重叠；
+ * 左右吸附不受影响（气泡横向错开，照常显示）。
+ * 抑制期间：当前气泡硬收但**保留文本快照**，新 SAY_BEGIN 不弹（文本照常进快照）；
+ * 离开上/下边后自动恢复（复用"菜单让位恢复"闭环，内容不丢）。
+ * 状态由 ipc 域随贴边判定推送（见 setEdgeSpeechSuppression）。
+ */
+let edgeSpeechSuppressed = false
+
 // ------------------------------------------------------------------ 工具
 
 /** 向气泡窗发送（窗口缺失/销毁时静默忽略） */
@@ -938,12 +948,36 @@ function stopSpeech(
 }
 
 /**
+ * 贴上/下边吸附时抑制说话气泡（由 ipc 域随贴边判定调用；幂等）。
+ *
+ * 抑制开：收起当前说话气泡（硬收——吸附是瞬间动作，等退场动画会让气泡"挂"在兔子身上），
+ * keepText 保留文本与属性，离开上/下边后由 maybeRestoreSpeech 原样恢复；
+ * 抑制关（回到中间或只贴左右边）：内容还在就恢复显示。
+ *
+ * 不处理菜单/确认态——它们由各自的互斥守卫管；本函数只管说话气泡。
+ */
+export function setEdgeSpeechSuppression(suppressed: boolean): void {
+  if (suppressed === edgeSpeechSuppressed) return
+  edgeSpeechSuppressed = suppressed
+  if (suppressed) {
+    console.log('[bubble] 贴上/下边吸附——收起说话气泡（保留内容，离开后恢复）')
+    if (speechActive || isSpeechShowing()) stopSpeech('贴上/下边让位', true, true)
+    return
+  }
+  console.log('[bubble] 已离开上/下边——尝试恢复说话气泡')
+  maybeRestoreSpeech()
+}
+
+/**
  * 菜单收尾后恢复说话气泡（"不消失"体验闭环）：菜单弹出时说话气泡被硬收（同窗互斥），
  * 菜单关闭时把内容还在的那条重新显示出来（轻量入场、锚点重算——复用 openSpeechBubble 全流程）。
  * 不恢复的情形：菜单里点了教学/展开/设置/隐藏（suppressSpeechRestore 标记）；内容已被清
  * （✕/打断/让位——speechText 为空）；教学/向导中（各自气泡体系）；宠物隐藏中。
  */
 function maybeRestoreSpeech(): void {
+  // 贴上/下边吸附中：恢复留着（内容已在快照里），离开后统一恢复——此时不能走下面的
+  // "清内容/通知关闭"分支，否则提醒气泡会被误判为已关闭
+  if (edgeSpeechSuppressed) return
   if (suppressSpeechRestore || !speechText) {
     // 菜单让位后不恢复（进了教学/设置/隐藏）：提醒气泡此时才算最终关闭 → 进未读列表
     notifySpeechEvent('closed', 'menu-suppressed')
@@ -971,6 +1005,11 @@ function maybeRestoreSpeech(): void {
  */
 async function openSpeechBubble(): Promise<void> {
   if (opening) return
+  // 贴上/下边吸附中：气泡会压在兔子身上——不弹（文本仍由 SAY_TEXT 进快照，离开后恢复）
+  if (edgeSpeechSuppressed) {
+    console.log('[bubble] 贴上/下边吸附中，本轮说话气泡暂不显示')
+    return
+  }
   if (isMenuShowing()) {
     console.log('[bubble] 菜单显示中，本轮说话气泡忽略')
     return
