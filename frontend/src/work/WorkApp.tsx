@@ -185,9 +185,17 @@ export default function WorkApp(): ReactElement {
   } | null>(null)
   const [browser, setBrowser] = useState<WorkBrowserState>(EMPTY_BROWSER_STATE)
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false)
+  /** 折叠态（最小化 = 屏幕右缘中间的小角标，2026-10-20）：由主进程通知，点角标展开 */
+  const [folded, setFolded] = useState(false)
 
   const move = useFramelessMove()
   const resize = useFramelessResize()
+
+  // 折叠态同步（主进程折叠/展开时推送；页面重载后主进程在 ready 时补发一次）
+  useEffect(() => {
+    const off = workBridge()?.onFolded?.((value) => setFolded(Boolean(value)))
+    return () => off?.()
+  }, [])
 
   const userMessages = useMemo(() => navigatorMessages(state.messages), [state.messages])
   const previews = useMemo(() => {
@@ -540,6 +548,33 @@ export default function WorkApp(): ReactElement {
       },
     []
   )
+
+  // 折叠态：只画右缘小角标（窗口已被主进程缩成 24×140），点击恢复原窗口
+  if (folded) {
+    const unfold = (): void => {
+      workBridge()?.unfold?.()
+    }
+    return (
+      <WindowFrame variant="plain" className="work-root work-root-folded">
+        <div
+          className="work-badge"
+          role="button"
+          tabIndex={0}
+          title="展开工作模式"
+          onClick={unfold}
+          onKeyDown={(e) => {
+            if (e.key === ' ' || e.key === 'Enter') {
+              e.preventDefault()
+              unfold()
+            }
+          }}
+        >
+          <ChatIcon />
+          <span className="work-badge-label">工作</span>
+        </div>
+      </WindowFrame>
+    )
+  }
 
   return (
     <WindowFrame variant="solid" className="work-root">
@@ -1116,5 +1151,25 @@ function LinkPreviewCard({
         <div className="work-link-preview-snippet">{preview.snippet}</div>
       ) : null}
     </div>
+  )
+}
+
+/** 折叠角标图标：对话气泡（线稿；颜色随 currentColor = 角标前景色） */
+function ChatIcon(): JSX.Element {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-4.2-.9L3 20.5l1.4-4.2A8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4z" />
+      <path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01" />
+    </svg>
   )
 }

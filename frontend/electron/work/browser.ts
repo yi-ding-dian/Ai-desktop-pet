@@ -87,6 +87,8 @@ export class WorkBrowser {
   private activeId: string | null = null
   /** DOM 浮层（标签溢出菜单）打开时临时隐藏原生视图 */
   private overlayOpen = false
+  /** 窗口折叠成右缘角标（2026-10-20）：原生视图必须全隐藏，否则会盖住角标 UI */
+  private foldedHidden = false
 
   constructor(win: BrowserWindow) {
     this.win = win
@@ -225,6 +227,15 @@ export class WorkBrowser {
     this.applyVisibility()
   }
 
+  /**
+   * 折叠态：窗口缩成右缘小角标时隐藏全部原生视图（角标是渲染层 DOM，
+   * 原生视图在它之上会整块盖住）；展开后恢复活动标签的显示。
+   */
+  setFolded(folded: boolean): void {
+    this.foldedHidden = Boolean(folded)
+    this.applyVisibility()
+  }
+
   /** 供 work:ready / 渲染面重载后补一次状态 */
   sendState(): void {
     this.emitState()
@@ -324,6 +335,7 @@ export class WorkBrowser {
   private applyVisibility(): void {
     const windowReady =
       !this.overlayOpen &&
+      !this.foldedHidden &&
       !this.win.isDestroyed() &&
       this.win.isVisible() &&
       !this.win.isMinimized()

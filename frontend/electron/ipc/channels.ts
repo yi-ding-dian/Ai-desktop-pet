@@ -270,8 +270,15 @@ export const IPC_WORK = {
   OPEN: 'work:open',
   /** 工作窗 → 主：隐藏（不销毁，保留记录） */
   HIDE: 'work:hide',
-  /** 工作窗 → 主：最小化 */
+  /**
+   * 工作窗 → 主：最小化 = 折叠到屏幕右缘中间的小角标（2026-10-20 用户需求：
+   * 像黑板折叠那样吸附在窗口最右侧中间，不进任务栏/桌面图标）。
+   */
   MINIMIZE: 'work:minimize',
+  /** 工作窗 → 主：展开（点击折叠角标恢复原窗口） */
+  UNFOLD: 'work:unfold',
+  /** 主 → 工作窗：折叠态变化（true = 已折叠成角标，渲染侧换角标 UI） */
+  FOLDED: 'work:folded',
   /** 工作窗 → 主：渲染就绪（主进程在此之前缓冲事件） */
   READY: 'work:ready',
   /** 工作窗 → 主：发送（invoke → WorkSendResultPayload） */
@@ -1062,8 +1069,12 @@ export interface PetBridgeApi {
     open(): void
     /** 工作窗：隐藏（保留记录与滚动位置） */
     hide(): void
-    /** 工作窗：最小化 */
+    /** 工作窗：最小化 = 折叠到屏幕右缘中间的角标（不进任务栏） */
     minimize(): void
+    /** 工作窗：展开（点击折叠角标恢复原窗口） */
+    unfold(): void
+    /** 工作窗：订阅折叠态变化；返回取消订阅函数 */
+    onFolded(cb: (folded: boolean) => void): () => void
     /** 工作窗：渲染就绪 */
     ready(): void
     /** 工作窗：发送一条用户消息（invoke → 结果） */

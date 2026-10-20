@@ -40,8 +40,12 @@ export function Textarea({
       (Number.parseFloat(styles.borderTopWidth) || 0) +
       (Number.parseFloat(styles.borderBottomWidth) || 0)
     const max = lineHeight * maxRows + padding + border
-    element.style.height = `${Math.min(element.scrollHeight, max)}px`
-    element.style.overflowY = element.scrollHeight > max ? 'auto' : 'hidden'
+    // 空内容固定一行高（2026-10-20）：不依赖 scrollHeight——布局/字体尚未稳定时它可能
+    // 按父容器高度算成多行，导致空输入框一上来就是好几行高（工作模式输入框真机现象）。
+    const oneLine = lineHeight + padding + border
+    const content = value.length === 0 ? oneLine : Math.max(oneLine, element.scrollHeight)
+    element.style.height = `${Math.min(content, max)}px`
+    element.style.overflowY = content > max ? 'auto' : 'hidden'
   }, [value, autoGrow, maxRows])
 
   return (

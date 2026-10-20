@@ -540,6 +540,18 @@ const api: PetBridgeApi = {
       ipcRenderer.send(IPC_WORK.MINIMIZE)
     },
 
+    unfold(): void {
+      ipcRenderer.send(IPC_WORK.UNFOLD)
+    },
+
+    onFolded(cb: (folded: boolean) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, folded: boolean): void => cb(folded)
+      ipcRenderer.on(IPC_WORK.FOLDED, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.FOLDED, listener)
+      }
+    },
+
     ready(): void {
       ipcRenderer.send(IPC_WORK.READY)
     },

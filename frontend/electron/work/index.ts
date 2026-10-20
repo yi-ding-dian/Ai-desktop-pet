@@ -22,9 +22,10 @@ import {
   type WorkSendResultPayload
 } from '../ipc/channels'
 import { PET_WINDOW_SIZE, type Point, type Rect } from '../window'
-import { attachFrameless, framelessBounds } from '../window/frameless'
+import { attachFrameless, applyFramelessBounds, framelessBounds } from '../window/frameless'
 import { podiumPoint } from '../teaching/geometry'
 import { getTeachingMode } from '../teaching'
+import { linuxOnlyWindowOptions } from '../platform'
 import { runRelocateAnimation } from '../ball-animation'
 import { WorkBrowser } from './browser'
 
@@ -36,6 +37,20 @@ const WORK_DEFAULT_HEIGHT = 780
 const WORK_MIN_WIDTH = 560
 const WORK_MIN_HEIGHT = 520
 const WORK_EDGE_MARGIN = 10
+
+/**
+ * 折叠角标（2026-10-20 用户需求"像板书那样吸附在窗口最右侧中间"）：
+ * 尺寸/边距与教学黑板折叠态一致（24×140 贴屏幕右缘、垂直居中、右距 8）。
+ * 折叠 = 同一个窗口换尺寸/位置，不引入第三窗；工作窗常态 skipTaskbar
+ * （2026-10-20 用户定稿：任务栏不显示图标）。
+ */
+const WORK_FOLDED_WIDTH = 24
+const WORK_FOLDED_HEIGHT = 140
+const WORK_FOLDED_MARGIN_RIGHT = 8
+/** 折叠/展开窗口动画时长（ms；同黑板展开⇄折叠的观感节奏） */
+const WORK_FOLD_DURATION_MS = 180
+/** 动画帧间隔（ms，约 60fps） */
+const ANIM_FRAME_MS = 16
 
 /** 发送/历史请求的等待上限（ms）：宠物窗崩溃/重载时不让 invoke 永久挂起 */
 const REQUEST_TIMEOUT_MS = 8_000
@@ -55,6 +70,12 @@ let petWin: BrowserWindow | null = null
 let workReady = false
 /** 工作窗形态记忆（本次运行内沿用，与黑板一致） */
 let workRectOverride: Rect | null = null
+/**
+ * 折叠态（最小化 = 屏幕右缘中间的小角标，2026-10-20）：
+ * 折叠期间窗口仍在、对话镜像照常，点角标恢复。展开矩形记在 foldedRect。
+ */
+let folded = false
+let foldedRect: Rect | null = null
 /**
  * 进入工作模式前的宠物原位（关闭/最小化时回位目标；只记坐标，尺寸用
  * PET_WINDOW_SIZE——fractional DPI 下 getBounds 的宽高是舍入值）。
@@ -111,10 +132,12 @@ function sendToWork(channel: string, payload?: unknown): void {
   else workWin.webContents.send(channel, payload)
 }
 
-/** 工作窗是否正在使用（可见且未最小化）——宠物依附/自主行为抑制的依据；边缘动作也据此禁用 */
+/** 工作窗是否正在使用（可见、未最小化、未折叠）——宠物依附/自主行为抑制的依据；边缘动作也据此禁用 */
 export function workWindowActive(): boolean {
   const win = workWin
-  return win !== null && !win.isDestroyed() && win.isVisible() && !win.isMinimized()
+  return (
+    win !== null && !win.isDestroyed() && win.isVisible() && !win.isMinimized() && !folded
+  )
 }
 
 /**
@@ -243,6 +266,128 @@ function defaultWorkRect(): Rect {
   }
 }
 
+// ------------------------------------------------------------------ 折叠（最小化 = 右缘角标）
+
+/** 缓动：easeInOutQuad（与黑板折叠动画、宠物滑步同款的柔和起步/收尾） */
+function easeInOutQuad(t: number): number {
+  return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
+}
+
+/** 逐帧缓动窗口矩形：走 applyFramelessBounds（程序化写，不污染用户形态记忆） */
+function animateWorkBounds(win: BrowserWindow, to: Rect, durationMs: number): Promise<void> {
+  const from = framelessBounds(win)
+  const same =
+    from.x === to.x && from.y === to.y && from.width === to.width && from.height === to.height
+  if (durationMs <= 0 || same) {
+    applyFramelessBounds(win, to)
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    const t0 = Date.now()
+    const timer = setInterval(() => {
+      if (win.isDestroyed() || workWin !== win) {
+        clearInterval(timer)
+        resolve()
+        return
+      }
+      const p = Math.min(1, (Date.now() - t0) / durationMs)
+      const e = easeInOutQuad(p)
+      applyFramelessBounds(win, {
+        x: Math.round(from.x + (to.x - from.x) * e),
+        y: Math.round(from.y + (to.y - from.y) * e),
+        width: Math.round(from.width + (to.width - from.width) * e),
+        height: Math.round(from.height + (to.height - from.height) * e)
+      })
+      if (p >= 1) {
+        clearInterval(timer)
+        resolve()
+      }
+    }, ANIM_FRAME_MS)
+  })
+}
+
+/** 折叠角标矩形：工作区右缘、垂直居中（参数与教学黑板 foldedBounds 一致） */
+function foldedWorkBounds(wa: Rect): Rect {
+  return {
+    x: wa.x + wa.width - WORK_FOLDED_WIDTH - WORK_FOLDED_MARGIN_RIGHT,
+    y: wa.y + Math.round((wa.height - WORK_FOLDED_HEIGHT) / 2),
+    width: WORK_FOLDED_WIDTH,
+    height: WORK_FOLDED_HEIGHT
+  }
+}
+
+/** 展开矩形夹进工作区（换显示器/窗口曾被拖出屏时兜底） */
+function clampWorkRect(rect: Rect, wa: Rect): Rect {
+  const width = Math.min(Math.max(rect.width, WORK_MIN_WIDTH), wa.width)
+  const height = Math.min(Math.max(rect.height, WORK_MIN_HEIGHT), wa.height)
+  return {
+    x: Math.min(Math.max(rect.x, wa.x), wa.x + wa.width - width),
+    y: Math.min(Math.max(rect.y, wa.y), wa.y + wa.height - height),
+    width,
+    height
+  }
+}
+
+/**
+ * 最小化 = 折叠到屏幕右缘中间的小角标（用户需求：像板书那样，不要桌面/任务栏图标）。
+ * 语义与最小化一致：宠物滑步回原位、工作窗退出活跃态（宠物恢复输入框与自主行为）；
+ * 窗口不 minimize，而是缓动成 24×140 角标：折叠期间置顶（工作窗常态 skipTaskbar，
+ * 本来就没有任务栏图标），点角标恢复。
+ */
+function foldWork(): void {
+  const win = workWin
+  if (win === null || win.isDestroyed() || folded) return
+  folded = true
+  foldedRect = framelessBounds(win)
+  console.log(`[work] 最小化 → 折叠为屏幕右缘角标（展开矩形 ${foldedRect.x},${foldedRect.y}）`)
+  workBrowser?.setFolded(true)
+  sendToWork(IPC_WORK.FOLDED, true)
+  returnPetHome()
+  notifyPresence(true) // open=true；active=false（折叠不算活跃，宠物面恢复常态）
+  win.setAlwaysOnTop(true)
+  const wa = screen.getDisplayMatching(foldedRect).workArea
+  void animateWorkBounds(win, foldedWorkBounds(wa), WORK_FOLD_DURATION_MS)
+}
+
+/** 展开：角标 → 折叠前的窗口矩形；宠物重新依附到工作窗左侧 */
+function unfoldWork(): void {
+  const win = workWin
+  if (win === null || win.isDestroyed() || !folded) return
+  folded = false
+  const target = foldedRect ?? workRectOverride ?? defaultWorkRect()
+  foldedRect = null
+  console.log('[work] 点击折叠角标 → 展开工作窗')
+  workBrowser?.setFolded(false)
+  sendToWork(IPC_WORK.FOLDED, false)
+  win.setAlwaysOnTop(false)
+  win.focus()
+  const wa = screen.getDisplayMatching(target).workArea
+  void animateWorkBounds(win, clampWorkRect(target, wa), WORK_FOLD_DURATION_MS).then(() => {
+    if (workWin !== win || win.isDestroyed()) return
+    notifyPresence(true)
+    placePet(framelessBounds(win))
+  })
+}
+
+/**
+ * 清掉折叠态（隐藏/销毁/退出）：不播动画，直接复位窗口属性与渲染态。
+ * 隐藏时先把窗口矩形还原成展开矩形——否则下次 show 会以 24×140 的小条出现。
+ */
+function resetFoldedState(win: BrowserWindow, restoreBounds: boolean): void {
+  if (!folded) return
+  folded = false
+  const rect = foldedRect
+  foldedRect = null
+  workBrowser?.setFolded(false)
+  sendToWork(IPC_WORK.FOLDED, false)
+  if (win.isDestroyed()) return
+  win.setAlwaysOnTop(false)
+  if (restoreBounds && rect !== null) {
+    const wa = screen.getDisplayMatching(rect).workArea
+    applyFramelessBounds(win, clampWorkRect(rect, wa))
+  }
+}
+
 // ------------------------------------------------------------------ 窗口生命周期
 
 function createWorkWindow(): BrowserWindow {
@@ -263,7 +408,11 @@ function createWorkWindow(): BrowserWindow {
     resizable: false,
     movable: false,
     alwaysOnTop: false,
-    skipTaskbar: false,
+    // 2026-10-20 用户定稿：工作窗不进任务栏/桌面图标（入口在宠物右键菜单/托盘；
+    // 最小化后还有右缘折叠角标），与教学黑板同款 skipTaskbar。
+    // Linux/DDE 上仅 skipTaskbar 不够，还要 type:'toolbar'（与黑板/气泡窗同法，防 Dock 占格）。
+    skipTaskbar: true,
+    ...linuxOnlyWindowOptions(),
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
@@ -321,6 +470,8 @@ function createWorkWindow(): BrowserWindow {
   })
   win.on('hide', () => {
     if (workWin !== win || quitting) return
+    // 折叠态被隐藏（托盘/外部调用）：先复位折叠并还原展开矩形，下次打开才是正常窗口
+    resetFoldedState(win, true)
     notifyPresence(true)
     returnPetHome()
   })
@@ -345,6 +496,7 @@ function createWorkWindow(): BrowserWindow {
   win.on('closed', () => {
     const tracked = workWin === win
     if (!tracked) return
+    resetFoldedState(win, false)
     workWin = null
     workReady = false
     eventBuffer = []
@@ -399,10 +551,15 @@ function loadWorkPage(win: BrowserWindow): void {
   void win.loadFile(join(__dirname, '../renderer/work.html'))
 }
 
-/** 打开工作窗（单例：已存在则还原 + 聚焦） */
+/** 打开工作窗（单例：已存在则还原 + 聚焦；折叠态则先展开回原窗口） */
 export function openWork(): void {
   const existing = workWin
   if (existing !== null && !existing.isDestroyed()) {
+    if (folded) {
+      console.log('[work] 折叠态下请求打开 → 展开回原窗口')
+      unfoldWork()
+      return
+    }
     // 本来就在显示：show() 不会再触发依附，需要手动补（用户可能已把宠物拖走）
     const alreadyVisible = existing.isVisible() && !existing.isMinimized()
     if (existing.isMinimized()) existing.restore()
@@ -421,6 +578,8 @@ export function destroyWork(): void {
   quitting = true
   const win = workWin
   workWin = null
+  folded = false
+  foldedRect = null
   workReady = false
   eventBuffer = []
   workBrowser?.destroy()
@@ -527,7 +686,12 @@ export function initWork(pet: BrowserWindow): void {
 
   ipcMain.on(IPC_WORK.MINIMIZE, (event) => {
     if (!isWorkSender(event.sender)) return
-    workWin?.minimize()
+    foldWork()
+  })
+
+  ipcMain.on(IPC_WORK.UNFOLD, (event) => {
+    if (!isWorkSender(event.sender)) return
+    unfoldWork()
   })
 
   ipcMain.on(IPC_WORK.READY, (event) => {
@@ -538,6 +702,8 @@ export function initWork(pet: BrowserWindow): void {
     for (const item of buffered) sendToWork(IPC_WORK.EVENT, item)
     // 渲染面重载后浏览器标签状态需要补发（视图仍在主进程活着）
     workBrowser?.sendState()
+    // 折叠态也要补发：页面重载时角标 UI 才不会丢
+    sendToWork(IPC_WORK.FOLDED, folded)
     console.log(`[work] 工作窗就绪，回放缓冲事件 ${buffered.length} 条`)
   })
 

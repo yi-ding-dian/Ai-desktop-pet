@@ -238,7 +238,7 @@ export default function Composer({
           className="work-input"
           value={input}
           autoGrow
-          maxRows={6}
+          maxRows={10}
           rows={1}
           placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"
           aria-label="工作模式输入"
