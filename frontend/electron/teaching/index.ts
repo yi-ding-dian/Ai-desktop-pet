@@ -36,6 +36,7 @@ import {
   BOARD_MIN_HEIGHT,
   BOARD_MIN_WIDTH,
   PODIUM_PET_SIZE,
+  PODIUM_PET_HEIGHT,
   clampBoardRect,
   expandedBounds,
   foldedBounds,
@@ -195,7 +196,7 @@ function glidePetToPodium(boardRect: Rect): void {
   const p = podiumPoint(boardRect)
   void runRelocateAnimation(
     pet,
-    { x: p.x, y: p.y, width: PODIUM_PET_SIZE, height: PODIUM_PET_SIZE },
+    { x: p.x, y: p.y, width: PODIUM_PET_SIZE, height: PODIUM_PET_HEIGHT },
     { forceGlide: true }
   )
 }

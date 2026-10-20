@@ -14,7 +14,7 @@ import type { Rect, Size } from '../window'
  * §7.6.6 定稿量化）；取"嘴压底边线"为基准、区间中部为默认值。
  * **验收时对照参考图微调本值即可**（±10px：调大 → 宠物整体更靠上/头更缩进窗内）。
  */
-export const PET_MOUTH_Y = 138
+export const PET_MOUTH_Y = 104
 
 /**
  * 向导位（宠物窗口目标矩形，屏幕坐标）：

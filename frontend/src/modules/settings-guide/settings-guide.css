@@ -19,9 +19,11 @@
 
 .settings-guide-bubble {
   position: absolute;
-  left: 270px;
-  top: 104px;
-  max-width: 164px;
+  /* 2026-10-20 窗口 270×240：兔子视觉约 x15–255 / y0–208，右侧/上方空间有限，
+     气泡放窗口左上、兔耳上方（尾巴仍指向兔头）。真机可再微调。 */
+  left: 10px;
+  top: 4px;
+  max-width: 150px;
   padding: 7px 10px;
   border-radius: 11px 11px 11px 5px; /* 左下角收窄，衔接尾巴 */
   background: var(--bubble-bg);

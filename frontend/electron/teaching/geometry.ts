@@ -9,7 +9,7 @@
  *   拖拽态（2026-10-18）：四边/四角可拖改尺寸（只动被拖的边），标题栏可拖移位；
  *   折叠态：24 × 140 贴右缘（右距 8），垂直居中；
  *   屏外态：整窗落在 wa 右缘之外（滑入起点 / 滑出终点）；
- *   讲台位：宠物窗口（400×400）到工作区左下角——左距 40、下距 40。
+ *   讲台位：宠物窗口（280×300）到工作区左下角——左距 40、下距 40。
  */
 import type { Point, Rect } from '../window'
 import {
@@ -39,10 +39,11 @@ export const BOARD_FOLDED_WIDTH = 24
 export const BOARD_FOLDED_HEIGHT = 140
 /** 折叠态：距工作区右缘（px；贴边） */
 export const BOARD_FOLDED_MARGIN_RIGHT = 8
-/** 讲台位：宠物窗口逻辑尺寸（400×400） */
-export const PODIUM_PET_SIZE = 400
-/** 讲台位：兔子**图像**右缘距窗口右缘的窗内偏移（px）——视觉范围 x 65–335 实测（照 bubble 域注释） */
-export const PODIUM_IMG_RIGHT_INSET = 65
+/** 讲台位：宠物窗口逻辑尺寸（2026-10-20 为 270×240，与 PET_WINDOW_SIZE 同步） */
+export const PODIUM_PET_SIZE = 270
+export const PODIUM_PET_HEIGHT = 240
+/** 讲台位：兔子**图像**右缘距窗口右缘的窗内偏移（px）——宽度 270 时视觉范围约 x 15–270 */
+export const PODIUM_IMG_RIGHT_INSET = 0
 /**
  * 讲台位：兔子**图像**右缘与黑板左缘之间的小缝（px；2026-10-16 用户两轮截图定稿"再近一点"：
  * 按图像边界贴板——窗口右缘会与黑板轻微重叠 ~57px，重叠区为透明+空气让路自动穿透，无碍）。
@@ -55,7 +56,7 @@ export const PODIUM_GAP = 8
  * moveTo 夹在 y=680、脚=680+225=905，与截图的 ~75px 缺口自洽 → 脚线 225。
  * 换兔子形象/姿态时按同样方法校准（看 [teaching] 状态广播的 podium 值与板底之差）。
  */
-export const PODIUM_FOOT_LINE_Y = 225
+export const PODIUM_FOOT_LINE_Y = 191
 
 /**
  * 展开态**默认**矩形（工作区 → 屏幕坐标；用户拖过的形态记忆由调用方优先，

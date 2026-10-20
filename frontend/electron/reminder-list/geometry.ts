@@ -18,7 +18,7 @@ export const LIST_GAP = 8
  * 贴“实际兔子轮廓”而不是 App 的保守交互矩形（x 65–335 比兔子本体宽），否则列表离兔子太远。
  * 右侧目标：窗右缘往内 140px + 8px 间隙；左侧回退对称使用。
  */
-export const PET_VISUAL_INSET_X = 140
+export const PET_VISUAL_INSET_X = 80
 /** 与工作区边缘的最小边距（px） */
 export const EDGE_MARGIN = 8
 /** 完整面板最小/最大宽度（px）：头部“铃铛+提醒+时钟+计数”至少要 140，正文最多约 10 个汉字 */
@@ -42,11 +42,11 @@ export const BELL_ONLY_CENTER_ABOVE_INPUT = 60
 /** 紧凑条判定：某一侧至少要有完整面板最小宽度才尝试完整面板 */
 const FULL_MIN_SPACE = 140
 /**
- * 聊天输入框顶边在宠物窗内的 y（px）：styles.css 的 .chat-panel bottom 118 + 输入行高 32，
- * 400 - 118 - 32 = 250。列表"踩着输入框上面"——底边固定在它上方。
+ * 聊天输入框顶边在宠物窗内的 y（px）：styles.css 的 .chat-panel bottom 0 + 输入行高 32，
+ * 240 - 0 - 32 = 208。列表"踩着输入框上面"——底边固定在它上方。
  * 改聊天面板位置/高度时同步这里。
  */
-const PET_CHAT_INPUT_TOP_Y = 250
+const PET_CHAT_INPUT_TOP_Y = 208
 /** 列表底边与输入框顶边之间的间隙（px）：踩着上面但不贴死 */
 const LIST_INPUT_GAP = 12
 

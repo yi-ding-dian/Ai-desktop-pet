@@ -28,8 +28,8 @@ interface TeachingBubblesProps {
 /** 最多可见条数（设计 §7.5.1：最多 4 条 + "+N" 省略；实际还受耳上空间动态限制） */
 const MAX_VISIBLE = 4
 
-/** 宠物窗口逻辑尺寸（px）——空间容量计算用（窗口固定 400×400，同各域注释） */
-const WINDOW_H = 400
+/** 宠物窗口逻辑尺寸（px）——空间容量计算用（窗口 270×240，2026-10-20） */
+const WINDOW_H = 240
 /** 单条高度与堆叠间距（px；与 styles.css 的 .teaching-bubble height:30 / gap:4 对齐——改则同步） */
 const ITEM_H = 30
 const GAP = 4
@@ -38,7 +38,7 @@ const GAP = 4
  * 2026-10-16 截图量取，样式在 styles.css）；顶部再留 TOP_SAFE 安全边距。
  * 容量由空间推算（当前 ≈2 条 + "+N"）——换兔子形象/窗口尺寸时同步三个常量。
  */
-const BUBBLES_BOTTOM = 312
+const BUBBLES_BOTTOM = 152
 const TOP_SAFE = 6
 /** 耳上空间能容纳的条数（至少 1——保证最新一条永远可见） */
 const FIT_COUNT = Math.max(
