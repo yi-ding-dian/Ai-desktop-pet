@@ -22,6 +22,8 @@ import { playPetReaction, setPetState } from '../controller'
 import { isTeachingMode } from '../../teaching/state'
 // 工作模式本地镜像（2026-10-18；同样零依赖，避免 pet ↔ work 循环依赖）
 import { isWorkModeActive } from '../../work/state'
+// 贴边吸附保持（2026-10-20）：吸附后不执行自主行为，避免被 walk 带走
+import { isPetEdgeSnapLocked } from '../edge-state'
 
 /** 行为执行状态（供状态栏展示：名称 + 参数摘要） */
 export interface BehaviorStatus {
@@ -112,7 +114,9 @@ export class BehaviorExecutor {
       ? '教学模式'
       : isWorkModeActive()
         ? '工作模式'
-        : null
+        : isPetEdgeSnapLocked()
+          ? '贴边吸附'
+          : null
     if (quietMode !== null) {
       const sent = this.client.send('behavior_done', { id: data.id, interrupted: true })
       devLog(

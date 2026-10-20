@@ -47,6 +47,7 @@ import {
   isPixelHitTestActive,
   type BehaviorStatus
 } from './modules/pet'
+import { lockPetEdgeSnap } from './modules/pet/edge-state'
 import {
   setupTeachingPetSide,
   subscribeTeachingState,
@@ -86,6 +87,13 @@ const INITIAL_DEBUG_STATE: WindowDebugState = {
  * 与 PetView 的点击判定（TAP_MOVE_THRESHOLD=6）同值——"轻点=摸头，拖动=让路"语义互斥。
  */
 const TEACHING_DRAG_NOTIFY_PX = 6
+
+/**
+ * 进入拖拽的位移阈值（px，2026-10-20）：pointerdown 只记录起点，位移超过该值才标记
+ * `data-dragging` 并开始移动窗口。否则纯点击（摸头）也会被渲染器当成拖拽，
+ * 窗口位于屏幕下半部时立刻触发底部预挂，宠物"一点就滑到底部"。
+ */
+const DRAG_START_THRESHOLD_PX = 6
 
 /** 宠物状态机 → 中文展示（protocol.py StateData 全量取值） */
 const STATE_LABEL: Record<PetState, string> = {
@@ -141,6 +149,8 @@ export default function App(): ReactElement {
   const [guideActive, setGuideActive] = useState(false)
   /** 工作模式进行中（2026-10-18：工作窗可见 → 宠物输入框收起 + 回复气泡不显示） */
   const [workActive, setWorkActive] = useState(isWorkModeActive)
+  /** 窗口贴边（2026-10-20：悬挂/探头动作接管时收起输入条，画面只留宠物） */
+  const [edgeAttached, setEdgeAttached] = useState(false)
   const hitboxRef = useRef<HTMLDivElement | null>(null)
   const statusBarRef = useRef<HTMLDivElement | null>(null)
   const chatPanelRef = useRef<HTMLDivElement | null>(null)
@@ -493,6 +503,8 @@ export default function App(): ReactElement {
     /** 教学模式折叠判定：本次拖拽的起点（screen 坐标）与"已通知折叠"标志（每次按下重置） */
     let teachingDragOrigin: { x: number; y: number } | null = null
     let teachingDragNotified = false
+    /** 是否已越过位移阈值、真正进入拖拽（点击/微动不算） */
+    let dragMarked = false
 
     const flush = (): void => {
       rafId = 0
@@ -511,6 +523,7 @@ export default function App(): ReactElement {
       // 改为 pointermove 位移超过 TEACHING_DRAG_NOTIFY_PX 才通知一次（见 handlePointerMove）
       teachingDragOrigin = { x: e.screenX, y: e.screenY }
       teachingDragNotified = false
+      dragMarked = false
       draggingRef.current = true
       el.setPointerCapture(e.pointerId)
       console.log('[pet] drag start')
@@ -520,6 +533,15 @@ export default function App(): ReactElement {
 
     const handlePointerMove = (e: PointerEvent): void => {
       if (!draggingRef.current) return
+      // 位移未超过阈值：只是点击/手抖，不进入拖拽（不标记 data-dragging、不移动窗口）
+      if (!dragMarked) {
+        const sx = teachingDragOrigin?.x ?? e.screenX
+        const sy = teachingDragOrigin?.y ?? e.screenY
+        if (Math.hypot(e.screenX - sx, e.screenY - sy) < DRAG_START_THRESHOLD_PX) return
+        dragMarked = true
+        // 吸附特效/预挂只在真正拖拽中生效
+        el.dataset.dragging = 'true'
+      }
       // 教学模式中"拖动=让路"：位移超过阈值才通知一次折叠（轻点摸头不会触发）
       if (
         !teachingDragNotified &&
@@ -541,6 +563,8 @@ export default function App(): ReactElement {
     const handlePointerUp = (e: PointerEvent): void => {
       if (!draggingRef.current) return
       draggingRef.current = false
+      dragMarked = false
+      delete el.dataset.dragging
       teachingDragOrigin = null
       // 最后对齐到抬起位置，再结束拖拽
       bridge.window.dragMove({ x: e.screenX, y: e.screenY })
@@ -550,6 +574,8 @@ export default function App(): ReactElement {
       if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
       console.log('[pet] drag end')
       bridge.window.endDrag()
+      // 贴边松手 → 吸附保持：自主行为全部跳过，避免吸附后又被 walk 带走
+      lockPetEdgeSnap()
       // 拖拽结束时不改穿透：光标仍在宠物上 → 保持接管；移出时 mousemove 逻辑会恢复
     }
 
@@ -576,10 +602,17 @@ export default function App(): ReactElement {
     let rafId = 0
 
     const doReport = (): void => {
+      // 贴边动作接管时收起输入条：画面只留悬挂/探头的宠物（dataset 由渲染器写入 hitbox 宿主）。
+      // **拖拽中不收起**——底部预挂时宠物滑到窗口下方，用户仍要看到输入框。
+      const edge = hitboxRef.current?.dataset.edge ?? 'none'
+      const dragging = hitboxRef.current?.dataset.dragging === 'true'
+      setEdgeAttached(edge !== 'none' && !dragging)
       // 宠物视觉包围盒（窗口坐标）：X11 setShape 会同时裁剪可见区域（verify-report 已知限制）——
       // 形状矩形必须 ≥ 形象渲染范围（含 SVG 表情符号如头顶 Zzz/"？"），否则形象被裁。
       // 调整形象尺寸 / 表情元素位置时，同步调整此值。
-      const rects: Rect[] = [{ x: 65, y: 8, width: 270, height: 340 }]
+      // 宠物视觉包围盒（窗口坐标，2026-10-20 窗口 270×240）：覆盖画布 240×208（x15–255，top0）
+      // 及表情/耳朵余量；输入框由 chatPanel 的 getBoundingClientRect 单独上报。
+      const rects: Rect[] = [{ x: 8, y: 0, width: 254, height: 208 }]
       for (const el of [
         hitboxRef.current,
         chatPanelRef.current,
@@ -625,9 +658,19 @@ export default function App(): ReactElement {
       observers.push(ro)
     }
     window.addEventListener('resize', report)
+    // 贴边动作会移动 hitbox 宿主（data-edge 变化，尺寸不变）：ResizeObserver 不触发，
+    // 必须补发一次形状上报，否则新位置的模型收不到鼠标事件（X11 setShape 裁剪）
+    const edgeObserver = new MutationObserver(report)
+    if (hitboxRef.current) {
+      edgeObserver.observe(hitboxRef.current, {
+        attributes: true,
+        attributeFilter: ['data-edge', 'data-dragging']
+      })
+    }
     return () => {
       if (rafId) cancelAnimationFrame(rafId)
       observers.forEach((ro) => ro.disconnect())
+      edgeObserver.disconnect()
       window.removeEventListener('resize', report)
     }
   }, [debugBarVisible, teachingExpanded, teachingState.mode, guideActive, workActive])
@@ -654,6 +697,9 @@ export default function App(): ReactElement {
         className={`pet-canvas-mount${debug.hitboxVisible ? ' debug' : ''}`}
         data-testid="pet-hitbox"
       >
+        {/* 吸附特效（2026-10-20）：拖拽进入贴边范围时，沿屏幕边显示呼吸光带；
+            松手后主进程缓动吸附到工作区边。方向/显隐由父级 data-edge + data-dragging 的 CSS 控制 */}
+        <div className="edge-snap-glow" aria-hidden="true" />
         <PetView client={wsClient} />
       </div>
 
@@ -663,7 +709,7 @@ export default function App(): ReactElement {
       <ChatPanel
         client={wsClient}
         containerRef={chatPanelRef}
-        hidden={teachingState.mode === 'teaching' || guideActive || workActive}
+        hidden={teachingState.mode === 'teaching' || guideActive || workActive || edgeAttached}
       />
 
       {/* 教学模式：头顶问题气泡（课堂目录，最多 4 条 + "+N"；点击 → 黑板跳段）。

@@ -13,7 +13,7 @@ import {
   powerMonitor,
   shell
 } from 'electron'
-import { IPC, IPC_EVENTS, type WindowDebugState } from './channels'
+import { IPC, IPC_EVENTS, type PetWindowEdge, type WindowDebugState } from './channels'
 import { backendManager } from '../backend-process'
 import { openConfirmBubble } from '../bubble'
 import {
@@ -28,11 +28,40 @@ import type { Point, Rect, WindowCapability } from '../window'
 /** 窗口几何推送的 debounce 时长（ms）：拖拽/缓动期间大量 move 事件只推一次最终值 */
 const GEOMETRY_PUSH_DEBOUNCE_MS = 1000
 
+/**
+ * 贴边判定距离（DIP，2026-10-20）：**窗口边**距工作区边 ≤ 该值即算贴边。
+ * 为什么不是按宠物模型边算：真机实测 X11/DDE 不允许窗口移出屏幕，窗口贴边时
+ * 站姿宠物在窗口中间、离屏幕边约 164px，永远到不了"半个身位"。
+ * 改为窗口贴边附近（8px）触发——拖拽中渲染器会把画布滑到窗口边，
+ * 站姿宠物此时离屏幕边约 62~70px（≈半个身位），松手吸附后再变身边缘模型。
+ */
+const EDGE_TRIGGER_DISTANCE = 8
+
+/**
+ * 底部拖拽预挂距离（DIP，2026-10-20 窗口 270×240 后更新）：窗口底部空白约 32px
+ * （240 − 画布底 208，输入框占 208–240）。窗口底进入屏幕底 40px 内时预挂。
+ */
+const EDGE_BOTTOM_PREVIEW_DISTANCE = 40
+
+/**
+ * 底部"脚碰底"吸附距离：窗口底距屏幕底 ≤4px 时，画布已挂底、宠物脚距屏幕底约 15px，
+ * 视觉上就是脚碰到屏幕底——这时才出光带、松手才吸附趴睡。
+ */
+const EDGE_BOTTOM_SNAP_DISTANCE = 4
+
+/** 窗口边与工作区边视为重合的容差（吸附完成后保持贴边状态用） */
+const EDGE_SNAP_TOLERANCE = 2
+
+/** 松手吸附的缓动时长（ms）：短促吸附，不拖泥带水 */
+const SNAP_DURATION_MS = 160
+
 export interface IpcContext {
   capability: WindowCapability
   window: BrowserWindow
   /** 调试态：hitbox 边框显示开关（由 main 的调试快捷键维护） */
   getHitboxVisible(): boolean
+  /** 教学/工作模式：宠物固定在讲台/依附位，边缘动作应禁用（由 main 注入，避免 ipc ↔ teaching/work 循环依赖） */
+  isQuietMode(): boolean
 }
 
 /** 构建窗口调试状态快照 */
@@ -75,7 +104,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   })
 
   ipcMain.on(IPC.WINDOW_DRAG_START, (_event, cursor: Point) => {
+    // 吸附缓动还在跑时用户又抓起宠物：取消 moveTo，避免与拖拽抢窗口控制权
+    cap.cancelMove()
+    // 拖起宠物 = 解除吸附保持；站姿宠物框重新参与判定（吸附状态在拖拽中不再适用）
+    snapping = false
+    snappedEdge = 'none'
+    dragging = true
     cap.startDrag(cursor)
+    pushWindowEdge()
   })
 
   ipcMain.on(IPC.WINDOW_DRAG_MOVE, (_event, cursor: Point) => {
@@ -84,6 +120,11 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.on(IPC.WINDOW_DRAG_END, () => {
     cap.endDrag()
+    // 先退出拖拽预挂阈值（底部回到"脚碰底"判定），再决定吸附/回中
+    dragging = false
+    snapToEdge()
+    // 没碰到屏幕底（预挂区里松手）→ 清掉边缘，宠物和输入框恢复原位
+    if (snappedEdge === 'none') pushWindowEdge()
   })
 
   ipcMain.on(IPC.WINDOW_REPORT_INTERACTIVE_RECTS, (_event, rects: Rect[]) => {
@@ -273,6 +314,123 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   }
   ctx.window.on('move', scheduleGeometryPush)
   ctx.window.on('resize', scheduleGeometryPush)
+
+  // 窗口贴边状态 → 实时推送（2026-10-20）：判定按**宠物模型**边缘（PET_VISUAL_BOX），
+  // 而不是 400×400 的窗口边——窗口比宠物大，按窗口边会在宠物离屏幕边还有一个多身位时提前触发。
+  // 仅在状态变化时发，避免拖拽期间每帧 IPC 噪声；顶部优先（角落同时贴顶/贴边时显示悬挂）。
+  let lastEdge: PetWindowEdge = 'none'
+  let lastNear = false
+  /** 已吸附边缘：窗口贴边后画布已挂边、站姿宠物框不再适用，保持该状态直到窗口离开 */
+  let snappedEdge: PetWindowEdge = 'none'
+  /** 吸附缓动进行中：期间保持 snappedEdge，避免 move 事件中途把状态清掉 */
+  let snapping = false
+  /** 用户拖拽中：底部预挂（160px）只在拖拽阶段生效，松手后回到脚碰底判定 */
+  let dragging = false
+
+  /** 窗口是否仍贴在指定边上（吸附保持判定；必须按同一方向判断，否则会因其它边贴边而误保持） */
+  function windowAtEdge(edge: PetWindowEdge): boolean {
+    const b = ctx.window.getBounds()
+    const wa = cap.getWorkArea()
+    switch (edge) {
+      case 'top':
+        return Math.abs(b.y - wa.y) <= EDGE_SNAP_TOLERANCE
+      case 'left':
+        return Math.abs(b.x - wa.x) <= EDGE_SNAP_TOLERANCE
+      case 'right':
+        return Math.abs(b.x + b.width - (wa.x + wa.width)) <= EDGE_SNAP_TOLERANCE
+      case 'bottom':
+        return Math.abs(b.y + b.height - (wa.y + wa.height)) <= EDGE_SNAP_TOLERANCE
+      default:
+        return false
+    }
+  }
+  function computeWindowEdge(): PetWindowEdge {
+    // 教学/工作模式：宠物固定在讲台位/工作窗左侧，禁用边缘动作
+    // （讲台位窗口底会越过工作区底，不禁用会被误判成底部趴睡）
+    if (ctx.isQuietMode()) return 'none'
+    if (snapping) return snappedEdge
+    if (snappedEdge !== 'none') {
+      if (windowAtEdge(snappedEdge)) return snappedEdge
+      snappedEdge = 'none'
+    }
+    const bounds = ctx.window.getBounds()
+    const wa = cap.getWorkArea()
+    // 窗口与工作区必须相交：完全拖出屏幕（如副屏间隙）时不触发
+    const overlapX = bounds.x + bounds.width > wa.x && bounds.x < wa.x + wa.width
+    const overlapY = bounds.y + bounds.height > wa.y && bounds.y < wa.y + wa.height
+    if (!overlapX || !overlapY) return 'none'
+    if (bounds.y <= wa.y + EDGE_TRIGGER_DISTANCE) return 'top'
+    if (bounds.x <= wa.x + EDGE_TRIGGER_DISTANCE) return 'left'
+    if (bounds.x + bounds.width >= wa.x + wa.width - EDGE_TRIGGER_DISTANCE) return 'right'
+    // 底部：拖拽中先预挂（160px 内滑画布，宠物脚跟着靠近屏幕底）；松手/静止时只认脚碰底（4px）
+    const bottomThreshold = dragging ? EDGE_BOTTOM_PREVIEW_DISTANCE : EDGE_BOTTOM_SNAP_DISTANCE
+    if (bounds.y + bounds.height >= wa.y + wa.height - bottomThreshold) return 'bottom'
+    return 'none'
+  }
+  /** 窗口是否真正贴住对应工作区边（≤8px）：区分"底部预挂跟随"与"可吸附" */
+  function computeNearSnap(edge: PetWindowEdge): boolean {
+    if (edge === 'none') return false
+    const b = ctx.window.getBounds()
+    const wa = cap.getWorkArea()
+    switch (edge) {
+      case 'top':
+        return b.y <= wa.y + EDGE_TRIGGER_DISTANCE
+      case 'left':
+        return b.x <= wa.x + EDGE_TRIGGER_DISTANCE
+      case 'right':
+        return b.x + b.width >= wa.x + wa.width - EDGE_TRIGGER_DISTANCE
+      case 'bottom':
+        return b.y + b.height >= wa.y + wa.height - EDGE_BOTTOM_SNAP_DISTANCE
+      default:
+        return false
+    }
+  }
+  function pushWindowEdge(): void {
+    if (ctx.window.isDestroyed()) return
+    const edge = computeWindowEdge()
+    const near = computeNearSnap(edge)
+    if (edge === lastEdge && near === lastNear) return
+    lastEdge = edge
+    lastNear = near
+    ctx.window.webContents.send(IPC_EVENTS.WINDOW_EDGE_CHANGED, { edge, near })
+  }
+  /**
+   * 拖拽松手吸附（2026-10-20）：判定按宠物模型边缘（半个身位），吸附目标是把**窗口**
+   * 贴到工作区边——吸附后画布挂边、边缘模型贴屏幕边（窗口比宠物大，窗口必须贴边）。
+   * 角落同时补 x/y；短缓动，不瞬跳。
+   */
+  function snapToEdge(): void {
+    if (ctx.window.isDestroyed()) return
+    const edge = computeWindowEdge()
+    if (edge === 'none') return
+    const bounds = ctx.window.getBounds()
+    const wa = cap.getWorkArea()
+    let x = bounds.x
+    let y = bounds.y
+    if (bounds.y <= wa.y + EDGE_TRIGGER_DISTANCE) {
+      y = wa.y
+    } else if (bounds.y + bounds.height >= wa.y + wa.height - EDGE_BOTTOM_SNAP_DISTANCE) {
+      // 底部趴睡：吸附到工作区底边（任务栏/Dock 上方）
+      y = wa.y + wa.height - bounds.height
+    }
+    if (bounds.x <= wa.x + EDGE_TRIGGER_DISTANCE) {
+      x = wa.x
+    } else if (bounds.x + bounds.width >= wa.x + wa.width - EDGE_TRIGGER_DISTANCE) {
+      x = wa.x + wa.width - bounds.width
+    }
+    snappedEdge = edge
+    if (x === bounds.x && y === bounds.y) {
+      pushWindowEdge()
+      return
+    }
+    snapping = true
+    void cap.moveTo(x, y, SNAP_DURATION_MS).then(() => {
+      snapping = false
+      if (!ctx.window.isDestroyed()) pushWindowEdge()
+    })
+  }
+  ctx.window.on('move', pushWindowEdge)
+  ctx.window.on('resize', pushWindowEdge)
 
   // 后端状态快照：渲染进程晚于 ready 订阅时补状态（否则会漏掉一次性 ready 事件）
   ipcMain.handle(IPC.BACKEND_GET_SNAPSHOT, () => backendManager.getSnapshot())

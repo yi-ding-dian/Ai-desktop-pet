@@ -111,8 +111,8 @@ function sendToWork(channel: string, payload?: unknown): void {
   else workWin.webContents.send(channel, payload)
 }
 
-/** 工作窗是否正在使用（可见且未最小化）——宠物依附/自主行为抑制的依据 */
-function workWindowActive(): boolean {
+/** 工作窗是否正在使用（可见且未最小化）——宠物依附/自主行为抑制的依据；边缘动作也据此禁用 */
+export function workWindowActive(): boolean {
   const win = workWin
   return win !== null && !win.isDestroyed() && win.isVisible() && !win.isMinimized()
 }

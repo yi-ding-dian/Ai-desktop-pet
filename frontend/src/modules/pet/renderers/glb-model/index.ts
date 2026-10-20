@@ -41,6 +41,8 @@ import { FACE_EX, FACE_EY_DOWN, FACE_ORIGIN, FACE_PROBE } from './face/config'
 import { FaceOverlay, type FaceFrame } from './face/overlay'
 import { EarsOverlay } from './ears/overlay'
 import { SleepController } from './sleep'
+import { EdgeController } from './edge'
+import type { PetWindowEdge } from '../../../../../electron/ipc/channels'
 import { disposeObjectResources } from './dispose-resources'
 
 /** dev 态日志（转发到主进程日志，便于无 devtools 验证）；生产构建自动剔除 */
@@ -145,6 +147,11 @@ export class GlbModelRenderer implements PetRenderer {
   /** 站姿模型宽度（睡姿模型按它归一化，避免切换前后体量跳变） */
   private standWidth = 0.73
 
+  // ---- 屏幕边缘动作子模块（独立目录 edge/；贴边时接管画面，睡姿优先） ----
+  private readonly edge = new EdgeController()
+  /** 站姿模型高度（边缘动作模型的画布可见范围按它推算） */
+  private standHeight = 1.08
+
   constructor() {
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.05, 50)
@@ -183,6 +190,10 @@ export class GlbModelRenderer implements PetRenderer {
     const stage = this.face.attach(container)
     // 睡姿子模块：Zzz 覆盖层挂到 stage（相对定位），模型资源懒加载
     this.sleep.attach({ scene: this.scene, overlayHost: stage })
+    // 边缘动作子模块：模型资源懒加载；画布贴边位置由 dataset.edge 控制（CSS）
+    this.edge.attach({ scene: this.scene, overlayHost: stage })
+    this.edgeHostElement()?.setAttribute('data-edge', 'none')
+    this.edgeHostElement()?.setAttribute('data-snap-edge', 'none')
     if (!this.webgl && !this.webglFailed) {
       try {
         this.webgl = new THREE.WebGLRenderer({
@@ -238,6 +249,9 @@ export class GlbModelRenderer implements PetRenderer {
     this.webgl?.domElement.remove()
     this.face.detach() // 移除表情层（stage+SVG；情绪/眨眼状态保留）
     this.sleep.detach() // 移除 Zzz 覆盖层；睡姿模型出场景但保留资源
+    this.edge.detach() // 边缘模型出场景但保留资源
+    this.edgeHostElement()?.setAttribute('data-edge', 'none')
+    this.edgeHostElement()?.setAttribute('data-snap-edge', 'none')
     this.container = null
     this.lastTs = null
   }
@@ -248,6 +262,7 @@ export class GlbModelRenderer implements PetRenderer {
     this.loadToken++ // 使在途加载回调失效
     this.face.dispose()
     this.sleep.dispose()
+    this.edge.dispose()
     this.disposeModelResources()
     if (this.webgl) {
       // 显式丢弃 WebGL 上下文（Chromium 有活跃上下文上限；HMR 反复重建防累积）
@@ -283,7 +298,14 @@ export class GlbModelRenderer implements PetRenderer {
     this.ears.setState(state)
     // 同步到睡姿子模块（模型就绪时切换趴睡；未就绪/失败则回退站姿睡觉）
     this.sleep.setState(state)
+    // 睡姿优先：睡着时边缘动作让位，醒来后若仍在边缘自动恢复
+    this.edge.setEnabled(state !== 'sleeping')
     devLog(`state -> ${state}`)
+  }
+
+  /** 主进程实时贴边状态（'top' | 'left' | 'right' | 'bottom' | 'none'；near = 已真正贴边） */
+  setEdge(edge: PetWindowEdge, near = true): void {
+    this.edge.setEdge(edge, near)
   }
 
   /**
@@ -380,6 +402,10 @@ export class GlbModelRenderer implements PetRenderer {
     // 睡姿模型懒加载（站姿模型已就绪，宽度可用于归一化；不阻塞当前渲染）
     this.standWidth = Math.max(0.01, box.max.x - box.min.x)
     this.sleep.preload(this.standWidth)
+    // 边缘动作模型懒加载；可见范围依赖相机参数（尺寸变化时 applySize 会补算）
+    this.standHeight = height
+    this.updateEdgeView()
+    this.edge.preload(this.standWidth)
     devLog(
       `renderer(glb-model) 模型就绪：高 ${height.toFixed(2)}，相机距离 ${dist.toFixed(2)}，` +
         `三角面 ${countTriangles(loaded)}`
@@ -413,12 +439,16 @@ export class GlbModelRenderer implements PetRenderer {
     // 行为引擎移动窗口时渲染进程可直接读出"真实步速"，保持 PetRenderer 接口零改动）
     this.measureMoveSpeed(ts)
     this.updatePose(dt)
-    // 睡姿子模块：过渡/腹部呼吸；接管画面时隐藏站姿模型与 2D 形变层
+    // 睡姿 / 边缘动作子模块：任一接管画面时隐藏站姿模型与 2D 形变层
     this.sleep.update(dt)
-    const sleepCovers = this.sleep.coversStand
-    if (this.root) this.root.visible = !sleepCovers
-    this.face.setSuppressed(sleepCovers)
-    this.ears.setSuppressed(sleepCovers)
+    // 拖拽中边缘动作只做光带提示、不接管画面（松手吸附到位后才切模型/移画布）
+    this.edge.setDragging(this.edgeHostElement()?.dataset.dragging === 'true')
+    this.edge.update(dt)
+    const covers = this.sleep.coversStand || this.edge.coversStand
+    if (this.root) this.root.visible = !covers
+    this.face.setSuppressed(covers)
+    this.ears.setSuppressed(covers)
+    this.syncEdgeHost()
     // 耳朵形变层：耳态阻尼/微行为（仅姿态变化时重写耳朵顶点；见 ears/overlay.ts）
     this.ears.update(dt)
     this.renderOnce()
@@ -536,6 +566,50 @@ export class GlbModelRenderer implements PetRenderer {
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     this.webgl.setSize(w, h, false)
+    // 画布尺寸变化 → 相机可见范围变化 → 边缘模型的贴边锚点需要重算
+    this.updateEdgeView()
+  }
+
+  /**
+   * 把相机参数交给边缘动作子模块：贴边锚点由各模型按**自身前表面深度**重算可见范围。
+   * 不能用 z=0 平面：模型有厚度，前表面投影更靠外，按 z=0 贴边会裁掉左眼/手/耳朵。
+   */
+  private updateEdgeView(): void {
+    if (this.loadState !== 'ready') return
+    this.edge.setView({
+      cameraDist: this.camera.position.z,
+      tanHalfFovY: Math.tan((CAMERA_FOV * DEG2RAD) / 2),
+      aspect: this.camera.aspect > 0 ? this.camera.aspect : 1,
+      lookY: this.standHeight * CAMERA_LOOK_AT_RATIO
+    })
+  }
+
+  /**
+   * 窗口定位宿主：渲染容器（.pet-view）的直接父级（.pet-canvas-mount）。
+   * 贴边要移动的是 hitbox 宿主本身，属性必须写在父级上才命中 CSS。
+   */
+  private edgeHostElement(): HTMLElement | null {
+    return this.container?.parentElement ?? this.container
+  }
+
+  /**
+   * 贴边宿主 dataset：
+   * - data-edge：画布挂到窗口哪条边。**拖拽中也生效**——触发时先把画布滑到窗口边，
+   *   站姿宠物因此提前贴近屏幕边（视觉上离边约半个身位），松手后再切换边缘模型；
+   * - data-snap-edge：拖拽中进入触发范围时显示光带（与画布同边，贴屏幕边）。
+   */
+  private syncEdgeHost(): void {
+    const el = this.edgeHostElement()
+    if (!el) return
+    const dragging = el.dataset.dragging === 'true'
+    const edge = dragging ? this.edge.targetEdge : this.edge.hostEdge
+    // 光带只在"真正贴边"时出现：底部预挂阶段宠物只是跟着窗口底走，不提示吸附
+    const snap = dragging && this.edge.nearSnapActive ? edge : 'none'
+    if (el.dataset.edge !== edge) {
+      el.dataset.edge = edge
+      devLog(`edge host -> ${edge}`)
+    }
+    if (el.dataset.snapEdge !== snap) el.dataset.snapEdge = snap
   }
 
   private renderOnce(): void {
@@ -570,6 +644,9 @@ export class GlbModelRenderer implements PetRenderer {
     // 睡姿接管时只对睡姿模型求交（站姿已隐藏，不能回退到它的射线结果）
     const sleepHit = this.sleep.hitTest(this.raycaster)
     if (sleepHit !== null) return sleepHit
+    // 边缘动作接管时同理：只对当前贴边模型求交
+    const edgeHit = this.edge.hitTest(this.raycaster)
+    if (edgeHit !== null) return edgeHit
     // 含耳朵形变后的顶点（EarsOverlay 直接改原几何；其已放宽 boundingSphere，见 ears/overlay.ts）
     return this.raycaster.intersectObject(root, true).length > 0
   }

@@ -16,6 +16,7 @@
  * 渲染循环由实现自持（rAF / Pixi ticker），**不依赖 React 重渲染**（设计文档 §5.3：渲染循环独立于 React）。
  */
 import type { PetState } from '../../../shared/protocol'
+import type { PetWindowEdge } from '../../../../electron/ipc/channels'
 
 /** 即时反应种类（手势/事件触发的短效动作，播放后自动结束，叠加在情绪表现之上） */
 export type PetReactionKind =
@@ -60,6 +61,13 @@ export interface PetRenderer {
 
   /** 播放一次即时反应（摸头等）；可重入（重复触发重置进度），播放后自动回到当前情绪姿态 */
   playReaction(kind: PetReactionKind): void
+
+  /**
+   * 窗口贴边状态（**可选实现**）：主进程在窗口移动时实时推送，
+   * 贴边时渲染器可切换专属动作模型（如悬挂/探头）。不支持的实现忽略即可。
+   * @param near 是否已真正贴住工作区边（底部预挂阶段为 false）
+   */
+  setEdge?(edge: PetWindowEdge, near?: boolean): void
 
   /** 彻底释放：卸载 + 释放内部资源，之后不可再用（React 卸载 / 切换渲染器时调用） */
   dispose(): void

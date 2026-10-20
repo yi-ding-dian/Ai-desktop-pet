@@ -42,7 +42,7 @@ body,
   position: absolute;
   left: 50%;
   margin-left: -120px; /* 容器半宽（240/2） */
-  top: 34px;
+  top: 0; /* 2026-10-20 窗口 270×240：画布 240×208 贴窗口顶，输入框贴底 */
   width: 240px;
   height: 208px;
   /* 无背景：保持透明，仅承载交互与动画 */
@@ -54,8 +54,123 @@ body,
   outline-offset: 4px;
 }
 
-/* 宠物视图：渲染器（SVG 部件动画 / 将来 Live2D 画布）的挂载点 */
+/* 贴边动作（2026-10-20）：把渲染画布/hitbox 挂到窗口对应边。
+   状态由渲染器写入 data-edge（none = 居中，无规则）；
+   边缘模型在画布内把切面/双手对齐画布边，因此画布贴窗口边 = 动作贴屏幕边。 */
+.pet-canvas-mount[data-edge='left'] {
+  left: 0;
+  margin-left: 0;
+}
+
+.pet-canvas-mount[data-edge='right'] {
+  left: auto;
+  right: 0;
+  margin-left: 0;
+}
+
+.pet-canvas-mount[data-edge='top'] {
+  top: 0;
+}
+
+.pet-canvas-mount[data-edge='bottom'] {
+  top: auto;
+  bottom: 0;
+}
+
+/* 吸附提示光带（2026-10-20 v3）：拖拽中触发贴边时，画布已滑到窗口边（data-edge 同步生效），
+   所以光带直接贴 hitbox/窗口边，也就是屏幕边附近。 */
+.edge-snap-glow {
+  position: absolute;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.pet-canvas-mount[data-snap-edge='left'] .edge-snap-glow {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 72px;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--ui-accent) 72%, transparent),
+    color-mix(in srgb, var(--ui-accent) 22%, transparent) 55%,
+    transparent
+  );
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ui-accent) 90%, transparent),
+    inset 0 0 20px color-mix(in srgb, var(--ui-accent) 35%, transparent);
+}
+
+.pet-canvas-mount[data-snap-edge='right'] .edge-snap-glow {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 72px;
+  background: linear-gradient(
+    to left,
+    color-mix(in srgb, var(--ui-accent) 72%, transparent),
+    color-mix(in srgb, var(--ui-accent) 22%, transparent) 55%,
+    transparent
+  );
+  box-shadow: inset -2px 0 0 color-mix(in srgb, var(--ui-accent) 90%, transparent),
+    inset 0 0 20px color-mix(in srgb, var(--ui-accent) 35%, transparent);
+}
+
+.pet-canvas-mount[data-snap-edge='top'] .edge-snap-glow {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 72px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--ui-accent) 72%, transparent),
+    color-mix(in srgb, var(--ui-accent) 22%, transparent) 55%,
+    transparent
+  );
+  box-shadow: inset 0 2px 0 color-mix(in srgb, var(--ui-accent) 90%, transparent),
+    inset 0 0 20px color-mix(in srgb, var(--ui-accent) 35%, transparent);
+}
+
+.pet-canvas-mount[data-snap-edge='bottom'] .edge-snap-glow {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 72px;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--ui-accent) 72%, transparent),
+    color-mix(in srgb, var(--ui-accent) 22%, transparent) 55%,
+    transparent
+  );
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--ui-accent) 90%, transparent),
+    inset 0 0 20px color-mix(in srgb, var(--ui-accent) 35%, transparent);
+}
+
+/* data-snap-edge 只在拖拽进入触发范围时写入；松手后由渲染器清回 none 并淡出 */
+.pet-canvas-mount[data-snap-edge='left'] .edge-snap-glow,
+.pet-canvas-mount[data-snap-edge='right'] .edge-snap-glow,
+.pet-canvas-mount[data-snap-edge='top'] .edge-snap-glow,
+.pet-canvas-mount[data-snap-edge='bottom'] .edge-snap-glow {
+  opacity: 1;
+  animation: edge-snap-breathe 1.2s ease-in-out infinite;
+}
+
+@keyframes edge-snap-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 宠物视图：渲染器（SVG 部件动画 / 将来 Live2D 画布）的挂载点。
+   z-index 提到吸附光带之上：光带作为背景晕染，不遮模型。 */
 .pet-view {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
 }
@@ -101,9 +216,9 @@ body,
 .chat-panel {
   position: absolute;
   left: 50%;
-  bottom: 118px;
+  bottom: 0;
   transform: translateX(-50%);
-  width: min(250px, calc(100vw - 120px));
+  width: min(250px, calc(100vw - 30px));
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -386,15 +501,12 @@ body,
    可见时必须纳入交互矩形上报（X11 setShape 会裁掉未上报区域）——见 App.tsx rects 计算 */
 .teaching-bubbles {
   position: absolute;
-  /* 底边锚定（2026-10-16 用户定稿）：列表**下边缘**固定在兔耳上方留空隙（底边窗内 y≈88
-     = 耳顶实测 y≈98 减 ~10px 空隙）——"消息列表不要挡住兔耳朵"；从下往上堆叠，
-     最新一条贴近兔头、更新的在下方（条数变化时贴耳位置不变）。312 = 400（宠物窗高）− 88。
+  /* 底边锚定：列表下边缘固定在兔耳上方留空隙（底边窗内 y≈88）。152 = 240（宠物窗高）− 88。
      改兔子形象/窗口尺寸时同步（TeachingBubbles.tsx 的 BUBBLES_BOTTOM/FIT_COUNT）。 */
-  bottom: 312px;
-  /* 右缘与**兔子图像右缘同线**（窗内 x=335 = 400 − PODIUM_IMG_RIGHT_INSET 65）——
-     列表和兔子一起贴着黑板左缘成一条竖线（2026-10-16 用户定稿"聊天列表右侧贴着白板"）。
-     改 geometry 的 PODIUM_IMG_RIGHT_INSET 时同步本值（right = 65）。 */
-  right: 65px;
+  bottom: 152px;
+  /* 右缘与**兔子图像右缘同线**（窗内 x=270 = 270 − PODIUM_IMG_RIGHT_INSET 0）——
+     列表和兔子一起贴着黑板左缘成一条竖线。 */
+  right: 0;
   width: 240px;
   display: flex;
   flex-direction: column;

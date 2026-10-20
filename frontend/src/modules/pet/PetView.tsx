@@ -16,6 +16,7 @@ import { getPetBridge } from '../../shared/pet-bridge'
 import { createPetRenderer, type PetRenderer } from './renderers'
 import { setupPixelHitTest } from './pixel-hit-test'
 import { setActivePetRenderer, setPetEmotion } from './controller'
+import { setPetWindowEdge } from './edge-state'
 import { debugTriggerBehavior, interruptPetBehavior } from './behavior'
 
 /** dev 态日志（转发到主进程日志，便于无 devtools 验证）；生产构建自动剔除 */
@@ -103,6 +104,17 @@ export default function PetView({ client }: PetViewProps): ReactElement {
         // ball-animation 动画的 setBounds 抢窗口控制权，造成抖动；语义同"用户触摸/抓取"）
         interruptPetBehavior('被魔法球捕获')
       }
+    })
+    return () => off?.()
+  }, [])
+
+  // ---- ②c 窗口贴边状态 → 边缘动作模型（主进程移动时实时推送；旧 preload 无该方法时静默跳过） ----
+  useEffect(() => {
+    const off = getPetBridge().window?.onEdgeChanged?.(({ edge, near }) => {
+      devLog(`window edge -> ${edge}${near ? '（贴边）' : '（预挂）'}`)
+      // 贴边状态同步给行为执行器（吸附保持期间跳过自主行为，避免被 walk 带走）
+      setPetWindowEdge(edge)
+      rendererRef.current?.setEdge?.(edge, near)
     })
     return () => off?.()
   }, [])

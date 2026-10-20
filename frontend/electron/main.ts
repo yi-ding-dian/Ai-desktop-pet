@@ -22,11 +22,11 @@ import {
   destroyBallAnimation
 } from './ball-animation'
 import { runAnchorSelfTest } from './ball-animation/anchor'
-import { destroyTeaching, enterTeaching, initTeaching } from './teaching'
+import { destroyTeaching, enterTeaching, initTeaching, getTeachingMode } from './teaching'
 import { destroySettings, initSettings } from './settings'
 import { destroyBubble, initBubble } from './bubble'
 import { destroyReminderList, initReminderList } from './reminder-list'
-import { destroyWork, initWork } from './work'
+import { destroyWork, initWork, workWindowActive } from './work'
 import { destroyFileSelection, initFileSelection } from './files'
 import { destroyLauncher, initLauncher } from './launcher'
 import { applyWindowsAppIdentity } from './platform'
@@ -95,7 +95,9 @@ function createPetWindow(): PlatformWindow {
   ipcCtx = {
     capability: platformWindow.capability,
     window,
-    getHitboxVisible: () => hitboxVisible
+    getHitboxVisible: () => hitboxVisible,
+    // 教学/工作模式中宠物固定在讲台/依附位，禁用边缘动作（讲台位窗口底会越过工作区底）
+    isQuietMode: () => getTeachingMode() === 'teaching' || workWindowActive()
   }
   registerIpcHandlers(ipcCtx)
 

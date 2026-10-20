@@ -5,6 +5,26 @@
  */
 import type { MoveResult, Point, Rect, WindowGeometry } from '../window'
 
+/**
+ * 宠物窗贴边状态（2026-10-20，主进程实时判定后推给渲染进程）：
+ * - top：窗口顶边贴近工作区顶边（**优先级最高**，角落同时贴顶/贴边时取 top）；
+ * - left / right：窗口左/右边贴近工作区左/右边（优先级高于 bottom）；
+ * - bottom：窗口底边贴近工作区底边（2026-10-20：趴睡贴底，优先级最低）；
+ * - none：未贴边（恢复站姿）。
+ */
+export type PetWindowEdge = 'none' | 'top' | 'left' | 'right' | 'bottom'
+
+/**
+ * 贴边状态事件载荷（2026-10-20）：
+ * - edge：边缘动作方向（底部预挂阶段也是 bottom）；
+ * - near：窗口是否已真正贴住工作区边（≤8px）。底部预挂只让宠物跟着窗口底走，
+ *   near=false 时**不出光带、不吸附**；真正贴底 near=true 才提示并允许吸附。
+ */
+export interface WindowEdgePayload {
+  edge: PetWindowEdge
+  near: boolean
+}
+
 /** 通道名：渲染 → 主（send / invoke） */
 export const IPC = {
   /** 设置点击穿透（boolean） */
@@ -93,6 +113,8 @@ export const IPC_EVENTS = {
   WINDOW_TOGGLE_DEBUG_BAR: 'window:toggle-debug-bar',
   /** 窗口几何变化（移动/缩放后 debounce ~1s 推送；payload: WindowGeometry） */
   WINDOW_GEOMETRY_CHANGED: 'window:geometry-changed',
+  /** 窗口贴边状态变化（窗口移动时实时推送，仅在变化时发；payload: PetWindowEdge） */
+  WINDOW_EDGE_CHANGED: 'window:edge-changed',
   /** 后端子进程状态变化（payload: BackendStatusPayload） */
   BACKEND_STATUS_CHANGED: 'backend:status-changed',
   /** 后端就绪（payload: BackendReadyPayload，含 WS 端口与 hello token） */
@@ -825,6 +847,8 @@ export interface PetBridgeApi {
     isVisible(): Promise<boolean>
     /** 订阅窗口几何变化（主进程已 debounce ~1s）；返回取消订阅函数 */
     onGeometryChanged(cb: (geo: WindowGeometry) => void): () => void
+    /** 订阅窗口贴边状态变化（移动时实时推送，仅变化时发）；返回取消订阅函数 */
+    onEdgeChanged(cb: (payload: WindowEdgePayload) => void): () => void
     /** 空气让路：上报光标处命中判定（true=实体/交互元素，false=空气透明区）——主进程据此输入让路/恢复 */
     reportHitTest(solid: boolean): void
     /** 空气让路：订阅主进程推送的光标窗口内坐标（仅让路态轮询推送；null=光标不在窗口内）；返回取消订阅函数 */

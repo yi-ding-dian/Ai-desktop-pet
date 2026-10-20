@@ -40,7 +40,7 @@ export interface Size {
  * 与气泡窗的 `followSize` 契约同源（见 electron/bubble/geometry.ts）。
  * 魔法球动画的 `setScale` 是唯一允许临时改尺寸的路径（动画期间移动锁已挡住拖拽/moveTo）。
  */
-export const PET_WINDOW_SIZE: Size = { width: 400, height: 400 }
+export const PET_WINDOW_SIZE: Size = { width: 270, height: 240 }
 
 /**
  * 宠物窗初始落点边距（DIP；2026-10-18 用户定稿）。

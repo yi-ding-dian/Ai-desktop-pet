@@ -32,6 +32,7 @@ import {
   type OpenResult,
   type PetBridgeApi,
   type PetSayLinePayload,
+  type WindowEdgePayload,
   type PickedFile,
   type ReminderListActionPayload,
   type ReminderListOpenPayload,
@@ -122,6 +123,17 @@ const api: PetBridgeApi = {
       ipcRenderer.on(IPC_EVENTS.WINDOW_GEOMETRY_CHANGED, listener)
       return () => {
         ipcRenderer.removeListener(IPC_EVENTS.WINDOW_GEOMETRY_CHANGED, listener)
+      }
+    },
+
+    onEdgeChanged(cb: (payload: WindowEdgePayload) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: WindowEdgePayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_EVENTS.WINDOW_EDGE_CHANGED, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.WINDOW_EDGE_CHANGED, listener)
       }
     },
 
