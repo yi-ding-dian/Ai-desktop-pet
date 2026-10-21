@@ -9,7 +9,7 @@
  *  - 打包态：process.resourcesPath/tray-icon.png（electron-builder.yml 的 extraResources
  *    从 build/icon.png 拷入，见该文件注释）。
  */
-import { app } from 'electron'
+import { app, nativeImage, type NativeImage } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -19,4 +19,16 @@ export function resolveAppIconPath(): string | undefined {
     ? join(process.resourcesPath, 'tray-icon.png')
     : join(app.getAppPath(), 'build', 'icon.png')
   return existsSync(candidate) ? candidate : undefined
+}
+
+/**
+ * 图标 NativeImage（窗口 icon / Notification icon 用）。
+ * 2026-10-21 实测：`BrowserWindow({ icon: '<path>' })` 在 Linux/DDE 下
+ * `_NET_WM_ICON` 为空（任务栏仍是 Electron 默认图标），换成 NativeImage 才写入成功。
+ */
+export function resolveAppIconImage(): NativeImage | undefined {
+  const path = resolveAppIconPath()
+  if (!path) return undefined
+  const image = nativeImage.createFromPath(path)
+  return image.isEmpty() ? undefined : image
 }

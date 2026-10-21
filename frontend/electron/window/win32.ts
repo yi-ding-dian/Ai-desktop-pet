@@ -16,14 +16,14 @@ import { initialPetPosition, type Size } from './index'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
 import { createEasedMover, readGeometry } from './move'
 import { isWindowMoveLocked } from './move-lock'
-import { resolveAppIconPath } from '../app-icon'
+import { resolveAppIconImage } from '../app-icon'
 
 export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
   const win = new BrowserWindow({
     width: opts.width,
     height: opts.height,
     // 窗口/任务栏图标：与托盘、通知共用 build/icon.png（开发态 DDE 默认给 Electron 图标）
-    icon: resolveAppIconPath(),
+    icon: resolveAppIconImage(),
     // ---- 桌宠窗口基础形态（设计文档 §5.1）----
     transparent: true,
     backgroundColor: '#00000000',

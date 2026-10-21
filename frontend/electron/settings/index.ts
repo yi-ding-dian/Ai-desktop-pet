@@ -26,6 +26,7 @@ import { app, BrowserWindow, ipcMain, screen, shell, type WebContents } from 'el
 import { join } from 'node:path'
 import { isLinux } from '../platform'
 import { IPC, IPC_EVENTS, type SettingsVisibilityPhase } from '../ipc/channels'
+import { resolveAppIconImage } from '../app-icon'
 import { backendManager } from '../backend-process'
 import { runRelocateAnimation } from '../ball-animation'
 import { petMouthY, wizardPetRect } from './geometry'
@@ -88,6 +89,8 @@ let openingCheck = false
  */
 function createSettingsWindow(): BrowserWindow {
   const win = new BrowserWindow({
+    // 任务栏/标题栏图标：与托盘、通知共用兔子图标（2026-10-21）
+    icon: resolveAppIconImage(),
     width: SETTINGS_WINDOW_WIDTH,
     height: SETTINGS_WINDOW_HEIGHT,
     title: SETTINGS_WINDOW_TITLE,

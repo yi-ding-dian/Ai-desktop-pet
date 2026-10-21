@@ -21,6 +21,7 @@ import {
   type WorkSendRequestPayload,
   type WorkSendResultPayload
 } from '../ipc/channels'
+import { resolveAppIconImage } from '../app-icon'
 import { petWindowSize, type Point, type Rect, type Size } from '../window'
 import { getPetScale } from '../pet-scale'
 import { attachFrameless, applyFramelessBounds, framelessBounds } from '../window/frameless'
@@ -391,6 +392,8 @@ function resetFoldedState(win: BrowserWindow, restoreBounds: boolean): void {
 function createWorkWindow(): BrowserWindow {
   const initial = workRectOverride ?? defaultWorkRect()
   const win = new BrowserWindow({
+    // 任务栏图标：与托盘、通知共用兔子图标（2026-10-21）
+    icon: resolveAppIconImage(),
     x: initial.x,
     y: initial.y,
     width: initial.width,

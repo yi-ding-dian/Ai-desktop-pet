@@ -31,6 +31,7 @@ import {
   type TeachingSendRequestPayload,
   type TeachingStatePayload
 } from '../ipc/channels'
+import { resolveAppIconImage } from '../app-icon'
 import {
   BOARD_EDGE_MARGIN,
   BOARD_MIN_HEIGHT,
@@ -333,6 +334,8 @@ function animateBoard(to: Rect, durationMs: number): Promise<void> {
  */
 function createBoardWindow(initial: Rect): BrowserWindow {
   const win = new BrowserWindow({
+    // 任务栏图标：与托盘、通知共用兔子图标（2026-10-21）
+    icon: resolveAppIconImage(),
     x: initial.x,
     y: initial.y,
     width: initial.width,

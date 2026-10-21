@@ -19,13 +19,16 @@
 
 .settings-guide-bubble {
   position: absolute;
-  /* 2026-10-20 窗口 270×240：兔子视觉约 x15–255 / y0–208，右侧/上方空间有限，
-     气泡放窗口左上、兔耳上方（尾巴仍指向兔头）。真机可再微调。
-     2026-10-21 宠物缩放：画布居中，左缘 = (窗口宽 − 240×scale)/2；气泡锚在画布左缘外
-     5×scale、顶部 4×scale（1.0x 时与原 left10/top4 完全一致：窗口 270、画布左缘 15）。 */
-  left: calc((100vw - 240px * var(--pet-scale, 1)) / 2 - 5px * var(--pet-scale, 1));
-  top: calc(4px * var(--pet-scale, 1));
-  max-width: 150px;
+  /* 2026-10-21 用户定稿：回到**兔子头右侧、与设置窗底部状态栏同高**的横条位
+     （箭头所指位置；400×400 时代就是这里，10-20 缩窗时曾被挪到左上）。
+     位置按缩放档位派生（画布居中，左缘 = (窗口宽 − 240×scale)/2）：
+       left = 画布左缘 + 149×scale（兔子脸颊右缘附近，允许轻微叠住头部以换取宽度）
+       top  = 44×scale（气泡底边与设置窗底边/嘴线平齐）
+       max-width = 窗口右缘 − left − 6px（右侧空间全部用上，文字自动 2–3 行）
+     1.0x 时：left≈164、top 44、宽≈100；1.2x 时：left≈194、宽≈118。 */
+  left: calc((100vw - 240px * var(--pet-scale, 1)) / 2 + 149px * var(--pet-scale, 1));
+  top: calc(44px * var(--pet-scale, 1));
+  max-width: calc(100vw / 2 - 29px * var(--pet-scale, 1) - 6px);
   padding: 7px 10px;
   border-radius: 11px 11px 11px 5px; /* 左下角收窄，衔接尾巴 */
   background: var(--bubble-bg);
