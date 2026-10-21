@@ -52,6 +52,12 @@ const LIST_VISIBLE_POLL_MS = 3_000
 export interface ReminderOptions {
   /** 抑制判定（教学 / 设置向导中返回 true）：每次现读，闭包捕获的旧状态会漏判 */
   shouldSuppress: () => boolean
+  /**
+   * 贴上/下边吸附中（主进程 bubble 域会抑制说话气泡，2026-10-21）：
+   * 气泡不会弹出、也不会自动转系统通知——这里补一条系统通知，避免趴边时错过提醒。
+   * 每次现读（状态由 App 的 data-edge/拖拽判定维护）。
+   */
+  isEdgeSpeechSuppressed?: () => boolean
 }
 
 interface PendingReminder {
@@ -62,6 +68,7 @@ interface PendingReminder {
 /** 系统通知的宽容封装（旧 preload 无 system.notify / 浏览器调试时静默跳过） */
 function notifySystem(text: string): void {
   try {
+    console.log(`[reminders] 系统通知 → ${text}`)
     getPetBridge().system?.notify?.('小兔提醒', text)
   } catch {
     /* bridge 缺失：气泡/列表仍是主通道，通知失败不影响提醒 */
@@ -382,6 +389,7 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
     }
     const suppressed = options.shouldSuppress()
     const hidden = hiddenNow() || !(await petVisible())
+    const edgeSuppressed = options.isEdgeSpeechSuppressed?.() === true
     const away = await userAway()
     if (disposed) return
 
@@ -393,7 +401,13 @@ export function setupReminders(client: WsClient, options: ReminderOptions): () =
     }, 400)
 
     const batchKey = data.batch_id || data.message_id
-    if ((suppressed || hidden) && notifyWhenHidden && !notifiedBatches.has(batchKey)) {
+    // edgeSuppressed：贴上/下边吸附中气泡被主进程静默（既无气泡也无通知），按同样的
+    // "看不到气泡"语义补系统通知；开关沿用 notifyWhenHidden（用户关了通知就不打扰）。
+    if (
+      (suppressed || hidden || edgeSuppressed) &&
+      notifyWhenHidden &&
+      !notifiedBatches.has(batchKey)
+    ) {
       notifiedBatches.add(batchKey)
       notifySystem(text)
     } else if (away && !notifiedBatches.has(batchKey)) {

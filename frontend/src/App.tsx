@@ -152,6 +152,8 @@ export default function App(): ReactElement {
   const [workActive, setWorkActive] = useState(isWorkModeActive)
   /** 窗口贴边（2026-10-20：悬挂/探头动作接管时收起输入条，画面只留宠物） */
   const [edgeAttached, setEdgeAttached] = useState(false)
+  /** 贴上/下边吸附中（2026-10-21）：主进程会抑制说话气泡，提醒到达时据此补系统通知 */
+  const topBottomEdgeRef = useRef(false)
   const hitboxRef = useRef<HTMLDivElement | null>(null)
   const statusBarRef = useRef<HTMLDivElement | null>(null)
   const chatPanelRef = useRef<HTMLDivElement | null>(null)
@@ -245,7 +247,12 @@ export default function App(): ReactElement {
   // ---- 提醒接线（reminders 域，2026-10-18）：后端 proactive{kind:'reminder'} → 气泡 + 系统通知 ----
   // 气泡一定会出（与语音开关无关）；教学/向导/隐藏/流式中排队，恢复后补气泡
   useEffect(
-    () => setupReminders(wsClient, { shouldSuppress: () => speechSuppressedRef.current }),
+    () =>
+      setupReminders(wsClient, {
+        shouldSuppress: () => speechSuppressedRef.current,
+        // 贴上/下边吸附中气泡被静默：提醒补系统通知（见 reminders 域 ReminderOptions）
+        isEdgeSpeechSuppressed: () => topBottomEdgeRef.current
+      }),
     [wsClient]
   )
 
@@ -608,6 +615,8 @@ export default function App(): ReactElement {
       const edge = hitboxRef.current?.dataset.edge ?? 'none'
       const dragging = hitboxRef.current?.dataset.dragging === 'true'
       setEdgeAttached(edge !== 'none' && !dragging)
+      // 与主进程 bubble 的抑制条件对齐：贴上/下边且非拖拽中（拖拽预挂不抑制气泡）
+      topBottomEdgeRef.current = !dragging && (edge === 'top' || edge === 'bottom')
       // 宠物视觉包围盒（窗口坐标）：X11 setShape 会同时裁剪可见区域（verify-report 已知限制）——
       // 形状矩形必须 ≥ 形象渲染范围（含 SVG 表情符号如头顶 Zzz/"？"），否则形象被裁。
       // 调整形象尺寸 / 表情元素位置时，同步调整此值。

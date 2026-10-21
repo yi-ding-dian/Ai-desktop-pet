@@ -15,6 +15,7 @@ import {
 } from 'electron'
 import { IPC, IPC_EVENTS, type PetWindowEdge, type WindowDebugState } from './channels'
 import { backendManager } from '../backend-process'
+import { resolveAppIconPath } from '../app-icon'
 import { openConfirmBubble, setEdgeSpeechSuppression } from '../bubble'
 import {
   isDangerousExecutable,
@@ -154,8 +155,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     if (event.sender !== ctx.window.webContents) return
     const title = typeof payload?.title === 'string' ? payload.title.slice(0, 80) : '小兔'
     const body = typeof payload?.body === 'string' ? payload.body.slice(0, 300) : ''
-    if (!body || !Notification.isSupported()) return
-    new Notification({ title, body }).show()
+    if (!body || !Notification.isSupported()) {
+      console.warn(`[ipc] 系统通知被跳过（body 空或平台不支持 supported=${Notification.isSupported()}）`)
+      return
+    }
+    // icon：通知中心显示兔子图标（Linux 走 image-path hint）。不传时 DDE 会回退到
+    // Electron 默认图标（用户 2026-10-21 反馈通知里是默认方块）。
+    new Notification({ title, body, icon: resolveAppIconPath() }).show()
+    console.log(`[ipc] 系统通知：${title} / ${body}`)
   })
 
   // ---------------------------------------------------------------- 记忆本（2026-10-18）
