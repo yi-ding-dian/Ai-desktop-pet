@@ -177,6 +177,19 @@ class PetConfig(BaseModel):
     #: 回复气泡自动收起时间（秒）；0 = 不自动收起
     bubble_idle_seconds: int = 30
 
+    @field_validator("scale")
+    @classmethod
+    def _check_scale(cls, value: float) -> float:
+        """宠物缩放档位：前端提供 0.8/0.9/1.0/1.1/1.2 五档（2026-10-21）。
+
+        主进程渲染层按档位套用同一组窗口/坐标几何；超出档位的值没有对应布局，
+        因此直接拒绝，避免手改配置后界面错位。
+        """
+        allowed = (0.8, 0.9, 1.0, 1.1, 1.2)
+        if not any(abs(value - a) < 1e-6 for a in allowed):
+            raise ValueError("pet.scale 必须是 0.8/0.9/1.0/1.1/1.2 之一")
+        return value
+
     @field_validator("bubble_idle_seconds")
     @classmethod
     def _check_bubble_idle_seconds(cls, value: int) -> int:

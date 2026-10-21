@@ -16,6 +16,11 @@ import type { Rect, Size } from '../window'
  */
 export const PET_MOUTH_Y = 104
 
+/** 嘴线随宠物缩放档位派生（画布从窗口顶部开始，视觉位置等比） */
+export function petMouthY(scale = 1): number {
+  return Math.round(PET_MOUTH_Y * scale)
+}
+
 /**
  * 向导位（宠物窗口目标矩形，屏幕坐标）：
  *  - 水平：设置窗横向中心（宠物窗水平居中）——x = 设置窗中心 − 宠物宽/2；
@@ -24,11 +29,16 @@ export const PET_MOUTH_Y = 104
  *  - 约束：宠物窗完全落在工作区内（越界回贴边）——工作区高度不足（常见于设置窗居中时
  *    底边偏低的屏幕）时贴工作区底并允许与设置窗多叠几像素（最少重叠降级，不影响动画）。
  */
-export function wizardPetRect(settingsBounds: Rect, petSize: Size, wa: Rect): Rect {
+export function wizardPetRect(
+  settingsBounds: Rect,
+  petSize: Size,
+  wa: Rect,
+  mouthY = PET_MOUTH_Y
+): Rect {
   const w = Math.max(2, Math.round(petSize.width))
   const h = Math.max(2, Math.round(petSize.height))
   let x = Math.round(settingsBounds.x + settingsBounds.width / 2 - w / 2)
-  let y = Math.round(settingsBounds.y + settingsBounds.height - PET_MOUTH_Y)
+  let y = Math.round(settingsBounds.y + settingsBounds.height - mouthY)
   // 工作区 clamp（窗口大于工作区的极端情形：贴左上，保证可预期）
   x = Math.min(Math.max(x, wa.x), Math.max(wa.x, wa.x + wa.width - w))
   y = Math.min(Math.max(y, wa.y), Math.max(wa.y, wa.y + wa.height - h))

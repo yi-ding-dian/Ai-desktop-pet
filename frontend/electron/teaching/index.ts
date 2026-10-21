@@ -35,17 +35,17 @@ import {
   BOARD_EDGE_MARGIN,
   BOARD_MIN_HEIGHT,
   BOARD_MIN_WIDTH,
-  PODIUM_PET_SIZE,
-  PODIUM_PET_HEIGHT,
   clampBoardRect,
   expandedBounds,
   foldedBounds,
   offscreenRight,
+  podiumPetSize,
   podiumPoint
 } from './geometry'
 import { runRelocateAnimation } from '../ball-animation'
-import { PET_WINDOW_SIZE } from '../window'
-import type { Rect } from '../window'
+import { petWindowSize } from '../window'
+import { getPetScale } from '../pet-scale'
+import type { Rect, Size } from '../window'
 import {
   applyFramelessBounds,
   attachFrameless,
@@ -159,19 +159,20 @@ function currentExpandedBounds(wa: Rect): Rect {
   return boardRectOverride ? clampBoardRect(boardRectOverride, wa) : expandedBounds(wa)
 }
 
-/** 讲台位跟随：黑板的左下角变了（拖边/移位）→ 宠物同帧 setBounds 跟手（尺寸用设计常量） */
+/** 当前缩放档位下的宠物窗尺寸 */
+function currentPetSize(): Size {
+  return petWindowSize(getPetScale())
+}
+
+/** 讲台位跟随：黑板的左下角变了（拖边/移位）→ 宠物同帧 setBounds 跟手（尺寸取当前档位） */
 function followPodium(boardRect: Rect): void {
   const pet = petWin
   if (!pet || pet.isDestroyed() || !pet.isVisible()) return
-  const p = podiumPoint(boardRect)
-  // 尺寸用设计常量：拖动高频触发，回喂 getBounds 的舍入宽高会让宠物窗每次 +1px
+  const p = podiumPoint(boardRect, getPetScale())
+  // 尺寸取当前缩放档位：拖动高频触发，回喂 getBounds 的舍入宽高会让宠物窗每次 +1px
   // （见 window/index.ts PET_WINDOW_SIZE）
-  pet.setBounds({
-    x: p.x,
-    y: p.y,
-    width: PET_WINDOW_SIZE.width,
-    height: PET_WINDOW_SIZE.height
-  })
+  const size = currentPetSize()
+  pet.setBounds({ x: p.x, y: p.y, width: size.width, height: size.height })
 }
 
 /** 写黑板 bounds 的唯一收口（委托通用无边框引擎：请求值记账 + setBounds） */
@@ -193,12 +194,11 @@ function readBoardBounds(win: BrowserWindow): Rect {
 function glidePetToPodium(boardRect: Rect): void {
   const pet = petWin
   if (!pet || pet.isDestroyed()) return
-  const p = podiumPoint(boardRect)
-  void runRelocateAnimation(
-    pet,
-    { x: p.x, y: p.y, width: PODIUM_PET_SIZE, height: PODIUM_PET_HEIGHT },
-    { forceGlide: true }
-  )
+  const p = podiumPoint(boardRect, getPetScale())
+  const size = podiumPetSize(getPetScale())
+  void runRelocateAnimation(pet, { x: p.x, y: p.y, width: size.width, height: size.height }, {
+    forceGlide: true
+  })
 }
 
 /**
@@ -231,7 +231,7 @@ function buildPayload(reason: string): TeachingStatePayload {
   }
   if (mode === 'expanded' && boardWin && !boardWin.isDestroyed()) {
     // 讲台位 = 黑板窗左下角外侧（2026-10-16 定稿）；黑板不可用时不发（渲染侧"无 podium 不走位"）
-    payload.podium = podiumPoint(readBoardBounds(boardWin))
+    payload.podium = podiumPoint(readBoardBounds(boardWin), getPetScale())
   }
   return payload
 }
@@ -529,11 +529,12 @@ export async function enterTeaching(reason: TeachingEnterReason): Promise<void> 
   // 只在 normal → expanded 跃迁记录：折叠态重复 enter 走上面的 unfoldBoard 分支，
   // 期间宠物可能被用户拖过，但"原位"始终指开课前的那个位置。
   const homeBounds = win.getBounds()
+  const homeSize = currentPetSize()
   petHomeRect = {
     x: homeBounds.x,
     y: homeBounds.y,
-    width: PET_WINDOW_SIZE.width,
-    height: PET_WINDOW_SIZE.height
+    width: homeSize.width,
+    height: homeSize.height
   }
 
   const seq = ++opSeq

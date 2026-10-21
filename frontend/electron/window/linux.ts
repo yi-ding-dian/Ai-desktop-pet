@@ -23,7 +23,7 @@
  *    不影响既有降级路径（degraded 分支照旧）。
  */
 import { BrowserWindow, screen } from 'electron'
-import { PET_WINDOW_SIZE, initialPetPosition } from './index'
+import { initialPetPosition, type Size } from './index'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
 import { createEasedMover, readGeometry } from './move'
 import { isWindowMoveLocked } from './move-lock'
@@ -83,11 +83,18 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
   let interactiveRects: Rect[] = []
   /** 拖拽会话：起始光标屏幕坐标 + 起始窗口 bounds */
   let dragOrigin: { start: Point; bounds: Rect } | null = null
+  /** 当前窗口尺寸（宠物缩放档位可调；拖拽/缓动移动/形状都必须取它，不能写死基准值） */
+  let currentSize: Size = { width: opts.width, height: opts.height }
   /** 缓动移动器（P3 行为引擎：walk 的窗口移动；与拖拽互斥由调用方保证） */
-  const mover = createEasedMover(win, PET_WINDOW_SIZE)
+  const mover = createEasedMover(win, () => currentSize)
 
   /** 全窗矩形（穿透关 / 可交互区未上报时的兜底形状） */
-  const fullWindowRect = (): Rect => ({ x: 0, y: 0, width: opts.width, height: opts.height })
+  const fullWindowRect = (): Rect => ({
+    x: 0,
+    y: 0,
+    width: currentSize.width,
+    height: currentSize.height
+  })
 
   /** 应用当前穿透态到窗口形状（X11 setShape；穿透开 = 收缩到可交互矩形，穿透关 = 全窗） */
   const applyShape = (): void => {
@@ -125,13 +132,13 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
       if (isWindowMoveLocked()) return
       if (!dragOrigin) return
       const { start, bounds } = dragOrigin
-      // 尺寸用设计常量、不回喂 getBounds()（fractional DPI 下每次 +1px；
+      // 尺寸用当前缩放尺寸、不回喂 getBounds()（fractional DPI 下每次 +1px；
       // 见 window/index.ts 的 PET_WINDOW_SIZE 说明）
       win.setBounds({
         x: Math.round(bounds.x + (cursor.x - start.x)),
         y: Math.round(bounds.y + (cursor.y - start.y)),
-        width: PET_WINDOW_SIZE.width,
-        height: PET_WINDOW_SIZE.height
+        width: currentSize.width,
+        height: currentSize.height
       })
     },
 
@@ -141,16 +148,16 @@ export function createLinuxWindow(opts: PetWindowOptions): PlatformWindow {
       console.log('[window/linux] drag end')
     },
 
-    setScale(scale: number) {
-      // 以窗口中心为锚点等比缩放（宠物缩放的窗口侧实现）
+    applySize(size: Size) {
+      // 底部中心锚定：脚底/输入框位置不动，向左右/上方生长（宠物缩放）
+      if (currentSize.width === size.width && currentSize.height === size.height) return
       const b = win.getBounds()
-      const width = Math.round(opts.width * scale)
-      const height = Math.round(opts.height * scale)
+      currentSize = { width: size.width, height: size.height }
       win.setBounds({
-        x: Math.round(b.x + (b.width - width) / 2),
-        y: Math.round(b.y + (b.height - height) / 2),
-        width,
-        height
+        x: Math.round(b.x + (b.width - size.width) / 2),
+        y: Math.round(b.y + b.height - size.height),
+        width: size.width,
+        height: size.height
       })
     },
 

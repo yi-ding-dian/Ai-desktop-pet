@@ -28,6 +28,7 @@ import {
 } from '../form/config-form'
 import { parseQuietHours } from '../form/quiet-hours'
 import { broadcastBubbleIdleSeconds } from '../../shared/bubble-settings'
+import { isPetScale } from '../../shared/pet-scale'
 import { createSettingsBackendClient, type SettingsBackendClient } from '../api/config-client'
 
 /** 加载阶段：waiting=等后端连接，loading=已发 get_config 等回执，ready=已填充 */
@@ -168,6 +169,23 @@ export function useSettingsController(): SettingsController {
     // 气泡时长是前端消费的：随配置快照广播给宠物窗（加载/保存都广播），保存即生效
     const bubbleIdle = parseIntegerText(next.bubbleIdleSeconds)
     if (bubbleIdle !== null) broadcastBubbleIdleSeconds(bubbleIdle)
+    // 宠物大小（2026-10-21）：配置快照即真相源——加载/保存后同步给主进程（换窗口尺寸 +
+    // 持久化 + 广播宠物窗 CSS 变量）。教学模式/工作模式中主进程返回 busy：只在保存后提示，
+    // 初始加载静默忽略（下次启动/退出模式后生效）。
+    const petScale = Number(next.petScale)
+    if (isPetScale(petScale)) {
+      void getPetBridge().window.setPetScale?.(petScale).then((result) => {
+        if (kind === 'save' && result && !result.ok) {
+          setNotice({
+            kind: 'error',
+            text:
+              result.reason === 'busy'
+                ? '当前教学模式/工作模式中，宠物大小将在退出后生效'
+                : '宠物大小档位不合法'
+          })
+        }
+      })
+    }
     if (import.meta.env.DEV) {
       console.log(
         `[settings] config 事件（kind=${kind ?? '外部'}）：base_url=${next.llmBaseUrl || '-'} model=${next.llmModel || '-'} name=${next.petName || '-'}`

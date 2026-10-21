@@ -29,6 +29,7 @@ import {
   computeReminderListPlacement
 } from './geometry'
 import type { Rect, Size } from '../window'
+import { getPetScale } from '../pet-scale'
 
 const isDev = !app.isPackaged
 const FOLLOW_THROTTLE_MS = 16
@@ -271,14 +272,16 @@ function applyPlacement(
     downExpanded && expandedTopOffset !== null
       ? petBounds.y + expandedTopOffset
       : null
+  const scale = getPetScale()
   const placement = bellOnly
-    ? computeReminderBellPlacement(petBounds, wa)
+    ? computeReminderBellPlacement(petBounds, wa, scale)
     : computeReminderListPlacement(
         petBounds,
         fullSize,
         wa,
         force || forceFull,
-        anchorTop
+        anchorTop,
+        scale
       )
   const wasCompact = compactNow
   compactNow = placement.compact
@@ -399,6 +402,8 @@ export function initReminderList(pet: BrowserWindow): void {
   if (ipcRegistered) return
   ipcRegistered = true
   pet.on('move', onPetMoved)
+  // 宠物缩放（2026-10-21）：尺寸变化不触发 move 事件，必须单独监听 resize 重摆
+  pet.on('resize', onPetMoved)
 
   ipcMain.on(IPC_REMINDER_LIST.UPDATE, (event, payload: unknown) => {
     if (!isPetSender(event.sender)) return

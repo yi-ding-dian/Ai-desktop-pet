@@ -11,7 +11,7 @@
  *   屏外态：整窗落在 wa 右缘之外（滑入起点 / 滑出终点）；
  *   讲台位：宠物窗口（280×300）到工作区左下角——左距 40、下距 40。
  */
-import type { Point, Rect } from '../window'
+import { petWindowSize, type Point, type Rect, type Size } from '../window'
 import {
   clampFramelessRect,
   moveFramelessRect,
@@ -39,10 +39,10 @@ export const BOARD_FOLDED_WIDTH = 24
 export const BOARD_FOLDED_HEIGHT = 140
 /** 折叠态：距工作区右缘（px；贴边） */
 export const BOARD_FOLDED_MARGIN_RIGHT = 8
-/** 讲台位：宠物窗口逻辑尺寸（2026-10-20 为 270×240，与 PET_WINDOW_SIZE 同步） */
+/** 讲台位：宠物窗口逻辑尺寸（1.0x 基准；运行时用 podiumPetSize(scale)） */
 export const PODIUM_PET_SIZE = 270
 export const PODIUM_PET_HEIGHT = 240
-/** 讲台位：兔子**图像**右缘距窗口右缘的窗内偏移（px）——宽度 270 时视觉范围约 x 15–270 */
+/** 讲台位：兔子**图像**右缘距窗口右缘的窗内偏移（px，1.0x 基准）——宽度 270 时视觉范围约 x 15–270 */
 export const PODIUM_IMG_RIGHT_INSET = 0
 /**
  * 讲台位：兔子**图像**右缘与黑板左缘之间的小缝（px；2026-10-16 用户两轮截图定稿"再近一点"：
@@ -57,6 +57,16 @@ export const PODIUM_GAP = 8
  * 换兔子形象/姿态时按同样方法校准（看 [teaching] 状态广播的 podium 值与板底之差）。
  */
 export const PODIUM_FOOT_LINE_Y = 191
+
+/** 讲台位窗口尺寸（随宠物缩放档位；教学期间禁止改档位，值保持稳定） */
+export function podiumPetSize(scale = 1): Size {
+  return petWindowSize(scale)
+}
+
+/** 讲台位视觉偏移随缩放档位派生（脚底线/图像右缘内缩） */
+export function podiumFootLineY(scale = 1): number {
+  return Math.round(PODIUM_FOOT_LINE_Y * scale)
+}
 
 /**
  * 展开态**默认**矩形（工作区 → 屏幕坐标；用户拖过的形态记忆由调用方优先，
@@ -131,9 +141,11 @@ export function offscreenRight(wa: Rect, rect: Rect): Rect {
  * 替代原"工作区左下角"）。头顶消息列表与图像右缘同线（styles.css 的 right 定位——改则同步）。
  * @param board 黑板窗当前矩形（屏幕坐标）——黑板拖宽/移位后重算即得新讲台位
  */
-export function podiumPoint(board: Rect): Point {
+export function podiumPoint(board: Rect, scale = 1): Point {
+  const size = podiumPetSize(scale)
+  const inset = Math.round(PODIUM_IMG_RIGHT_INSET * scale)
   return {
-    x: board.x - (PODIUM_PET_SIZE - PODIUM_IMG_RIGHT_INSET) - PODIUM_GAP,
-    y: board.y + board.height - PODIUM_FOOT_LINE_Y
+    x: board.x - (size.width - inset) - PODIUM_GAP,
+    y: board.y + board.height - podiumFootLineY(scale)
   }
 }

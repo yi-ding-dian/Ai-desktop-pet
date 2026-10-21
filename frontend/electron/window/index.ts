@@ -31,16 +31,61 @@ export interface Size {
 }
 
 /**
- * 宠物窗设计尺寸（DIP）：固定尺寸窗口，创建、拖拽、自主移动与走位都必须使用这一组常量。
+ * 宠物窗设计尺寸（DIP）**= 1.0x 基准**（2026-10-21 起不再是运行时固定值，运行时尺寸见 petWindowSize）。
  *
  * **禁止把 `getBounds()` 的宽高回喂 `setBounds()`**：Windows fractional DPI（本机 175%）下
  * `setBounds(400×400)` 之后 `getBounds()` 会回吐 401×401，再拿 401 去 set 又变 402……
  * 每次交互/移动累积 +1px。宠物窗是 top 锚定兔子、bottom 锚定聊天输入框，窗口越撑越高
  * 会让输入框逐次下沉且回不去（2026-10-17 用户反馈"点兔头输入框越来越下面"）。
  * 与气泡窗的 `followSize` 契约同源（见 electron/bubble/geometry.ts）。
- * 魔法球动画的 `setScale` 是唯一允许临时改尺寸的路径（动画期间移动锁已挡住拖拽/moveTo）。
+ * 尺寸来源统一为 `petWindowSize(当前缩放档位)`；魔法球动画期间移动锁挡住拖拽/moveTo。
  */
 export const PET_WINDOW_SIZE: Size = { width: 270, height: 240 }
+
+/**
+ * 宠物缩放（2026-10-21）：**只缩放兔子视觉，UI（输入框/气泡/提醒面板/教学气泡）尺寸不变**。
+ *
+ * 几何模型：画布基准 240×208 等比缩放；窗口 = 画布 + 左右留白 30 + 底部输入条 32。
+ * 0.8x 时窗口宽仍保持 270（两侧透明留白变多），保证输入框/提醒列表不变形。
+ * 窗口高度随之变化：0.8→198、0.9→219、1.0→240、1.1→261、1.2→282。
+ *
+ * **所有需要窗口尺寸的地方一律用 petWindowSize(scale) 一次算出**，禁止再写 270/240；
+ * 拖拽/缓动移动/球动画/教学/工作/设置回位都取当前尺寸，否则缩放会被 setBounds 静默打回 1x。
+ * 见 electron/pet-scale（运行时值的持久化与广播）。
+ */
+export const PET_SCALE_STEPS = [0.8, 0.9, 1.0, 1.1, 1.2] as const
+export type PetScale = (typeof PET_SCALE_STEPS)[number]
+
+/** 宠物画布基准尺寸（视觉/渲染基准，1.0x） */
+export const PET_CANVAS_BASE_SIZE: Size = { width: 240, height: 208 }
+/** 输入条固定高度（UI 不缩放） */
+export const PET_INPUT_BAR_HEIGHT = 32
+/** 窗口左右留白（画布居中；1.0x 时 30） */
+export const PET_WINDOW_SIDE_PADDING = 30
+/** 窗口最小宽度（0.8x 及以下不再收窄，避免输入框/提醒列表变形） */
+export const PET_WINDOW_MIN_WIDTH = 270
+
+/** 缩放是否在支持档位内（浮点安全） */
+export function isPetScale(value: unknown): value is PetScale {
+  return typeof value === 'number' && PET_SCALE_STEPS.some((s) => Math.abs(s - value) < 1e-6)
+}
+
+/** 画布尺寸（CSS 像素；渲染层与主进程几何共用同一套公式） */
+export function petCanvasSize(scale: number): Size {
+  return {
+    width: Math.round(PET_CANVAS_BASE_SIZE.width * scale),
+    height: Math.round(PET_CANVAS_BASE_SIZE.height * scale)
+  }
+}
+
+/** 宠物窗口尺寸（DIP）：画布等比缩放 + 固定留白/输入条 */
+export function petWindowSize(scale: number): Size {
+  const canvas = petCanvasSize(scale)
+  return {
+    width: Math.max(PET_WINDOW_MIN_WIDTH, canvas.width + PET_WINDOW_SIDE_PADDING),
+    height: canvas.height + PET_INPUT_BAR_HEIGHT
+  }
+}
 
 /**
  * 宠物窗初始落点边距（DIP；2026-10-18 用户定稿）。
@@ -99,8 +144,12 @@ export interface WindowCapability {
   dragMove(cursor: Point): void
   /** 结束拖拽 */
   endDrag(): void
-  /** 宠物缩放：等比缩放窗口尺寸（中心为锚点） */
-  setScale(scale: number): void
+  /**
+   * 应用新的窗口尺寸（宠物缩放）：**底部中心为锚点**——脚底/输入框位置不动，
+   * 只向上左右生长（0.8x 时两侧多余透明留白，窗口宽不低于 270）。
+   * 平台实现需同步内部"当前尺寸"（拖拽/缓动移动都取它），否则下一次拖拽会打回旧尺寸。
+   */
+  applySize(size: Size): void
   /** 工作区（防拖出屏幕） */
   getWorkArea(): Rect
   /**

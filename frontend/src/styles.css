@@ -41,10 +41,14 @@ body,
 .pet-canvas-mount {
   position: absolute;
   left: 50%;
-  margin-left: -120px; /* 容器半宽（240/2） */
-  top: 0; /* 2026-10-20 窗口 270×240：画布 240×208 贴窗口顶，输入框贴底 */
-  width: 240px;
-  height: 208px;
+  /* 宠物缩放（2026-10-21）：基准 240×208 等比缩放；--pet-scale 由 main.tsx 的
+     setupPetScale 写入（首帧取 URL query，运行时由主进程 IPC 推送）。
+     视觉大小由容器高度驱动相机投影（见 renderers/glb-model/index.ts 的 CAMERA_FILL_RATIO），
+     所以真实宽高变化（而非 transform）即可缩放模型，且 WebGL 画布分辨率同步提升。 */
+  margin-left: calc(-120px * var(--pet-scale, 1));
+  top: 0;
+  width: calc(240px * var(--pet-scale, 1));
+  height: calc(208px * var(--pet-scale, 1));
   /* 无背景：保持透明，仅承载交互与动画 */
 }
 
@@ -501,13 +505,15 @@ body,
    可见时必须纳入交互矩形上报（X11 setShape 会裁掉未上报区域）——见 App.tsx rects 计算 */
 .teaching-bubbles {
   position: absolute;
-  /* 底边锚定：列表下边缘固定在兔耳上方留空隙（底边窗内 y≈88）。152 = 240（宠物窗高）− 88。
-     改兔子形象/窗口尺寸时同步（TeachingBubbles.tsx 的 BUBBLES_BOTTOM/FIT_COUNT）。 */
-  bottom: 152px;
-  /* 右缘与**兔子图像右缘同线**（窗内 x=270 = 270 − PODIUM_IMG_RIGHT_INSET 0）——
-     列表和兔子一起贴着黑板左缘成一条竖线。 */
-  right: 0;
-  width: 240px;
+  /* 底边锚定：列表下边缘固定在兔耳上方留空隙。耳顶窗口内 y≈88×scale；
+     窗口高 = 208×scale + 32（输入条），故 bottom = 120×scale + 32（1.0x 时 = 152）。
+     改兔子形象/窗口尺寸时同步（TeachingBubbles.tsx 的窗口高/FIT_COUNT）。 */
+  bottom: calc(120px * var(--pet-scale, 1) + 32px);
+  /* 右缘与兔子图像右缘同线（窗口内画布右缘 = (窗口宽 + 240×scale)/2）——
+     列表和兔子一起贴着黑板左缘成一条竖线。1.0x 时计算值 = 0（与原 right:0 一致）；
+     0.8/0.9 档窗口宽保持 270，右侧透明留白由 calc 扣掉，避免列表离兔子过远。 */
+  right: max(0px, calc((100vw - 240px * var(--pet-scale, 1)) / 2 - 15px * var(--pet-scale, 1)));
+  width: calc(240px * var(--pet-scale, 1));
   display: flex;
   flex-direction: column;
   gap: 4px;

@@ -21,7 +21,8 @@ import {
   type WorkSendRequestPayload,
   type WorkSendResultPayload
 } from '../ipc/channels'
-import { PET_WINDOW_SIZE, type Point, type Rect } from '../window'
+import { petWindowSize, type Point, type Rect, type Size } from '../window'
+import { getPetScale } from '../pet-scale'
 import { attachFrameless, applyFramelessBounds, framelessBounds } from '../window/frameless'
 import { podiumPoint } from '../teaching/geometry'
 import { getTeachingMode } from '../teaching'
@@ -169,13 +170,18 @@ function rejectAll(reason: string): void {
   }
 }
 
+/** 当前缩放档位下的宠物窗尺寸（工作模式中禁止改档位，值稳定） */
+function currentPetSize(): Size {
+  return petWindowSize(getPetScale())
+}
+
 /**
  * 工作窗左侧的宠物落点（与教学讲台同几何）。
  * 工作窗被拖到屏幕最左时，讲台点会落到屏幕外——夹回工作区左缘，让兔子
  * 贴着窗口左侧、部分叠在窗口上，而不是整窗消失。
  */
 function workAttachPoint(rect: Rect): Point {
-  const point = podiumPoint(rect)
+  const point = podiumPoint(rect, getPetScale())
   const wa = screen.getDisplayMatching(rect).workArea
   return { x: Math.max(wa.x + 8, point.x), y: point.y }
 }
@@ -193,12 +199,13 @@ function placePet(rect: Rect): void {
   const pet = petWin
   if (pet === null || pet.isDestroyed()) return
   const bounds = pet.getBounds()
+  const size = currentPetSize()
   if (!petPlaced) {
     petHomeRect = {
       x: bounds.x,
       y: bounds.y,
-      width: PET_WINDOW_SIZE.width,
-      height: PET_WINDOW_SIZE.height
+      width: size.width,
+      height: size.height
     }
     petPlaced = true
   }
@@ -209,12 +216,7 @@ function placePet(rect: Rect): void {
   )
   void runRelocateAnimation(
     pet,
-    {
-      x: point.x,
-      y: point.y,
-      width: PET_WINDOW_SIZE.width,
-      height: PET_WINDOW_SIZE.height
-    },
+    { x: point.x, y: point.y, width: size.width, height: size.height },
     { forceGlide: true }
   )
 }
@@ -242,12 +244,8 @@ function followPetToWork(rect: Rect): void {
   const pet = petWin
   if (pet === null || pet.isDestroyed() || !pet.isVisible()) return
   const point = workAttachPoint(rect)
-  pet.setBounds({
-    x: point.x,
-    y: point.y,
-    width: PET_WINDOW_SIZE.width,
-    height: PET_WINDOW_SIZE.height
-  })
+  const size = currentPetSize()
+  pet.setBounds({ x: point.x, y: point.y, width: size.width, height: size.height })
 }
 
 function defaultWorkRect(): Rect {

@@ -28,11 +28,12 @@ import { isLinux } from '../platform'
 import { IPC, IPC_EVENTS, type SettingsVisibilityPhase } from '../ipc/channels'
 import { backendManager } from '../backend-process'
 import { runRelocateAnimation } from '../ball-animation'
-import { wizardPetRect } from './geometry'
+import { petMouthY, wizardPetRect } from './geometry'
 import { getTeachingMode } from '../teaching'
 import { probeXWindowAlive, type XWindowAlive } from './window-health'
-import { PET_WINDOW_SIZE } from '../window'
-import type { Rect } from '../window'
+import { petWindowSize } from '../window'
+import { getPetScale } from '../pet-scale'
+import type { Rect, Size } from '../window'
 
 const isDev = !app.isPackaged
 
@@ -359,21 +360,22 @@ async function beginWizard(): Promise<void> {
     return
   }
 
-  // 原位只取坐标；尺寸用设计常量（getBounds 在 fractional DPI 下是舍入值，
+  // 原位只取坐标；尺寸取当前缩放档位（getBounds 在 fractional DPI 下是舍入值，
   // 回喂 relocate 会让宠物窗每次开关设置长大 1px——见 window/index.ts PET_WINDOW_SIZE）
   const homeBounds = pet.getBounds()
+  const petSize = petWindowSize(getPetScale())
   petHomeRect = {
     x: homeBounds.x,
     y: homeBounds.y,
-    width: PET_WINDOW_SIZE.width,
-    height: PET_WINDOW_SIZE.height
+    width: petSize.width,
+    height: petSize.height
   }
   wizardActive = true
   broadcastVisibility('opened')
 
   const sBounds = sw.getBounds()
   const wa = screen.getDisplayMatching(sBounds).workArea
-  const target = wizardPetRect(sBounds, PET_WINDOW_SIZE, wa)
+  const target = wizardPetRect(sBounds, petSize, wa, petMouthY(getPetScale()))
   console.log(
     `[settings] 向导入位：宠物 ${rectStr(petHomeRect)} → ${rectStr(target)}（设置窗 ${rectStr(sBounds)}）`
   )
@@ -415,6 +417,34 @@ async function returnPetHome(): Promise<void> {
     returning = false
     broadcastVisibility('closed')
   }
+}
+
+/**
+ * 宠物缩放档位变更（主进程 applyPetScale 调用；用户在设置里改大小时立即生效）。
+ * - 原位矩形按**底部中心锚定**换算到新尺寸（关闭设置回位时脚底不跳）；
+ * - 向导位按新尺寸/嘴线重算并 relocate（嘴仍压设置窗底边线）；
+ * - 教学模式中兔子固定在讲台，不参与向导位重摆（与 beginWizard 的例外一致）。
+ */
+export async function onPetScaleChanged(oldSize: Size, newSize: Size, scale: number): Promise<void> {
+  if (petHomeRect) {
+    petHomeRect = {
+      x: Math.round(petHomeRect.x + (petHomeRect.width - newSize.width) / 2),
+      y: Math.round(petHomeRect.y + petHomeRect.height - newSize.height),
+      width: newSize.width,
+      height: newSize.height
+    }
+  }
+  const pet = getPetWindow()
+  const sw = settingsWin
+  if (!wizardActive || !pet || pet.isDestroyed() || !sw || sw.isDestroyed()) return
+  if (getTeachingMode() === 'teaching') return
+  const sBounds = sw.getBounds()
+  const wa = screen.getDisplayMatching(sBounds).workArea
+  const target = wizardPetRect(sBounds, newSize, wa, petMouthY(scale))
+  console.log(
+    `[settings] 缩放 ${oldSize.width}×${oldSize.height} → ${newSize.width}×${newSize.height}：向导位重摆至 ${rectStr(target)}`
+  )
+  await runRelocateAnimation(pet, target)
 }
 
 // ------------------------------------------------------------------ 应用重启

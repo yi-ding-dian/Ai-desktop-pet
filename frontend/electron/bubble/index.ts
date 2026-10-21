@@ -83,7 +83,8 @@ import { openSettings } from '../settings'
 import { enterTeaching, exitTeaching, getTeachingMode } from '../teaching'
 import { openWork } from '../work'
 import { computeBubblePlacement, followSize } from './geometry'
-import type { Point, Rect, Size } from '../window'
+import { petWindowSize, type Point, Rect, Size } from '../window'
+import { getPetScale } from '../pet-scale'
 
 const isDev = !app.isPackaged
 
@@ -728,12 +729,21 @@ function destroyBubbleWindow(reason: string): void {
 
 // ------------------------------------------------------------------ 定位（锚点 + 防出屏摆放）
 
-/** 计算当前锚点（宠物窗位置 + 兔子头部偏移；宠物窗不可用返回 null） */
+/**
+ * 计算当前锚点（宠物窗位置 + 兔子头部偏移；宠物窗不可用返回 null）。
+ * 缩放档位（2026-10-21）：x 以画布中心为基准（画布居中于窗口），y 从画布顶部等比缩放——
+ * 1.0x 时 = (270/2 + 55, 58) = 原 (190, 58)，0.8/0.9 档窗口宽保持 270 时锚点仍跟着兔子走。
+ */
 function computeAnchor(): Point | null {
   const pet = petWin
   if (!pet || pet.isDestroyed()) return null
   const b = pet.getBounds()
-  return { x: b.x + HEAD_ANCHOR_OFFSET.x, y: b.y + HEAD_ANCHOR_OFFSET.y }
+  const scale = getPetScale()
+  const winWidth = petWindowSize(scale).width
+  return {
+    x: Math.round(b.x + winWidth / 2 + (HEAD_ANCHOR_OFFSET.x - 135) * scale),
+    y: Math.round(b.y + HEAD_ANCHOR_OFFSET.y * scale)
+  }
 }
 
 /**
@@ -1444,8 +1454,10 @@ export function initBubble(pet: BrowserWindow): void {
   if (ipcRegistered) return
   ipcRegistered = true
 
-  // 说话气泡跟随：宠物走动/被拖拽时气泡随机重摆（见 onPetMoved；监听只注册一次）
+  // 说话气泡跟随：宠物走动/被拖拽时气泡随机重摆（见 onPetMoved；监听只注册一次）。
+  // 缩放档位变更只改尺寸不改位置 → 必须单独监听 resize，否则锚点会错位。
   petWin.on('move', onPetMoved)
+  petWin.on('resize', onPetMoved)
 
   // 弹出请求：唯一入口 = 宠物窗（右键菜单）；其它渲染面/脏载荷一律忽略
   ipcMain.on(IPC.BUBBLE_REQUEST_OPEN, (event, request: unknown) => {

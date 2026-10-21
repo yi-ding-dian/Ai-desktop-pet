@@ -31,6 +31,7 @@ import {
   type LauncherRunResult,
   type OpenResult,
   type PetBridgeApi,
+  type PetScaleApplyResult,
   type PetSayLinePayload,
   type WindowEdgePayload,
   type PickedFile,
@@ -140,6 +141,25 @@ const api: PetBridgeApi = {
     /** 空气让路（§5.1 增补）：上报光标处命中判定（true=实体/交互元素，false=空气区） */
     reportHitTest(solid: boolean): void {
       ipcRenderer.send(IPC.PET_REPORT_HIT_TEST, { solid })
+    },
+
+    /** 宠物缩放：查询当前档位（主进程运行时真相源） */
+    getPetScale(): Promise<number> {
+      return ipcRenderer.invoke(IPC.PET_GET_SCALE)
+    },
+
+    /** 宠物缩放：应用档位（设置窗保存时调用；busy 表示教学/工作/动画中暂不可改） */
+    setPetScale(scale: number): Promise<PetScaleApplyResult> {
+      return ipcRenderer.invoke(IPC.PET_SET_SCALE, scale)
+    },
+
+    /** 宠物缩放：订阅档位变化（宠物窗更新 CSS 变量） */
+    onPetScaleChanged(cb: (scale: number) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, scale: number): void => cb(scale)
+      ipcRenderer.on(IPC_EVENTS.PET_SCALE_CHANGED, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.PET_SCALE_CHANGED, listener)
+      }
     },
 
     /** 空气让路（§5.1 增补）：订阅主进程推送的光标窗口内坐标（让路态轮询推送；null=光标出窗） */

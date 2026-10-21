@@ -8,7 +8,7 @@ import { app, globalShortcut, ipcMain, screen, shell, type Tray } from 'electron
 import { join } from 'node:path'
 import { resolveWindowImpl } from './window/registry'
 import { registerIpcHandlers, pushDebugState, type IpcContext } from './ipc'
-import { IPC, IPC_EVENTS } from './ipc/channels'
+import { IPC, IPC_EVENTS, type PetScaleApplyResult } from './ipc/channels'
 import { createClickThrough, type ClickThrough } from './window/click-through'
 import { resolveCursorSource } from './window/cursor-source'
 import { backendManager } from './backend-process'
@@ -23,14 +23,22 @@ import {
 } from './ball-animation'
 import { runAnchorSelfTest } from './ball-animation/anchor'
 import { destroyTeaching, enterTeaching, initTeaching, getTeachingMode } from './teaching'
-import { destroySettings, initSettings } from './settings'
+import { destroySettings, initSettings, onPetScaleChanged } from './settings'
 import { destroyBubble, initBubble } from './bubble'
 import { destroyReminderList, initReminderList } from './reminder-list'
 import { destroyWork, initWork, workWindowActive } from './work'
 import { destroyFileSelection, initFileSelection } from './files'
 import { destroyLauncher, initLauncher } from './launcher'
 import { applyWindowsAppIdentity } from './platform'
-import { PET_WINDOW_SIZE, type PlatformWindow } from './window'
+import {
+  PET_WINDOW_SIZE,
+  isPetScale,
+  petWindowSize,
+  type PlatformWindow,
+  type Size
+} from './window'
+import { getPetScale, initPetScale, savePetScale } from './pet-scale'
+import { isWindowMoveLocked } from './window/move-lock'
 import { initFramelessWindows } from './window/frameless'
 
 /** 调试快捷键（避开常见组合，选用 F9–F11 + Ctrl+Shift） */
@@ -56,11 +64,11 @@ let hitGate: ClickThrough | null = null
 let hitReportListener: ((event: Electron.IpcMainEvent, payload: { solid: boolean }) => void) | null =
   null
 
-/** 创建宠物窗口并完成 IPC 注册 */
-function createPetWindow(): PlatformWindow {
+/** 创建宠物窗口并完成 IPC 注册（size = 当前缩放档位对应窗口尺寸） */
+function createPetWindow(size: Size = PET_WINDOW_SIZE): PlatformWindow {
   const platformWindow = resolveWindowImpl()({
-    width: PET_WINDOW_SIZE.width,
-    height: PET_WINDOW_SIZE.height,
+    width: size.width,
+    height: size.height,
     preload: join(__dirname, '../preload/preload.js')
   })
   const { window } = platformWindow
@@ -101,16 +109,74 @@ function createPetWindow(): PlatformWindow {
   }
   registerIpcHandlers(ipcCtx)
 
+  // 宠物缩放档位经 query 传入渲染层：首帧就按正确画布尺寸布局（避免 1.0→档位的可见跳变）。
+  // 运行时变更走 IPC_EVENTS.PET_SCALE_CHANGED。
+  const rendererScale = String(getPetScale())
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
-    window.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    const url = new URL(process.env['ELECTRON_RENDERER_URL'])
+    url.searchParams.set('petScale', rendererScale)
+    window.loadURL(url.toString())
   } else {
-    window.loadFile(join(__dirname, '../renderer/index.html'))
+    window.loadFile(join(__dirname, '../renderer/index.html'), {
+      query: { petScale: rendererScale }
+    })
   }
 
   if (platformWindow.degraded) {
     console.warn('[main] 当前平台实现处于降级模式（部分能力不可用）')
   }
   return platformWindow
+}
+
+/**
+ * 应用宠物缩放档位（设置面 IPC → 这里，2026-10-21）。
+ *
+ * 拒绝条件（PetScaleApplyResult.reason='busy'）：
+ * - 教学模式（兔子固定在讲台位，教学编排持有窗口）；
+ * - 工作模式（宠物依附工作窗左侧）；
+ * - 魔法球动画进行中（逐帧 setBounds 改尺寸，会和缩放抢窗口控制权）。
+ * 设置向导**允许**（用户就在设置里改，立即预览），重摆向导位见 settings.onPetScaleChanged。
+ * 魔法球/飞位动画进行中不直接拒绝：先等移动锁释放（最长 5s）再应用——设置窗打开时
+ * 配置快照回灌恰好落在向导飞位动画期间，直接拒绝会让档位与配置永久不同步。
+ */
+async function waitForMoveUnlock(timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (isWindowMoveLocked()) {
+    if (Date.now() >= deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return true
+}
+
+async function applyPetScale(scale: unknown): Promise<PetScaleApplyResult> {
+  if (!isPetScale(scale)) return { ok: false, reason: 'invalid' }
+  if (getTeachingMode() !== 'normal' || workWindowActive()) {
+    console.log(`[main] 宠物缩放 ${scale}x 被拒绝：教学/工作模式中`)
+    return { ok: false, reason: 'busy' }
+  }
+  // 档位未变：直接成功（打开设置时配置快照会回灌一次，避免无谓的向导位重摆/动画）
+  if (scale === getPetScale()) return { ok: true }
+  // 魔法球/向导飞位动画进行中：锁释放后再应用（逐帧 setBounds 不能被打断）。
+  // 超时（动画异常）则拒绝，由设置面提示。
+  if (isWindowMoveLocked()) {
+    console.log(`[main] 宠物缩放 ${scale}x：等待移动动画结束…`)
+    const unlocked = await waitForMoveUnlock(5000)
+    if (!unlocked || getTeachingMode() !== 'normal' || workWindowActive()) {
+      console.log(`[main] 宠物缩放 ${scale}x 被拒绝：动画未结束或已进入教学/工作模式`)
+      return { ok: false, reason: 'busy' }
+    }
+  }
+  const oldSize = petWindowSize(getPetScale())
+  const newSize = petWindowSize(scale)
+  savePetScale(scale)
+  console.log(`[main] 宠物缩放 ${oldSize.width}×${oldSize.height} → ${newSize.width}×${newSize.height}（${scale}x）`)
+  if (pet && !pet.window.isDestroyed()) {
+    pet.capability.cancelMove()
+    pet.capability.applySize(newSize)
+    pet.window.webContents.send(IPC_EVENTS.PET_SCALE_CHANGED, scale)
+    await onPetScaleChanged(oldSize, newSize, scale)
+  }
+  return { ok: true }
 }
 
 /** 注册调试快捷键（globalShortcut：穿透/失焦时窗口收不到按键，必须走全局） */
@@ -181,7 +247,12 @@ if (!app.requestSingleInstanceLock()) {
     // 预热魔法球窗/动画页：与宠物窗创建并行，冷启动入场演出不必再等动画页加载
     prewarmBallAnimation()
 
-    pet = createPetWindow()
+    // 宠物缩放档位：必须在建窗前读取持久化值（后端配置此时尚未就绪）
+    initPetScale()
+    // 缩放 IPC（设置窗 ↔ 主进程；与窗口生命周期无关，注册一次）
+    ipcMain.handle(IPC.PET_GET_SCALE, () => getPetScale())
+    ipcMain.handle(IPC.PET_SET_SCALE, (_event, scale: unknown) => applyPetScale(scale))
+    pet = createPetWindow(petWindowSize(getPetScale()))
     const petWin = pet.window
 
     // 空气让路（§5.1 增补）：输入接管状态机——渲染侧 hitTest 回报（IPC.PET_REPORT_HIT_TEST）

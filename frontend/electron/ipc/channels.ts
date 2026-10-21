@@ -89,6 +89,10 @@ export const IPC = {
   TEACHING_GET_STATE: 'teaching:get-state',
   /** 空气让路（§5.1 增补）：渲染侧回报光标处命中判定（payload: {solid: boolean}；false=空气 → 主进程输入让路） */
   PET_REPORT_HIT_TEST: 'pet:report-hit-test',
+  /** 宠物缩放：应用档位（invoke(scale) → PetScaleApplyResult；设置窗保存时调用，主进程改窗口尺寸并持久化） */
+  PET_SET_SCALE: 'pet:set-scale',
+  /** 宠物缩放：查询当前档位（invoke → number；设置窗打开时校准显示值） */
+  PET_GET_SCALE: 'pet:get-scale',
   /** 设置窗口：请求打开独立设置窗口（托盘菜单与聊天关键词共用；单例，重复打开则聚焦已有） */
   SETTINGS_OPEN: 'settings:open',
   /** 设置窗口：请求重启应用（设置页"重启"按钮；主进程先走后端退出清理再 relaunch） */
@@ -140,7 +144,9 @@ export const IPC_EVENTS = {
   /** 提醒列表动作（主 → 宠物窗；payload: ReminderListActionPayload；列表点条目/全部已读时回传） */
   REMINDER_LIST_ACTION: 'reminder-list:action-request',
   /** 生命周期台词（主 → 宠物窗；payload: PetSayLinePayload；启动"我来了~"/退出"再见啦~"经说话气泡展示） */
-  PET_SAY_LINE: 'pet:say-line'
+  PET_SAY_LINE: 'pet:say-line',
+  /** 宠物缩放档位变化（主 → 宠物窗；payload: number；渲染层据此更新 CSS 变量） */
+  PET_SCALE_CHANGED: 'pet:scale-changed'
 } as const
 
 /** 通道名：魔法球捕获动画（ball-animation 域：主进程 ↔ fx 动画页） */
@@ -167,6 +173,16 @@ export type BallAnimationCommand =
   | { type: 'release-burst' }
   /** 整层淡出（durationMs 后主进程隐藏球窗） */
   | { type: 'fade-out'; durationMs: number }
+
+/**
+ * 宠物缩放应用结果（主进程 → 渲染进程）：
+ * - ok=false + reason='busy'：教学/工作模式或魔法球动画中（动画逐帧 setBounds，此时改尺寸会抢窗口）；
+ * - ok=false + reason='invalid'：不在支持档位（0.8/0.9/1.0/1.1/1.2）。
+ */
+export interface PetScaleApplyResult {
+  ok: boolean
+  reason?: 'busy' | 'invalid'
+}
 
 /** 宠物反应事件载荷（主 → 宠物窗口渲染进程） */
 export interface BallAnimationPetReactionPayload {
@@ -860,6 +876,12 @@ export interface PetBridgeApi {
     reportHitTest(solid: boolean): void
     /** 空气让路：订阅主进程推送的光标窗口内坐标（仅让路态轮询推送；null=光标不在窗口内）；返回取消订阅函数 */
     onPointerPos(cb: (pos: { x: number; y: number } | null) => void): () => void
+    /** 宠物缩放：查询当前档位（设置窗打开时校准显示值；主进程为运行时真相源） */
+    getPetScale(): Promise<number>
+    /** 宠物缩放：应用档位（设置窗保存时调用；主进程改窗口尺寸并持久化） */
+    setPetScale(scale: number): Promise<PetScaleApplyResult>
+    /** 宠物缩放：订阅档位变化（宠物窗据此更新 CSS 变量）；返回取消订阅函数 */
+    onPetScaleChanged(cb: (scale: number) => void): () => void
   }
   /**
    * 无边框窗口通用拖动/缩放（2026-10-18 窗口 UI 套件）：

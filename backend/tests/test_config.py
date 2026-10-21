@@ -108,6 +108,16 @@ def test_bubble_idle_seconds_defaults_and_bounds() -> None:
             AppConfig.model_validate({"pet": {"bubble_idle_seconds": value}})
 
 
+def test_pet_scale_defaults_and_allowed_steps() -> None:
+    """宠物缩放：默认 1.0；只接受 0.8/0.9/1.0/1.1/1.2 五档（2026-10-21）。"""
+    assert AppConfig().pet.scale == 1.0
+    for value in (0.8, 0.9, 1.0, 1.1, 1.2):
+        assert AppConfig.model_validate({"pet": {"scale": value}}).pet.scale == value
+    for value in (0.5, 0.75, 0.85, 1.25, 2.0):
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate({"pet": {"scale": value}})
+
+
 def test_file_and_context_limits_defaults_and_bounds() -> None:
     """文件分析限额：默认 20k 字 / 100k tokens；边界与越界校验。"""
     cfg = AppConfig()

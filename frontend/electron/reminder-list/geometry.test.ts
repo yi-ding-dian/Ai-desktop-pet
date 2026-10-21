@@ -144,9 +144,9 @@ function petAt(x: number): Rect {
   )
   check(
     '灰灯中心在箭头高度（输入框上方 60px）',
-    p.y + p.height / 2 === PET.y + 250 - BELL_ONLY_CENTER_ABOVE_INPUT
+    p.y + p.height / 2 === PET.y + 208 - BELL_ONLY_CENTER_ABOVE_INPUT
   )
-  check('灰灯整体在输入框上方', p.y + p.height < PET.y + 250)
+  check('灰灯整体在输入框上方', p.y + p.height < PET.y + 208)
 }
 
 // 10) 灰灯靠右边缘时翻到左侧

@@ -13,6 +13,7 @@
  */
 import type { ReactElement, RefObject } from 'react'
 import type { TeachingBubbleItem } from './index'
+import { getPetScale } from '../../shared/pet-scale'
 
 interface TeachingBubblesProps {
   /** 气泡列表（按 push 顺序：旧 → 新；组件展示尾部最近的若干条） */
@@ -28,23 +29,12 @@ interface TeachingBubblesProps {
 /** 最多可见条数（设计 §7.5.1：最多 4 条 + "+N" 省略；实际还受耳上空间动态限制） */
 const MAX_VISIBLE = 4
 
-/** 宠物窗口逻辑尺寸（px）——空间容量计算用（窗口 270×240，2026-10-20） */
-const WINDOW_H = 240
-/** 单条高度与堆叠间距（px；与 styles.css 的 .teaching-bubble height:30 / gap:4 对齐——改则同步） */
+/** 单条高度与堆叠间距（px；与 styles.css 的 .teaching-bubble height:30 / gap:4 对齐——改则同步。
+ *  UI 尺寸不随宠物缩放。 */
 const ITEM_H = 30
 const GAP = 4
-/**
- * 耳上空间（px）：列表底边距窗口底 312（= 底边窗内 y≈88——耳顶实测 y≈98 上方留 ~10px 空隙，
- * 2026-10-16 截图量取，样式在 styles.css）；顶部再留 TOP_SAFE 安全边距。
- * 容量由空间推算（当前 ≈2 条 + "+N"）——换兔子形象/窗口尺寸时同步三个常量。
- */
-const BUBBLES_BOTTOM = 152
+/** 顶部安全边距（px） */
 const TOP_SAFE = 6
-/** 耳上空间能容纳的条数（至少 1——保证最新一条永远可见） */
-const FIT_COUNT = Math.max(
-  1,
-  Math.floor((WINDOW_H - BUBBLES_BOTTOM - TOP_SAFE + GAP) / (ITEM_H + GAP))
-)
 
 export default function TeachingBubbles({
   items,
@@ -53,8 +43,17 @@ export default function TeachingBubbles({
   containerRef
 }: TeachingBubblesProps): ReactElement | null {
   if (!visible) return null
+  // 空间容量随宠物缩放档位变化（2026-10-21）：窗口高 = 画布 208×scale + 输入条 32；
+  // 列表底边距窗口底 = 耳顶 88×scale + 输入条 32（样式同步见 styles.css）。
+  const scale = getPetScale()
+  const windowH = Math.round(208 * scale) + 32
+  const bubblesBottom = Math.round(120 * scale) + 32
+  const fitCount = Math.max(
+    1,
+    Math.floor((windowH - bubblesBottom - TOP_SAFE + GAP) / (ITEM_H + GAP))
+  )
   // 取**最新的**若干条（空间受限时保证"最近的对话"可见）；顺序保持 旧→新（最新在下面）
-  const shown = items.slice(-Math.min(MAX_VISIBLE, FIT_COUNT))
+  const shown = items.slice(-Math.min(MAX_VISIBLE, fitCount))
   const hiddenCount = items.length - shown.length
   return (
     <div className="teaching-bubbles" ref={containerRef} data-testid="teaching-bubbles">

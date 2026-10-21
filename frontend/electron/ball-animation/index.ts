@@ -41,7 +41,8 @@ import {
 import { BALL_ANIMATION_CONFIG } from './config'
 import { locateTrayAnchor } from './anchor'
 import { setWindowMoveLock } from '../window/move-lock'
-import { PET_WINDOW_SIZE } from '../window'
+import { petWindowSize } from '../window'
+import { getPetScale } from '../pet-scale'
 import type { Point, Rect, Size } from '../window'
 
 const isDev = !app.isPackaged
@@ -165,10 +166,11 @@ const centerOf = (r: Rect): Point => ({ x: r.x + r.width / 2, y: r.y + r.height 
  * 取坐标、把尺寸归一到宠物窗设计尺寸（DIP）。
  * `getBounds()` 在 Windows fractional DPI 下回吐的是舍入值（400→401）；如果把它记为
  * "家"并原样 setBounds 回去，每次隐藏/显示都会再 +1px，宠物窗越撑越高（输入框下沉）。
- * 见 window/index.ts 的 PET_WINDOW_SIZE。
+ * 尺寸取**当前缩放档位**（魔法球动画期间禁止改档位，见 main.applyPetScale）。
  */
 function atDesignSize(r: Rect): Rect {
-  return { x: r.x, y: r.y, width: PET_WINDOW_SIZE.width, height: PET_WINDOW_SIZE.height }
+  const size = petWindowSize(getPetScale())
+  return { x: r.x, y: r.y, width: size.width, height: size.height }
 }
 
 /** 以 center 为中心的球窗（或缩形态窗口）矩形（整数） */

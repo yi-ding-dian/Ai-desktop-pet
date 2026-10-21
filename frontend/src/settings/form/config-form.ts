@@ -14,6 +14,7 @@
  */
 import type { ConfigData } from '../../shared/protocol'
 import { formatQuietHours, parseQuietHours } from './quiet-hours'
+import { isPetScale } from '../../shared/pet-scale'
 
 /** 表单值（UI 双向绑定；字符串字段保持"用户输入原样"，比较/提交时再 trim） */
 export interface FormValues {
@@ -24,6 +25,8 @@ export interface FormValues {
   /** 服务端给出的 key 掩码（只读展示，如 sk-****f3a9 / (未配置)） */
   llmKeyMasked: string
   petName: string
+  /** 宠物缩放档位（'0.8'/'0.9'/'1.0'/'1.1'/'1.2'；下拉选择，见 PetPanel） */
+  petScale: string
   /** 回复气泡自动收起时长（秒；字符串保存用户输入；0 = 不自动收起） */
   bubbleIdleSeconds: string
   voiceEnabled: boolean
@@ -54,6 +57,7 @@ export const EMPTY_FORM: FormValues = {
   llmKeyInput: '',
   llmKeyMasked: '',
   petName: '',
+  petScale: '1.0',
   bubbleIdleSeconds: '30',
   voiceEnabled: true,
   voiceName: '',
@@ -99,6 +103,12 @@ function asNumberText(v: unknown): string | undefined {
   return undefined
 }
 
+/** 缩放档位宽容取值：数值/数字字符串且在白名单内才回显（否则用默认 1.0）。 */
+function asScaleText(v: unknown): string | undefined {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN
+  return isPetScale(n) ? n.toFixed(1) : undefined
+}
+
 /** 严格解析非负整数（用户输入）：空串/小数/负号/科学计数法 → null。 */
 export function parseIntegerText(text: string): number | null {
   const trimmed = text.trim()
@@ -134,6 +144,7 @@ export function snapshotToForm(config: ConfigData): FormValues {
     llmKeyInput: '', // 永远不回填明文/掩码到输入框（掩码单独字段展示）
     llmKeyMasked: readKeyMask(config, llm),
     petName: asString(pet?.name) ?? '',
+    petScale: asScaleText(pet?.scale) ?? '1.0',
     bubbleIdleSeconds: asNumberText(pet?.bubble_idle_seconds) ?? '30',
     voiceEnabled: asBool(voice?.enabled) ?? true,
     voiceName: asString(voice?.voice) ?? '',
@@ -183,6 +194,10 @@ export function buildPatch(
     bubbleIdle !== parseIntegerText(baseline.bubbleIdleSeconds)
   ) {
     petPatch.bubble_idle_seconds = bubbleIdle
+  }
+  const petScale = Number(form.petScale)
+  if (isPetScale(petScale) && Math.abs(petScale - Number(baseline.petScale)) > 1e-6) {
+    petPatch.scale = petScale
   }
   if (Object.keys(petPatch).length > 0) patch.pet = petPatch
 
@@ -250,6 +265,7 @@ export function hasChanges(form: FormValues, baseline: FormValues): boolean {
   if (parseIntegerText(form.fileMaxChars) === null) return true
   if (parseIntegerText(form.contextTokens) === null) return true
   if (parseIntegerText(form.bubbleIdleSeconds) === null) return true
+  if (!isPetScale(Number(form.petScale))) return true
   if (parseIntegerText(form.searchCount) === null) return true
   return buildPatch(form, baseline, quiet.list) !== null
 }

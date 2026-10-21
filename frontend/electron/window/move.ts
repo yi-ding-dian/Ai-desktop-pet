@@ -56,11 +56,16 @@ export interface EasedMover {
  * 创建窗口缓动移动器。
  * 语义：同一时刻至多一个进行中的移动；新 moveTo 会抢占旧移动（旧移动以 completed:false 结束）。
  *
- * @param size 该窗口的固定设计尺寸（DIP）。**不要**用 `win.getBounds()` 的宽高代替：
- *   Windows fractional DPI 下 getBounds→setBounds 每轮会 +1px，自主走动会慢慢把宠物窗撑大
- *   （top 锚定的兔子不动、bottom 锚定的输入框逐次下沉）。见 window/index.ts 的 PET_WINDOW_SIZE。
+ * @param size 该窗口的当前设计尺寸（DIP），可传 getter（宠物缩放档位变化时尺寸随之更新）。
+ *   **不要**用 `win.getBounds()` 的宽高代替：Windows fractional DPI 下 getBounds→setBounds
+ *   每轮会 +1px，自主走动会慢慢把宠物窗撑大（top 锚定的兔子不动、bottom 锚定的输入框逐次下沉）。
+ *   见 window/index.ts 的 PET_WINDOW_SIZE / petWindowSize。
  */
-export function createEasedMover(win: BrowserWindow, size: Size): EasedMover {
+export function createEasedMover(
+  win: BrowserWindow,
+  size: Size | (() => Size)
+): EasedMover {
+  const sizeOf = (): Size => (typeof size === 'function' ? size() : size)
   let timer: NodeJS.Timeout | null = null
   let settle: ((result: MoveResult) => void) | null = null
 
@@ -97,10 +102,11 @@ export function createEasedMover(win: BrowserWindow, size: Size): EasedMover {
       }
 
       const start = win.getBounds()
-      const target = clampToWorkArea({ x, y }, size)
+      const sizeNow = sizeOf()
+      const target = clampToWorkArea({ x, y }, sizeNow)
 
       if (durationMs <= 0) {
-        win.setBounds({ x: target.x, y: target.y, width: size.width, height: size.height })
+        win.setBounds({ x: target.x, y: target.y, width: sizeNow.width, height: sizeNow.height })
         resolve({ x: target.x, y: target.y, completed: true })
         return
       }
@@ -119,11 +125,13 @@ export function createEasedMover(win: BrowserWindow, size: Size): EasedMover {
         }
         const p = Math.min(1, (Date.now() - t0) / durationMs)
         const e = easeInOutQuad(p)
+        // 每帧重取当前尺寸：缩放档位可能在中途变化
+        const sizeNow2 = sizeOf()
         win.setBounds({
           x: Math.round(start.x + (target.x - start.x) * e),
           y: Math.round(start.y + (target.y - start.y) * e),
-          width: size.width,
-          height: size.height
+          width: sizeNow2.width,
+          height: sizeNow2.height
         })
         if (p >= 1) {
           console.log(`[window/move] moveTo 完成 → ${target.x},${target.y}（${durationMs}ms）`)

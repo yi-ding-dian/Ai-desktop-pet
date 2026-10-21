@@ -20,9 +20,11 @@
 .settings-guide-bubble {
   position: absolute;
   /* 2026-10-20 窗口 270×240：兔子视觉约 x15–255 / y0–208，右侧/上方空间有限，
-     气泡放窗口左上、兔耳上方（尾巴仍指向兔头）。真机可再微调。 */
-  left: 10px;
-  top: 4px;
+     气泡放窗口左上、兔耳上方（尾巴仍指向兔头）。真机可再微调。
+     2026-10-21 宠物缩放：画布居中，左缘 = (窗口宽 − 240×scale)/2；气泡锚在画布左缘外
+     5×scale、顶部 4×scale（1.0x 时与原 left10/top4 完全一致：窗口 270、画布左缘 15）。 */
+  left: calc((100vw - 240px * var(--pet-scale, 1)) / 2 - 5px * var(--pet-scale, 1));
+  top: calc(4px * var(--pet-scale, 1));
   max-width: 150px;
   padding: 7px 10px;
   border-radius: 11px 11px 11px 5px; /* 左下角收窄，衔接尾巴 */

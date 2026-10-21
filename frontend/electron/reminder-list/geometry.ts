@@ -82,11 +82,15 @@ export function computeReminderListPlacement(
   content: Size,
   workArea: Rect,
   forceFull = false,
-  anchorTop: number | null = null
+  anchorTop: number | null = null,
+  scale = 1
 ): ReminderListPlacement {
+  // 视觉偏移随宠物缩放派生（2026-10-21）：兔子轮廓等比缩放，UI 面板尺寸不缩放
+  const visualInset = Math.round(PET_VISUAL_INSET_X * scale)
+  const inputTopY = Math.round(PET_CHAT_INPUT_TOP_Y * scale)
   // 贴兔子视觉边缘（宠物窗左右各有透明留白），而不是窗边缘
-  const visualLeft = petBounds.x + PET_VISUAL_INSET_X
-  const visualRight = petBounds.x + petBounds.width - PET_VISUAL_INSET_X
+  const visualLeft = petBounds.x + visualInset
+  const visualRight = petBounds.x + petBounds.width - visualInset
   const rightSpace = workArea.x + workArea.width - visualRight - LIST_GAP - EDGE_MARGIN
   const leftSpace = visualLeft - workArea.x - LIST_GAP - EDGE_MARGIN
 
@@ -96,11 +100,11 @@ export function computeReminderListPlacement(
     MAX_PANEL_WIDTH
   )
   // 列表底边固定"踩"在输入框上方；高度只能向上长，最多到工作区顶
-  const bottom = petBounds.y + PET_CHAT_INPUT_TOP_Y - LIST_INPUT_GAP
+  const bottom = petBounds.y + inputTopY - LIST_INPUT_GAP
   const heightLimit = Math.min(
     MAX_PANEL_HEIGHT,
     workArea.height - EDGE_MARGIN * 2,
-    PET_CHAT_INPUT_TOP_Y - EDGE_MARGIN - LIST_INPUT_GAP
+    inputTopY - EDGE_MARGIN - LIST_INPUT_GAP
   )
   const fullHeight = clamp(
     Math.round(content.height) || MIN_PANEL_HEIGHT,
@@ -197,7 +201,7 @@ export function computeReminderListPlacement(
     side === 'right'
       ? Math.min(visualRight + LIST_GAP, workArea.x + workArea.width - width - EDGE_MARGIN)
       : Math.max(workArea.x + EDGE_MARGIN, visualLeft - LIST_GAP - width)
-  const compactBottom = petBounds.y + PET_CHAT_INPUT_TOP_Y - LIST_INPUT_GAP
+  const compactBottom = petBounds.y + inputTopY - LIST_INPUT_GAP
   const y = clamp(
     compactBottom - COMPACT_HEIGHT,
     workArea.y + EDGE_MARGIN,
@@ -221,10 +225,14 @@ export function computeReminderListPlacement(
  */
 export function computeReminderBellPlacement(
   petBounds: Rect,
-  workArea: Rect
+  workArea: Rect,
+  scale = 1
 ): ReminderListPlacement {
-  const visualLeft = petBounds.x + PET_VISUAL_INSET_X
-  const visualRight = petBounds.x + petBounds.width - PET_VISUAL_INSET_X
+  const visualInset = Math.round(PET_VISUAL_INSET_X * scale)
+  const inputTopY = Math.round(PET_CHAT_INPUT_TOP_Y * scale)
+  const bellCenterAbove = Math.round(BELL_ONLY_CENTER_ABOVE_INPUT * scale)
+  const visualLeft = petBounds.x + visualInset
+  const visualRight = petBounds.x + petBounds.width - visualInset
   const rightSpace = workArea.x + workArea.width - visualRight - LIST_GAP - EDGE_MARGIN
   const leftSpace = visualLeft - workArea.x - LIST_GAP - EDGE_MARGIN
   // 与完整面板使用同一套选边标准（FULL_MIN_SPACE=140）：灰灯和面板永远同侧，
@@ -249,7 +257,7 @@ export function computeReminderBellPlacement(
         )
       : Math.max(workArea.x + EDGE_MARGIN, visualLeft - LIST_GAP - width)
   const centerY =
-    petBounds.y + PET_CHAT_INPUT_TOP_Y - BELL_ONLY_CENTER_ABOVE_INPUT
+    petBounds.y + inputTopY - bellCenterAbove
   const y = clamp(
     centerY - BELL_ONLY_HEIGHT / 2,
     workArea.y + EDGE_MARGIN,

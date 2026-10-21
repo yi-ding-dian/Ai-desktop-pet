@@ -12,7 +12,7 @@
  * 3. alwaysOnTop 可指定层级（'screen-saver' 可压住全屏应用），需要时在 setAlwaysOnTop 内升级。
  */
 import { BrowserWindow, screen } from 'electron'
-import { PET_WINDOW_SIZE, initialPetPosition } from './index'
+import { initialPetPosition, type Size } from './index'
 import type { PetWindowOptions, PlatformWindow, Point, Rect, WindowCapability } from './index'
 import { createEasedMover, readGeometry } from './move'
 import { isWindowMoveLocked } from './move-lock'
@@ -47,8 +47,10 @@ export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
 
   let clickThrough = false
   let dragOrigin: { start: Point; bounds: Rect } | null = null
+  /** 当前窗口尺寸（宠物缩放档位可调；拖拽/缓动移动都必须取它，不能写死基准值） */
+  let currentSize: Size = { width: opts.width, height: opts.height }
   /** 缓动移动器（P3 行为引擎：walk 的窗口移动） */
-  const mover = createEasedMover(win, PET_WINDOW_SIZE)
+  const mover = createEasedMover(win, () => currentSize)
 
   const capability: WindowCapability = {
     setClickThrough(on: boolean) {
@@ -86,8 +88,8 @@ export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
       win.setBounds({
         x: Math.round(bounds.x + (cursor.x - start.x)),
         y: Math.round(bounds.y + (cursor.y - start.y)),
-        width: PET_WINDOW_SIZE.width,
-        height: PET_WINDOW_SIZE.height
+        width: currentSize.width,
+        height: currentSize.height
       })
     },
 
@@ -96,15 +98,16 @@ export function createWin32Window(opts: PetWindowOptions): PlatformWindow {
       dragOrigin = null
     },
 
-    setScale(scale: number) {
+    applySize(size: Size) {
+      // 底部中心锚定：脚底/输入框位置不动，向左右/上方生长（宠物缩放）
+      if (currentSize.width === size.width && currentSize.height === size.height) return
       const b = win.getBounds()
-      const width = Math.round(opts.width * scale)
-      const height = Math.round(opts.height * scale)
+      currentSize = { width: size.width, height: size.height }
       win.setBounds({
-        x: Math.round(b.x + (b.width - width) / 2),
-        y: Math.round(b.y + (b.height - height) / 2),
-        width,
-        height
+        x: Math.round(b.x + (b.width - size.width) / 2),
+        y: Math.round(b.y + b.height - size.height),
+        width: size.width,
+        height: size.height
       })
     },
 

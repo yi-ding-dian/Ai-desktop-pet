@@ -26,6 +26,7 @@ import { getPetBridge } from './shared/pet-bridge'
 import { setupWsFromBridge } from './shared/ws-client/bridge'
 import type { WsClient, WsConnectionState } from './shared/ws-client'
 import { subscribeBubbleIdleSeconds } from './shared/bubble-settings'
+import { getPetScale } from './shared/pet-scale'
 // chat 域入口（输入行组件 + 说话气泡驱动 + 会话记录 + 情绪映射）
 import {
   ChatPanel,
@@ -610,9 +611,29 @@ export default function App(): ReactElement {
       // 宠物视觉包围盒（窗口坐标）：X11 setShape 会同时裁剪可见区域（verify-report 已知限制）——
       // 形状矩形必须 ≥ 形象渲染范围（含 SVG 表情符号如头顶 Zzz/"？"），否则形象被裁。
       // 调整形象尺寸 / 表情元素位置时，同步调整此值。
-      // 宠物视觉包围盒（窗口坐标，2026-10-20 窗口 270×240）：覆盖画布 240×208（x15–255，top0）
-      // 及表情/耳朵余量；输入框由 chatPanel 的 getBoundingClientRect 单独上报。
-      const rects: Rect[] = [{ x: 8, y: 0, width: 254, height: 208 }]
+      // 宠物视觉包围盒（窗口坐标）：按 hitbox 实测矩形派生——缩放档位变化、贴边动作移动
+      // 画布时都会自动跟随（不再写死 270×240 时代的 {8,0,254,208}）。左右各扩 7×scale
+      // 覆盖表情/耳朵余量；上下不加（1.0x 时与旧值完全一致：x8,w254,y0,h208）。
+      // X11 setShape 会同时裁剪可见区域，矩形必须覆盖完整形象。
+      const rects: Rect[] = []
+      const hb = hitboxRef.current?.getBoundingClientRect()
+      if (hb && hb.width > 0 && hb.height > 0) {
+        const margin = Math.round(7 * getPetScale())
+        rects.push({
+          x: Math.max(0, Math.round(hb.left) - margin),
+          y: Math.round(hb.top),
+          width: Math.round(hb.width) + margin * 2,
+          height: Math.round(hb.height)
+        })
+      } else {
+        // 兜底：hitbox 尚未布局（不应发生）
+        rects.push({
+          x: 8,
+          y: 0,
+          width: Math.max(1, window.innerWidth - 16),
+          height: Math.round(208 * getPetScale())
+        })
+      }
       for (const el of [
         hitboxRef.current,
         chatPanelRef.current,
