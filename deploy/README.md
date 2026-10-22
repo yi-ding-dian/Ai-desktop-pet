@@ -8,7 +8,8 @@
 
 | 脚本 | 平台 | 用途 |
 |---|---|---|
-| `build.bat` | Windows | 一键打包（NSIS 安装包 + portable 单文件）；双击即跑 |
+| `build.bat` | Windows | 一键全量打包（PyInstaller 后端 + NSIS 安装包 + portable 单文件）；双击即跑 |
+| `build-fast.bat` | Windows | 只重打前端与安装包，复用已有后端产物（改过 `backend/` 时不能用） |
 | `build.sh` | Linux | 一键打包（AppImage；`--with-deb` 另出 deb） |
 | `backend.spec` | 通用 | PyInstaller 配置（后端 onedir 产物）；**两条链路共用同一份** |
 | `prepare-pack-venv.sh` | Linux | 准备「打包专用 Python 环境」（见下文「坑 1」；build.sh 自动调用） |
@@ -63,9 +64,13 @@ npm run dist:linux-deb   # 同上 + deb
 ## Windows：双击 `build.bat`
 
 ```bat
-build.bat           :: NSIS 安装包 + portable 单文件（压缩级别默认 3）
-build.bat 5         :: 指定 7z 压缩级别 1/3/5/9（越大越慢、产物越小）
+build.bat           :: 全量：PyInstaller 后端 + 前端 + NSIS 安装包 + portable 单文件
+build-fast.bat      :: 只重打前端与安装包，复用 frontend\resources\backend（后端没改时用）
 ```
+
+- `build-fast.bat` 跳过后端重打包（约省 40s+，具体取决于机器），**改过 `backend/` 就必须跑全量**；没有后端产物时会直接报错。
+- 旧参数 `1/3/5/9` 已废弃：Windows 的 NSIS/portable 使用 NSIS 自带的 zlib，electron-builder 的 7z 压缩级别环境变量对它们无效；传了也不影响产物。
+- 只想验证应用能否运行：`cd frontend && npm run build && npx electron-builder --win --dir`，约 20s，产物在 `deploy/release/win-unpacked/`，不生成安装包。
 
 首次运行会自动 `npm install`（含 Electron 运行时下载，首次较慢）。结束时打印 `deploy\release\` 下的产物名。
 

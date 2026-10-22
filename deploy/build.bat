@@ -11,24 +11,16 @@ rem    ai-desktop-pet-<版本>-x64-setup.exe     安装包（NSIS，装到 %LOCALAPPDATA%
 rem    ai-desktop-pet-<版本>-x64-portable.exe  免安装单文件，双击即跑（对标 Linux 的 AppImage）
 rem  目标机免装 Node/Python（Electron 运行时 + Python 后端都打进包里）
 rem
-rem  用法：双击运行；或 build.bat [1|3|5|9]
-rem        数字 = 7z 压缩级别（默认 3）：越小打包越快、体积越大；越大越慢、越小
+rem  用法：双击运行（全量：后端 + 前端 + 安装包）。只重打前端请用 build-fast.bat
 rem  注意：**Windows 包必须在 Windows 上打**——PyInstaller 不支持交叉编译，
 rem        后端 backend.exe 只能在 Windows 上构建（electron-builder 那半倒是能交叉）
 rem ============================================
 
 rem --------------------------------------------
-rem  压缩级别：不传参则默认 3
-rem  （Windows 打包之所以比 Linux 慢：electron-builder 对 Windows 的 7z 载荷默认用最慢档
-rem    -mx=9，243MB 的 Electron 运行时要压好几分钟；调小这一档能明显提速、代价是产物变大）
+rem  旧参数 1/3/5/9 已废弃：electron-builder 的 7z 压缩级别只作用于归档类目标；
+rem  Windows 的 NSIS/portable 用 NSIS 自带的 zlib，传参数不会改变产物。
+rem  只重打前端（复用已有后端）请用同目录的 build-fast.bat。
 rem --------------------------------------------
-set "LEVEL=%~1"
-if "%LEVEL%"=="" set "LEVEL=3"
-if not "%LEVEL%"=="1" if not "%LEVEL%"=="3" if not "%LEVEL%"=="5" if not "%LEVEL%"=="9" (
-  echo [警告] 压缩级别只支持 1/3/5/9，收到 "%LEVEL%"，改用默认 3
-  set "LEVEL=3"
-)
-set ELECTRON_BUILDER_COMPRESSION_LEVEL=%LEVEL%
 
 rem --------------------------------------------
 rem  国内网络：electron-builder 首次运行要从 GitHub 下 winCodeSign / nsis 工具包（会卡死），
@@ -43,7 +35,7 @@ if not defined ELECTRON_MIRROR (
 )
 
 echo ============================================
-echo  AI 桌面宠物 Windows 打包（压缩级别 %LEVEL%）
+echo  AI 桌面宠物 Windows 打包（全量）
 echo ============================================
 echo.
 
@@ -106,7 +98,7 @@ if not exist "backend\.venv\Scripts\python.exe" (
 )
 
 echo.
-echo [2/4] PyInstaller 打后端 =^> frontend\resources\backend\ ...
+echo [2/4] PyInstaller 打包 =^> frontend\resources\backend\ ...
 if exist "frontend\resources\backend" rmdir /s /q "frontend\resources\backend"
 call backend\.venv\Scripts\pyinstaller.exe --noconfirm --clean --distpath frontend\resources --workpath deploy\.pyinstaller-build deploy\backend.spec
 if errorlevel 1 goto :err_pyi
