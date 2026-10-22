@@ -135,6 +135,8 @@ def test_runtime_assembles_default_tool_registry() -> None:
     assert [spec.name for spec in runtime.tools.all()] == [
         "open_settings",
         "open_work",
+        "disk_report",
+        "clean_disk",
     ]
 
 

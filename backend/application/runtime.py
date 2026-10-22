@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Sequence
 
 from loguru import logger
 
+from backend.application.disk_service import DiskService
 from backend.application.reminder_service import ReminderService
 from backend.application.voice import VoiceOut
 from backend.modules.llm.openai_compat import OpenAICompatProvider
@@ -147,9 +148,12 @@ class Runtime:
         # 联网搜索服务（2026-10-18）：由 main 用 bind_search 注入（它需要读
         # runtime.config.search 的活引用，构造顺序在 Runtime 之后）；工具随后注册。
         self._search = search
+        # 磁盘体检（2026-10-22）：只读、无外部依赖，Runtime 直接装配；
+        # 工具随之注册（backend 型 + feedback，结果回喂模型生成建议）。
+        self._disk = DiskService()
         # §4.7：内置工具（装配后只读）；未装配提醒/记忆本/搜索时注册表与旧版一致
         self._tools = build_default_registry(
-            self._reminders, self._memory_book, self._search
+            self._reminders, self._memory_book, self._search, disk=self._disk
         )
         self._engine: BehaviorEngine | None = None
         self._memory: MemoryService | None = None
@@ -206,7 +210,7 @@ class Runtime:
         """
         self._search = service
         self._tools = build_default_registry(
-            self._reminders, self._memory_book, self._search
+            self._reminders, self._memory_book, self._search, disk=self._disk
         )
 
     def voice_factory(self) -> VoiceOut:

@@ -35,7 +35,8 @@ class ToolSpec:
     - ``ack``：工具执行后"模型没说话时"的确认话兜底文案（chat 管道取用）——
       模型只回 tool_calls 不产出正文时，用它补一句口语回应，避免用户端静默；
     - ``prepare``：**frontend 型工具的前置解析**——chat 管道在 ``reply_end``
-      之后派发 ``tool_call`` 前调用 ``prepare(args, user_text)``。返回
+      之后派发 ``tool_call`` 前调用 ``prepare(args, user_text)``（可返回
+      awaitable，管道会 await）。返回
       ``{"ok": True, "args": {...}}`` 时用解析后的参数派发；返回
       ``{"ok": False, "code": "...", "message": "..."}`` 时作为后端结果发通知、
       不派发。用于"名字 → 精确值"的解析（记忆本 open_item / delete_path）：
@@ -55,7 +56,8 @@ class ToolSpec:
     executor: str = "frontend"
     handler: Callable[..., Any] | None = None
     ack: str = ""
-    prepare: Callable[[dict[str, Any], str], dict[str, Any]] | None = None
+    #: 可返回 dict 或 awaitable（chat 管道会 await；clean_disk 的解析要扫目录）
+    prepare: Callable[[dict[str, Any], str], Any] | None = None
     needs_user_text: bool = False
     feedback: bool = False
 

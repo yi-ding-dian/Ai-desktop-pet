@@ -61,6 +61,8 @@ export const IPC = {
   SYSTEM_OPEN_PATH: 'system:open-path',
   /** 宠物面：删除本机文件/文件夹——先弹气泡确认，确认后移入回收站（2026-10-18） */
   SYSTEM_DELETE_PATH_CONFIRM: 'system:delete-path-confirm',
+  /** 宠物面：清理磁盘白名单缓存——先弹气泡确认，确认后移入回收站（2026-10-22） */
+  SYSTEM_CLEAN_DISK_CONFIRM: 'system:clean-disk-confirm',
   /** 设置面：删除本机文件/文件夹——主进程原生确认框，确认后移入回收站 */
   SETTINGS_DELETE_PATH: 'settings:delete-path',
   /** 列出已安装应用（invoke → LauncherListResult；launcher 域，2026-10-19） */
@@ -772,6 +774,21 @@ export interface DeletePathRequest {
   name?: string
 }
 
+/**
+ * 清理白名单缓存的结果（2026-10-22）：
+ * - ``confirmed=false``：用户取消/超时——什么都没动；
+ * - ``ok=true``：内容已移入回收站；``movedBytes`` 是搬走的量（**清空回收站后才真正释放**）；
+ * - ``skipped``：被占用/无权限而跳过的条目数。
+ */
+export interface CleanDiskResult {
+  confirmed: boolean
+  ok: boolean
+  movedBytes?: number
+  moved?: number
+  skipped?: number
+  message?: string
+}
+
 /** 已安装应用条目（launcher 域；2026-10-19） */
 export interface LauncherAppEntry {
   /** 应用 id（Linux desktop id / Windows 相对快捷方式路径；子目录用 '-' 连接） */
@@ -915,6 +932,12 @@ export interface PetBridgeApi {
      * **用户点删除后**才把目标移入系统回收站（可恢复）。取消/超时什么都不做。
      */
     deletePathWithConfirm(path: string, name?: string): Promise<DeletePathResult>
+    /**
+     * 宠物面：清理磁盘白名单缓存——先从宠物头部弹「清理 / 取消」确认气泡，
+     * 用户点清理后才把内容移入系统回收站（可恢复；占用中的文件跳过）。
+     * 只传白名单 key（来自 disk_report）；主进程自行解析路径，不接受任意路径。
+     */
+    cleanDiskWithConfirm(keys: string[]): Promise<CleanDiskResult>
   }
   /**
    * 程序启动（launcher 域，2026-10-19）：

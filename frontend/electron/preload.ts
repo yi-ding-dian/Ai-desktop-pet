@@ -22,6 +22,7 @@ import {
   type BubbleUpdatePayload,
   type BallAnimationCommand,
   type BallAnimationPetReactionPayload,
+  type CleanDiskResult,
   type DeletePathResult,
   type FramelessMovePayload,
   type FramelessResizePayload,
@@ -214,6 +215,11 @@ const api: PetBridgeApi = {
     /** 宠物面：删除本机文件/文件夹（先弹气泡确认；确认后移入回收站） */
     deletePathWithConfirm(path: string, name?: string): Promise<DeletePathResult> {
       return ipcRenderer.invoke(IPC.SYSTEM_DELETE_PATH_CONFIRM, { path, name })
+    },
+
+    /** 宠物面：清理白名单缓存（先弹气泡确认；确认后移入回收站） */
+    cleanDiskWithConfirm(keys: string[]): Promise<CleanDiskResult> {
+      return ipcRenderer.invoke(IPC.SYSTEM_CLEAN_DISK_CONFIRM, { keys })
     }
   },
 

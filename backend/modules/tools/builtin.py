@@ -15,10 +15,14 @@
 - ``search``（2026-10-18）：联网搜索服务（application 层实现）——注册
   web_search / web_fetch 两个 **backend 型 + feedback** 工具：结果会回喂给模型，
   由 chat 管道再跑一轮 LLM 生成最终回答（搜索/抓取由 DeepSeek 官方接口提供）。
+- ``disk``（2026-10-22）：磁盘体检/清理服务（application 层实现）——注册
+  disk_report（backend + feedback，只读）与 clean_disk（frontend + prepare，
+  只传白名单 key，实际清理在主进程确认气泡后移入回收站）。
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from backend.modules.tools.registry import ToolRegistry, ToolSpec
@@ -28,6 +32,7 @@ def build_default_registry(
     reminders: Any | None = None,
     memory_book: Any | None = None,
     search: Any | None = None,
+    disk: Any | None = None,
 ) -> ToolRegistry:
     """构建内置工具注册表（每次返回全新实例，避免调用方之间共享可变状态）。"""
     registry = ToolRegistry()
@@ -61,6 +66,8 @@ def build_default_registry(
         _register_memory_book_tools(registry, memory_book)
     if search is not None:
         _register_search_tools(registry, search)
+    if disk is not None:
+        _register_disk_tools(registry, disk)
     return registry
 
 
@@ -465,5 +472,77 @@ def _register_search_tools(registry: ToolRegistry, search: Any) -> None:
             handler=web_fetch,
             feedback=True,
             ack="我看看这个网页～",
+        )
+    )
+
+
+# ---------------------------------------------------------------- 磁盘体检（只读，2026-10-22）
+
+
+def _register_disk_tools(registry: ToolRegistry, disk: Any) -> None:
+    """注册只读磁盘体检工具（handler 放线程池，避免阻塞事件循环）。"""
+
+    async def disk_report(args: dict[str, Any]) -> dict[str, Any]:
+        return await asyncio.to_thread(disk.report_from_tool)
+
+    async def prepare_clean(
+        args: dict[str, Any], user_text: str
+    ) -> dict[str, Any]:
+        return await disk.prepare_clean(args, user_text)
+
+    registry.register(
+        ToolSpec(
+            name="disk_report",
+            description=(
+                "只读查看本机各磁盘容量和常见临时/缓存目录占用，给出可清理建议。"
+                "用户问“C 盘还有多少空间 / 磁盘满了 / 哪些数据可以清理”时调用。"
+                "本工具不会删除任何文件；清理建议让用户自己确认操作。"
+            ),
+            parameters={"type": "object", "properties": {}},
+            executor="backend",
+            handler=disk_report,
+            feedback=True,
+            ack="好，我看看磁盘～",
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="clean_disk",
+            description=(
+                "清理磁盘缓存/临时目录（只处理 disk_report 返回的白名单 key）。"
+                "会先弹「清理 / 取消」确认气泡，用户点清理后才把内容移入回收站"
+                "（可恢复；正在使用的文件会跳过）。只有用户明确要求清理时才调用；"
+                "用户点确认前不要说已经清理完。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "targets": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "user_temp",
+                                "chrome_cache",
+                                "edge_cache",
+                                "firefox_cache",
+                                "thumbnails",
+                                "user_cache",
+                                "browser_cache",
+                            ],
+                        },
+                        "minItems": 1,
+                        "maxItems": 7,
+                        "description": (
+                            "要清理的缓存 key，必须来自 disk_report 的"
+                            "「小兔可代清理」列表；不要自己编路径"
+                        ),
+                    }
+                },
+                "required": ["targets"],
+            },
+            executor="frontend",
+            prepare=prepare_clean,
+            ack="好，我先跟你确认一下～",
         )
     )

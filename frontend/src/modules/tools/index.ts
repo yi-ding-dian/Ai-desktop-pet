@@ -10,6 +10,8 @@
  * - `delete_path`：后端已校验路径与保护目录，这里调主进程的
  *   system.deletePathWithConfirm——主进程弹「删除/取消」确认气泡，**用户点删除
  *   后**才移入回收站；成功后回传后端移除记忆本记录、清理长期记忆。
+ * - `clean_disk`（2026-10-22）：只传白名单 key（来自 disk_report），主进程自行
+ *   解析路径并弹「清理/取消」气泡，确认后把缓存内容移入回收站。
  *
  * 设计取舍：
  * - 执行落在前端：开窗/打开文件等能力属主进程/渲染侧（window.pet bridge），后端只
@@ -139,6 +141,45 @@ const TOOL_EXECUTORS = new Map<string, ToolExecutor>([
       } catch (err) {
         devLog(`memory_book_file_deleted 回传失败：${String(err)}`)
       }
+    }
+  ],
+  [
+    'clean_disk',
+    async (args) => {
+      const raw = args.targets
+      const keys = Array.isArray(raw)
+        ? raw.filter(
+            (item): item is string =>
+              typeof item === 'string' && item.trim().length > 0
+          )
+        : []
+      if (!keys.length) {
+        speakLocal('要清理哪些缓存？')
+        return
+      }
+      const system = getPetBridge().system
+      if (!system?.cleanDiskWithConfirm) {
+        speakLocal('这个版本还不支持清理磁盘。')
+        return
+      }
+      devLog(`clean_disk → 请求确认：${keys.join(',')}`)
+      let result
+      try {
+        result = await system.cleanDiskWithConfirm(keys)
+      } catch (err) {
+        devLog(`clean_disk 确认失败：${String(err)}`)
+        speakLocal('确认气泡没弹出来，再试一次好吗？')
+        return
+      }
+      if (!result.confirmed) {
+        speakLocal(result.message || '好，不清了。')
+        return
+      }
+      if (!result.ok) {
+        speakLocal(result.message || '没清成，可能被占用了。')
+        return
+      }
+      speakLocal(result.message || '清理完成啦。')
     }
   ],
   [

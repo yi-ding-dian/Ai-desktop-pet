@@ -24,6 +24,14 @@ import {
   resolveExistingPath,
   type ExtraProtectedRoot
 } from '../system/path-safety'
+import {
+  formatBytes,
+  measureCleanTargets,
+  resolveCleanTargets,
+  restoreStaged,
+  stageCleanTarget,
+  type StagedDirectory
+} from '../system/clean-paths'
 import type { Point, Rect, WindowCapability } from '../window'
 
 /** 窗口几何推送的 debounce 时长（ms）：拖拽/缓动期间大量 move 事件只推一次最终值 */
@@ -263,6 +271,107 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           ok: false,
           message: `删除失败：${(err as Error).message || err}`
         }
+      }
+    }
+  )
+
+  // 宠物面：清理白名单缓存（只接收 key，主进程自行解析路径；确认后移入回收站）
+  ipcMain.handle(
+    IPC.SYSTEM_CLEAN_DISK_CONFIRM,
+    async (event, payload: { keys?: unknown } | null) => {
+      if (event.sender !== ctx.window.webContents) {
+        return { confirmed: false, ok: false, message: '无权执行这个操作' }
+      }
+
+      const keys = Array.isArray(payload?.keys) ? payload.keys : []
+      const resolved = resolveCleanTargets(keys)
+      if (!resolved.ok) {
+        return { confirmed: false, ok: false, message: resolved.message }
+      }
+
+      const measured = measureCleanTargets(resolved.targets)
+      if (measured.totalBytes <= 0 && measured.totalFiles <= 0) {
+        return {
+          confirmed: false,
+          ok: false,
+          message: '这些位置现在是空的，没有需要清理的内容。'
+        }
+      }
+      const labels = measured.targets.map((target) => target.label).join('、')
+      const sizeText =
+        formatBytes(measured.totalBytes) + (measured.truncated ? ' 以上' : '')
+      const confirmed = await openConfirmBubble({
+        message:
+          `要清理这些缓存吗？\n${labels}\n共约 ${sizeText}\n` +
+          '会移入回收站（可恢复）；正在使用的文件会跳过。',
+        confirmLabel: '清理',
+        cancelLabel: '取消'
+      })
+      if (!confirmed) {
+        return { confirmed: false, ok: false }
+      }
+
+      // 确认后重新解析（弹窗期间缓存目录可能被关掉/重建）
+      const fresh = resolveCleanTargets(keys)
+      if (!fresh.ok) {
+        return { confirmed: true, ok: false, message: fresh.message }
+      }
+
+      let movedBytes = 0
+      let moved = 0
+      let skipped = 0
+      let capped = false
+      const stages: StagedDirectory[] = []
+      for (const target of fresh.targets) {
+        const result = await stageCleanTarget(target)
+        movedBytes += result.movedBytes
+        moved += result.moved
+        skipped += result.skipped
+        capped = capped || result.capped
+        stages.push(...result.stages)
+      }
+
+      let trashFailed = 0
+      for (const stage of stages) {
+        try {
+          await shell.trashItem(stage.dir)
+        } catch (err) {
+          // 回收站失败：把暂存内容搬回原位，避免“清理失败还丢了文件”
+          trashFailed += stage.count
+          movedBytes -= stage.bytes
+          moved -= stage.count
+          skipped += stage.count
+          await restoreStaged([stage])
+          console.warn(
+            `[ipc] 清理暂存目录移入回收站失败（已尝试搬回）：${stage.dir} / ${(err as Error).message}`
+          )
+        }
+      }
+
+      if (moved <= 0) {
+        return {
+          confirmed: true,
+          ok: false,
+          message: '没有搬走任何文件：它们可能都被占用了，关掉对应程序后再试。'
+        }
+      }
+
+      const parts = [
+        `已经把 ${moved} 个文件移入回收站（约 ${formatBytes(movedBytes)}）`,
+        '清空回收站后才会真正释放空间'
+      ]
+      if (skipped > 0) parts.push(`有 ${skipped} 个文件被占用/没权限，已跳过`)
+      if (capped) parts.push('项目太多，本次只处理了前 5000 项')
+      if (trashFailed > 0) {
+        parts.push(`有 ${trashFailed} 个文件没能移入回收站，已尝试放回原位`)
+      }
+      return {
+        confirmed: true,
+        ok: true,
+        movedBytes,
+        moved,
+        skipped,
+        message: parts.join('；') + '。'
       }
     }
   )
