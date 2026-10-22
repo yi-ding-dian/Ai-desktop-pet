@@ -39,6 +39,7 @@ import {
 } from './window'
 import { getPetScale, initPetScale, savePetScale } from './pet-scale'
 import { isWindowMoveLocked } from './window/move-lock'
+import { markAppQuitting } from './lifecycle'
 import { initFramelessWindows } from './window/frameless'
 
 /** 调试快捷键（避开常见组合，选用 F9–F11 + Ctrl+Shift） */
@@ -344,6 +345,11 @@ if (!app.requestSingleInstanceLock()) {
     return backendStopPromise
   }
 
+  /** 告别演出最长等待（ms）；超时继续走退出流程 */
+  const FAREWELL_TIMEOUT_MS = 5000
+  /** 退出硬兜底（ms）：超过则强制 app.exit(0) */
+  const QUIT_HARD_TIMEOUT_MS = 8000
+
   /**
    * 显式退出（托盘菜单「退出」，2026-10-18）：告别演出与后端清理**并行**，
    * 两者收尾后真正退出——用户看到"再见啦~ → 变球飞出屏幕"，后端也不留孤儿进程。
@@ -352,11 +358,26 @@ if (!app.requestSingleInstanceLock()) {
   async function quitWithFarewell(): Promise<void> {
     if (farewellStarted) return
     farewellStarted = true
+    // 硬兜底（2026-10-22 用户实测退出挂起）：动画/清理任何环节卡住都必须在时限内退出。
+    // 正常路径 app.quit() 后进程结束，本定时器随之消失；unref 不阻止正常退出。
+    const forceExit = setTimeout(() => {
+      console.warn(`[main] 退出超过 ${QUIT_HARD_TIMEOUT_MS}ms，强制退出`)
+      app.exit(0)
+    }, QUIT_HARD_TIMEOUT_MS)
+    forceExit.unref?.()
     console.log('[main] 托盘退出 → 告别演出')
     const cleanup = stopBackendOnce()
     try {
       const w = pet?.window
-      if (w && !w.isDestroyed() && w.isVisible()) await runFarewellAnimation(w)
+      if (w && !w.isDestroyed() && w.isVisible()) {
+        // 告别演出单独超时：看门狗之外再加一道，避免动画页就绪/球窗异常导致 await 不返回
+        await Promise.race([
+          runFarewellAnimation(w),
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, FAREWELL_TIMEOUT_MS)
+          })
+        ])
+      }
     } catch (err) {
       console.error('[main] 告别动画异常（继续退出）：', err)
     }
@@ -367,6 +388,8 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', (event) => {
     quitting = true
+    // 退出生命周期置位：此后设置回位/隐藏/显示动画不得再创建球窗（见 lifecycle.ts）
+    markAppQuitting()
     // 已由显式退出（或上一次拦截）发起清理：放行
     if (backendStopPromise) return
     event.preventDefault()

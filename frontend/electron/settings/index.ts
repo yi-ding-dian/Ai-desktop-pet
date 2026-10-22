@@ -34,6 +34,7 @@ import { getTeachingMode } from '../teaching'
 import { probeXWindowAlive, type XWindowAlive } from './window-health'
 import { petWindowSize } from '../window'
 import { getPetScale } from '../pet-scale'
+import { isAppQuitting } from '../lifecycle'
 import type { Rect, Size } from '../window'
 
 const isDev = !app.isPackaged
@@ -395,6 +396,15 @@ async function beginWizard(): Promise<void> {
  */
 async function returnPetHome(): Promise<void> {
   if (!wizardActive) return
+  // 应用退出中（will-quit 销毁设置窗 → closed → 本函数）：不再启动回位动画/创建球窗，
+  // 否则会把 Electron 的退出流程卡住（2026-10-22 用户实测）。只广播让渲染侧收尾。
+  if (isAppQuitting()) {
+    console.log('[settings] 应用退出中：跳过向导回位')
+    wizardActive = false
+    petHomeRect = null
+    broadcastVisibility('closed')
+    return
+  }
   if (returning) {
     console.log('[settings] 回位进行中，忽略重复回位请求')
     return

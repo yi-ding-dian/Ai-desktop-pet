@@ -43,6 +43,7 @@ import { locateTrayAnchor } from './anchor'
 import { setWindowMoveLock } from '../window/move-lock'
 import { petWindowSize } from '../window'
 import { getPetScale } from '../pet-scale'
+import { isAppQuitting } from '../lifecycle'
 import type { Point, Rect, Size } from '../window'
 
 const isDev = !app.isPackaged
@@ -863,6 +864,12 @@ async function runFlow(
 ): Promise<void> {
   const label = direction === 'hide' ? '隐藏' : direction === 'show' ? '显示' : '移动'
   if (win.isDestroyed()) return
+  // 退出中：不再创建球窗/逐帧动画（会卡住 Electron 退出），直接走降级路径
+  if (isAppQuitting()) {
+    console.log(`[ball-animation] 应用退出中：${label}直接降级`)
+    degrade()
+    return
+  }
   if (busy) {
     console.log(`[ball-animation] 动画进行中，忽略本次${label}请求`)
     return
@@ -1055,6 +1062,10 @@ export async function runLaunchAnimation(win: BrowserWindow): Promise<void> {
  */
 export async function runFarewellAnimation(win: BrowserWindow): Promise<void> {
   if (!win || win.isDestroyed()) return
+  if (isAppQuitting()) {
+    win.hide()
+    return
+  }
   if (!BALL_ANIMATION_CONFIG.ENABLED) return
   if (!win.isVisible()) {
     console.log('[ball-animation] 退出告别：宠物当前隐藏，跳过动画')
@@ -1157,6 +1168,12 @@ export async function runRelocateAnimation(
 ): Promise<void> {
   if (!win || win.isDestroyed()) return
   if (!BALL_ANIMATION_CONFIG.ENABLED) {
+    win.setBounds(target)
+    return
+  }
+  // 退出中：只瞬时落位，不建球窗（设置窗关闭回位可能发生在 will-quit 期间）
+  if (isAppQuitting()) {
+    console.log('[ball-animation] 应用退出中：跳过回位动画，直接落位')
     win.setBounds(target)
     return
   }
