@@ -1,7 +1,7 @@
 /**
  * 「从已安装应用中选择」内联面板（settings 域，2026-10-19）。
  *
- * 数据来自主进程 launcher 域（扫描 XDG `.desktop`）：
+ * 数据来自主进程 launcher 域（Windows 开始菜单 `.lnk` / Linux XDG `.desktop`）：
  * - 只显示可用条目；终端应用 / wrapper（flatpak/snap/env）/ 失效条目禁用并标注原因；
  * - 带字面参数的应用允许回填，但提示"单独运行可能不完整"；
  * - 点选后由 MemoryBookPanel 回填名字 + 可执行文件绝对路径（kind=program）。

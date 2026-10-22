@@ -2,8 +2,8 @@
  * launcher 域（2026-10-19）：已安装应用列表 + 启动程序 IPC。
  *
  * 这是**唯一执行边界**：
- * - `mode:'name'`：渲染进程只传名字，主进程自行扫描 `.desktop`、自行解析 Exec，
- *   不接受渲染进程给的可执行路径；
+ * - `mode:'name'`：渲染进程只传名字，主进程自行扫描开始菜单 `.lnk`（Windows）
+ *   或 XDG `.desktop`（Linux）、自行解析目标，不接受渲染进程给的可执行路径；
  * - `mode:'path'`：主进程独立校验可执行文件；`trusted=true`（记忆本登记，用户
  *   亲手添加）免确认，否则弹宠物确认气泡，用户点「运行」才 spawn；
  * - 永远 `shell:false`、参数数组；每 sender 每分钟 10 次限流。
@@ -21,7 +21,7 @@ import {
   type LauncherRunRequest,
   type LauncherRunResult
 } from '../ipc/channels'
-import { isLinux } from '../platform'
+import { isLinux, isWindows } from '../platform'
 import { isSettingsSender } from '../settings'
 import { execTargetIndex } from './desktop-entry'
 import {
@@ -30,6 +30,7 @@ import {
   validateLaunchableProgram
 } from './program-launch'
 import { clearAppCache, findApplications, scanApplications, type ScannedApp } from './application-scan'
+import { clearWindowsAppCache, scanWindowsApplications } from './windows-apps'
 
 const RATE_LIMIT = 10
 const RATE_WINDOW_MS = 60_000
@@ -70,6 +71,19 @@ function failure(code: string, message?: string): {
   return { ok: false, code, message }
 }
 
+/**
+ * 读取本机已安装应用：Windows 扫开始菜单 `.lnk`，Linux 扫 XDG `.desktop`。
+ * 两个平台各自缓存；不支持的平台由调用方先拦掉。
+ */
+function scanInstalled(options: { refresh?: boolean } = {}): ScannedApp[] {
+  return isWindows
+    ? scanWindowsApplications({ refresh: options.refresh })
+    : scanApplications({ refresh: options.refresh, locale: app.getLocale() })
+}
+
+/** 本机应用扫描支持的系统（macOS 未实现） */
+const launcherSupported = isWindows || isLinux
+
 function toEntry(appInfo: ScannedApp): LauncherAppEntry {
   return {
     id: appInfo.id,
@@ -89,20 +103,17 @@ async function handleList(
   if (!isTrustedSender(sender)) {
     return { ...failure('launcher_forbidden_sender', '无权执行这个操作'), apps: [] }
   }
-  if (!isLinux) {
+  if (!launcherSupported) {
     return {
       ...failure(
         'launcher_unsupported_platform',
-        '读取已安装应用目前只支持 Linux；可以手动填写可执行文件路径'
+        '读取已安装应用目前支持 Windows 和 Linux；可以手动填写可执行文件路径'
       ),
       apps: []
     }
   }
   try {
-    const apps = scanApplications({
-      refresh: raw?.refresh === true,
-      locale: app.getLocale()
-    })
+    const apps = scanInstalled({ refresh: raw?.refresh === true })
     return {
       ok: true,
       code: 'launcher_listed',
@@ -122,16 +133,10 @@ async function handleList(
 async function runNamedApp(
   name: string
 ): Promise<LauncherRunResult> {
-  let match = findApplications(
-    scanApplications({ locale: app.getLocale() }),
-    name
-  )
+  let match = findApplications(scanInstalled(), name)
   if (!match.match && !match.candidates.length && !match.unavailable) {
     // 可能是刚安装的应用：强制重扫一次
-    match = findApplications(
-      scanApplications({ refresh: true, locale: app.getLocale() }),
-      name
-    )
+    match = findApplications(scanInstalled({ refresh: true }), name)
   }
 
   if (match.candidates.length) {
@@ -156,7 +161,9 @@ async function runNamedApp(
     return {
       ok: false,
       code: 'launcher_not_found',
-      message: `没有找到名叫『${name}』的已安装应用。可以在设置 → 记忆本里登记程序路径。`
+      message: isWindows
+        ? `没有找到名叫『${name}』的已安装应用（微软商店应用暂不支持）。可以在设置 → 记忆本里登记程序路径。`
+        : `没有找到名叫『${name}』的已安装应用。可以在设置 → 记忆本里登记程序路径。`
     }
   }
   if (!found.available || !found.execPath) {
@@ -171,6 +178,13 @@ async function runNamedApp(
       ok: false,
       code: 'launcher_requires_terminal',
       message: `『${found.name}』是终端应用，小兔现在还不能在终端里启动它。`
+    }
+  }
+  if (isWindows && found.wrapper) {
+    return {
+      ok: false,
+      code: 'launcher_requires_shell',
+      message: `『${found.name}』需要通过开始菜单启动，小兔不能直接启动它。`
     }
   }
 
@@ -242,8 +256,11 @@ async function handleRun(
   if (!isTrustedSender(sender)) {
     return failure('launcher_forbidden_sender', '无权执行这个操作')
   }
-  if (!isLinux) {
-    return failure('launcher_unsupported_platform', '启动本机程序目前只支持 Linux')
+  if (!launcherSupported) {
+    return failure(
+      'launcher_unsupported_platform',
+      '启动本机程序目前支持 Windows 和 Linux'
+    )
   }
   if (rateLimited(sender.id)) {
     return failure('launcher_rate_limited', '启动太频繁了，稍等一下再试。')
@@ -294,4 +311,5 @@ export function destroyLauncher(): void {
   ipcMain.removeHandler(IPC.LAUNCHER_RUN)
   rateBuckets.clear()
   clearAppCache()
+  clearWindowsAppCache()
 }
