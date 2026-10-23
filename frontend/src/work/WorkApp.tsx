@@ -35,6 +35,7 @@ import {
   useFramelessResize
 } from '../shared/ui'
 import { renderMarkdownWithCitations } from '../board/markdown'
+import CodingPanel from './CodingPanel'
 import Composer from './Composer'
 import MessageNavigator from './MessageNavigator'
 import ThinkingBlock from './ThinkingBlock'
@@ -734,6 +735,8 @@ export default function WorkApp(): ReactElement {
       ) : null}
 
       <div className={`work-chat-layer${browsing ? ' work-chat-hidden' : ''}`}>
+        {/* 编码代理步骤流（2026-10-23）：只在有任务时显示 */}
+        <CodingPanel />
         <div className="work-body">
           <div className="work-scroll pui-scroll" ref={scrollRef} onScroll={handleScroll}>
             {state.messages.length === 0 ? (

@@ -15,6 +15,14 @@ import {
 } from 'electron'
 import { IPC, IPC_EVENTS, type PetWindowEdge, type WindowDebugState } from './channels'
 import { backendManager } from '../backend-process'
+import { codingService } from '../coding/service'
+import { detectCodingRuntime } from '../coding/runtime'
+import { harnessInstaller, uninstallHarness } from '../coding/installer'
+import {
+  codingPreferencesFile,
+  loadCodingPreferences,
+  saveCodingPreferences
+} from '../coding/preferences'
 import { resolveAppIconImage } from '../app-icon'
 import { openConfirmBubble, setEdgeSpeechSuppression } from '../bubble'
 import {
@@ -387,6 +395,93 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       }
     }
   )
+
+  // 编码代理（2026-10-23）：任务编排在 coding 域，这里只做通道与来源校验。
+  // 只有宠物窗能发起任务（工作窗/设置窗只能查状态或中止）。
+  ipcMain.handle(IPC.CODING_START, async (event, payload: unknown) => {
+    if (event.sender !== ctx.window.webContents) {
+      return { ok: false, message: '无权发起编码任务' }
+    }
+    const request =
+      payload && typeof payload === 'object'
+        ? (payload as { task?: unknown; workspace?: unknown })
+        : {}
+    return codingService.start(
+      {
+        task: typeof request.task === 'string' ? request.task : '',
+        workspace:
+          typeof request.workspace === 'string' ? request.workspace : undefined
+      },
+      ctx.window
+    )
+  })
+
+  ipcMain.handle(IPC.CODING_CANCEL, async () => codingService.cancel())
+
+  ipcMain.handle(IPC.CODING_GET_STATE, async () => codingService.getState())
+
+  // 编码代理运行时（2026-10-23）：检测 / 安装到应用目录 / 卸载。
+  // 安装与卸载都要求当前没有任务在跑（避免动正在使用的文件）。
+  ipcMain.handle(IPC.CODING_DETECT, async () => detectCodingRuntime())
+
+  ipcMain.handle(IPC.CODING_INSTALL, async () => {
+    if (codingService.isBusy()) {
+      return { ok: false, message: '编码任务正在跑，先中止任务再安装。' }
+    }
+    return harnessInstaller.install((progress) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed()) continue
+        try {
+          win.webContents.send(IPC_EVENTS.CODING_INSTALL_PROGRESS, progress)
+        } catch {
+          // 窗口销毁中
+        }
+      }
+    })
+  })
+
+  ipcMain.handle(IPC.CODING_CANCEL_INSTALL, async () => harnessInstaller.cancel())
+
+  // 偏好文件放在 userData 下（非敏感开关；Key 不落盘）
+  ipcMain.handle(IPC.CODING_GET_PREFERENCES, async () =>
+    loadCodingPreferences(codingPreferencesFile(app.getPath('userData')))
+  )
+
+  ipcMain.handle(IPC.CODING_SET_PREFERENCES, async (_event, payload: unknown) => {
+    const file = codingPreferencesFile(app.getPath('userData'))
+    const current = loadCodingPreferences(file)
+    const next = payload as { reuseLlmKey?: unknown } | null
+    return saveCodingPreferences(file, {
+      reuseLlmKey:
+        typeof next?.reuseLlmKey === 'boolean'
+          ? next.reuseLlmKey
+          : current.reuseLlmKey
+    })
+  })
+
+  ipcMain.handle(IPC.CODING_UNINSTALL, async (event) => {
+    if (codingService.isBusy()) {
+      return { ok: false, message: '编码任务正在跑，先中止任务再卸载。' }
+    }
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.MessageBoxOptions = {
+      type: 'warning',
+      buttons: ['删除', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      message: '要删除小兔安装的编码代理吗？',
+      detail:
+        '只删除小兔数据目录里的 dsh runtime，不影响你自己在系统里安装的 dsh。'
+    }
+    const response = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options)
+    if (response.response !== 0) {
+      return { ok: false, message: '已取消。' }
+    }
+    return uninstallHarness()
+  })
 
   // 设置面：原生确认框（删除/取消），确认后同样移入回收站
   ipcMain.handle(IPC.SETTINGS_DELETE_PATH, async (event, raw: unknown) => {

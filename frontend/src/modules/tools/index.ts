@@ -183,6 +183,41 @@ const TOOL_EXECUTORS = new Map<string, ToolExecutor>([
     }
   ],
   [
+    'delegate_coding',
+    async (args) => {
+      // 编码代理（2026-10-23）：真正的执行在 Electron 主进程拉起的 dsh 子进程里。
+      // 后端 prepare 已校验 task 与 workspace；这里只发起并反馈启动结果。
+      const task = str(args, 'task')
+      const workspace = str(args, 'workspace')
+      if (!task) {
+        speakLocal('要做什么？给我一句具体的任务描述。')
+        return
+      }
+      const coding = getPetBridge().coding
+      if (!coding?.start) {
+        speakLocal('这个版本还不支持编码代理。')
+        return
+      }
+      devLog(`delegate_coding → ${workspace || '（弹窗选择工作区）'}`)
+      // 握手要几秒：先给一句反馈，避免用户以为没反应
+      speakLocal('好，我安排一下～')
+      try {
+        const result = await coding.start({
+          task,
+          ...(workspace ? { workspace } : {})
+        })
+        if (!result.ok) {
+          speakLocal(result.message || '没能开始这个任务。')
+          return
+        }
+        speakLocal('好，开工啦～进度会显示在工作窗里。')
+      } catch (err) {
+        devLog(`delegate_coding 失败：${String(err)}`)
+        speakLocal('编码代理没启动起来，再试一次好吗？')
+      }
+    }
+  ],
+  [
     'run_program',
     async (args) => {
       // 后端 prepare_run_program 已把来源解析成三种 kind：

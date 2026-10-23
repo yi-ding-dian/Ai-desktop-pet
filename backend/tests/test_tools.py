@@ -96,7 +96,11 @@ def test_default_registry_contains_open_settings() -> None:
     assert spec.executor == "frontend"  # 前端执行（打开设置窗）
     assert spec.parameters == {"type": "object", "properties": {}}  # 无参工具
     assert spec.ack  # 模型没说话时的确认话兜底
-    assert [s.name for s in registry.all()] == ["open_settings", "open_work"]
+    assert [s.name for s in registry.all()] == [
+        "open_settings",
+        "open_work",
+        "delegate_coding",
+    ]
     # 模型可见的描述：明确"什么场景用"
     assert "设置" in spec.description
 
@@ -135,6 +139,7 @@ def test_default_registry_registers_backend_reminder_tools() -> None:
         "create_reminder",
         "list_reminders",
         "cancel_reminder",
+        "delegate_coding",
     ]
     spec = registry.get("create_reminder")
     assert spec is not None and spec.executor == "backend" and spec.handler is not None
@@ -150,6 +155,7 @@ def test_default_registry_without_service_keeps_old_tools() -> None:
     assert [s.name for s in build_default_registry().all()] == [
         "open_settings",
         "open_work",
+        "delegate_coding",
     ]
 
 
@@ -193,6 +199,7 @@ def test_default_registry_registers_memory_book_tools() -> None:
         "open_item",
         "delete_path",
         "run_program",
+        "delegate_coding",
     ]
     assert registry.get("save_item").executor == "backend"
     assert registry.get("delete_item").needs_user_text is True
@@ -265,6 +272,7 @@ def test_default_registry_registers_search_tools() -> None:
         "open_work",
         "web_search",
         "web_fetch",
+        "delegate_coding",
     ]
     search = registry.get("web_search")
     assert search is not None

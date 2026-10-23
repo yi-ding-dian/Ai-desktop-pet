@@ -69,6 +69,24 @@ export const IPC = {
   LAUNCHER_LIST_APPS: 'launcher:list-apps',
   /** 启动本机程序（invoke → LauncherRunResult；launcher 域，2026-10-19） */
   LAUNCHER_RUN: 'launcher:run',
+  /** 编码代理：开始任务（invoke: CodingStartRequest → CodingStartResult；2026-10-23） */
+  CODING_START: 'coding:start',
+  /** 编码代理：中止当前任务（invoke → CodingCancelResult） */
+  CODING_CANCEL: 'coding:cancel',
+  /** 编码代理：取状态快照（invoke → CodingState；工作窗初始化） */
+  CODING_GET_STATE: 'coding:get-state',
+  /** 编码代理：探测运行时状态（invoke → CodingRuntimeStatus；2026-10-23） */
+  CODING_DETECT: 'coding:detect',
+  /** 编码代理：安装到应用数据目录（invoke → CodingInstallResult；流式进度走事件） */
+  CODING_INSTALL: 'coding:install',
+  /** 编码代理：取消安装 */
+  CODING_CANCEL_INSTALL: 'coding:cancel-install',
+  /** 编码代理：删除应用内安装（不影响系统全局 dsh） */
+  CODING_UNINSTALL: 'coding:uninstall',
+  /** 编码代理：读取偏好（invoke → CodingPreferences） */
+  CODING_GET_PREFERENCES: 'coding:get-preferences',
+  /** 编码代理：写入偏好（invoke(CodingPreferences) → CodingPreferences） */
+  CODING_SET_PREFERENCES: 'coding:set-preferences',
   /** 查询后端状态快照（invoke → BackendSnapshot；渲染进程晚订阅时补状态） */
   BACKEND_GET_SNAPSHOT: 'backend:get-snapshot',
   /** 教学模式：请求进入（payload: TeachingEnterReason；宠物面"关键词"或内部） */
@@ -148,7 +166,11 @@ export const IPC_EVENTS = {
   /** 生命周期台词（主 → 宠物窗；payload: PetSayLinePayload；启动"我来了~"/退出"再见啦~"经说话气泡展示） */
   PET_SAY_LINE: 'pet:say-line',
   /** 宠物缩放档位变化（主 → 宠物窗；payload: number；渲染层据此更新 CSS 变量） */
-  PET_SCALE_CHANGED: 'pet:scale-changed'
+  PET_SCALE_CHANGED: 'pet:scale-changed',
+  /** 编码代理状态快照（主 → 所有窗口；payload: CodingState；2026-10-23） */
+  CODING_STATE: 'coding:state',
+  /** 编码代理安装进度（主 → 所有窗口；payload: CodingInstallProgress） */
+  CODING_INSTALL_PROGRESS: 'coding:install-progress'
 } as const
 
 /** 通道名：魔法球捕获动画（ball-animation 域：主进程 ↔ fx 动画页） */
@@ -838,6 +860,111 @@ export interface LauncherRunResult {
   candidates?: string[]
 }
 
+/** 编码代理任务状态（2026-10-23） */
+export type CodingStatus =
+  | 'idle'
+  | 'starting'
+  | 'running'
+  | 'waiting'
+  | 'done'
+  | 'cancelled'
+  | 'error'
+
+/** 步骤类型：思考/回复/工具调用/计划/系统提示 */
+export type CodingStepKind = 'thought' | 'message' | 'tool' | 'plan' | 'system'
+
+export interface CodingStep {
+  id: string
+  kind: CodingStepKind
+  title: string
+  /** 工具参数/文本摘要；主进程已裁剪长度 */
+  detail?: string
+  status: 'running' | 'done' | 'failed'
+  at: number
+}
+
+/**
+ * 编码任务状态快照（主进程是唯一事实来源）：
+ * 每次变化整份推给渲染层，避免增量合并的时序问题；步骤上限由主进程裁剪。
+ */
+export interface CodingState {
+  taskId: string | null
+  status: CodingStatus
+  /** 用户/模型给出的任务描述（展示用，已裁剪） */
+  task: string
+  /** 授权的工作区绝对路径 */
+  workspace: string
+  steps: CodingStep[]
+  /** 完成时的助手总结（最后一条回复步骤的文本） */
+  summary?: string
+  /** 失败原因（可展示） */
+  error?: string
+  startedAt?: number
+  endedAt?: number
+}
+
+export interface CodingStartRequest {
+  task: string
+  /** 可选绝对目录；缺省时由主进程弹目录选择框（仍需用户确认） */
+  workspace?: string
+}
+
+export interface CodingStartResult {
+  ok: boolean
+  message?: string
+  taskId?: string
+}
+
+export interface CodingCancelResult {
+  ok: boolean
+  message?: string
+}
+
+/** 编码代理运行时状态（设置页「检测」结果，2026-10-23） */
+export type CodingRuntimeState = 'ready' | 'npx-only' | 'outdated' | 'unavailable'
+
+export interface CodingRuntimeStatus {
+  state: CodingRuntimeState
+  source: 'app' | 'path' | 'npx' | 'none'
+  version: string | null
+  executable: string | null
+  /** 应用内安装目录（展示/卸载目标） */
+  runtimeDir: string
+  runtimeInstalled: boolean
+  npmAvailable: boolean
+  npxAvailable: boolean
+  message: string
+}
+
+export type CodingInstallPhase =
+  | 'starting'
+  | 'output'
+  | 'verifying'
+  | 'done'
+  | 'error'
+  | 'cancelled'
+
+export interface CodingInstallProgress {
+  phase: CodingInstallPhase
+  /** npm 输出的一行（phase=output） */
+  line?: string
+  /** 阶段说明/结果文案 */
+  message?: string
+}
+
+export interface CodingInstallResult {
+  ok: boolean
+  message: string
+  /** 安装/卸载后的最新探测结果 */
+  status?: CodingRuntimeStatus
+}
+
+/** 编码代理偏好（非敏感开关；Key 不落盘） */
+export interface CodingPreferences {
+  /** 复用「设置 → LLM」里保存的 API Key（默认开） */
+  reuseLlmKey: boolean
+}
+
 /**
  * 用户选中的文件（文件分析 P1）。
  * 只在主进程 stat 元信息，不读正文；正文由本地后端按路径读取并执行限额。
@@ -939,6 +1066,35 @@ export interface PetBridgeApi {
      * 只传白名单 key（来自 disk_report）；主进程自行解析路径，不接受任意路径。
      */
     cleanDiskWithConfirm(keys: string[]): Promise<CleanDiskResult>
+  }
+  /**
+   * 编码代理（DeepSeek Harness / ACP，2026-10-23）：
+   * 宠物只负责发起与展示；编码循环、沙箱、工具都在 dsh 子进程里。
+   * 主进程负责工作区授权、启动确认、权限气泡转发与进程回收。
+   */
+  coding: {
+    /** 开始一个编码任务（工作区为空时由主进程弹目录选择框） */
+    start(request: CodingStartRequest): Promise<CodingStartResult>
+    /** 中止当前任务（取消 ACP 会话并回收进程树） */
+    cancel(): Promise<CodingCancelResult>
+    /** 取状态快照（工作窗初始化） */
+    getState(): Promise<CodingState>
+    /** 订阅状态变化（整份快照推送）；返回取消订阅函数 */
+    onState(cb: (state: CodingState) => void): () => void
+    /** 探测编码代理运行时（设置页「检测」） */
+    detect(): Promise<CodingRuntimeStatus>
+    /** 安装到应用数据目录（流式进度见 onInstallProgress） */
+    install(): Promise<CodingInstallResult>
+    /** 取消正在进行的安装 */
+    cancelInstall(): Promise<CodingInstallResult>
+    /** 删除应用内安装（不影响系统全局 dsh） */
+    uninstall(): Promise<CodingInstallResult>
+    /** 订阅安装进度；返回取消订阅函数 */
+    onInstallProgress(cb: (progress: CodingInstallProgress) => void): () => void
+    /** 读取编码代理偏好（是否复用宠物 LLM Key） */
+    getPreferences(): Promise<CodingPreferences>
+    /** 写入编码代理偏好 */
+    setPreferences(preferences: CodingPreferences): Promise<CodingPreferences>
   }
   /**
    * 程序启动（launcher 域，2026-10-19）：

@@ -41,6 +41,8 @@ export class BackendProcessManager {
   private message: string | undefined
   private port: number | undefined
   private token: string | undefined
+  /** 内部 HTTP token：只给主进程用，绝不放进 getSnapshot（渲染层拿不到） */
+  private internalToken: string | undefined
   private pid: number | undefined
   /** 主动停止标志：置位后不再自动重启 */
   private stopping = false
@@ -66,6 +68,8 @@ export class BackendProcessManager {
 
     // token 每次启动随机生成（32 字节 hex），经 env 传给 Python（设计文档 §3.4）
     this.token = randomBytes(32).toString('hex')
+    // 内部 token 独立生成：WS 的 token 会下发给渲染层，内部端点不能共用
+    this.internalToken = randomBytes(32).toString('hex')
     let child: ChildProcess
     try {
       child = spawn(this.spec.command, this.spec.args, {
@@ -73,6 +77,7 @@ export class BackendProcessManager {
         env: {
           ...process.env,
           PET_TOKEN: this.token,
+          PET_INTERNAL_TOKEN: this.internalToken,
           PET_DATA_DIR: app.getPath('userData'),
           // 运行模式标记（后端当前未消费，按设计文档 §3.4 预留）
           PET_MODE: app.isPackaged ? 'prod' : 'dev',
@@ -153,6 +158,14 @@ export class BackendProcessManager {
       pid: this.pid,
       appVersion: app.getVersion()
     }
+  }
+
+  /**
+   * 内部 HTTP token（主进程专用）。
+   * 刻意不放进 getSnapshot：那份快照会经 IPC 下发渲染层，内部 token 必须更窄。
+   */
+  getInternalToken(): string | undefined {
+    return this.state === 'ready' ? this.internalToken : undefined
   }
 
   // ---------------- 内部实现 ----------------

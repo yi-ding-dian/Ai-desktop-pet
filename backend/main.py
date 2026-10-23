@@ -60,6 +60,9 @@ def main() -> int:
     setup_logging(level=os.environ.get("PET_LOG_LEVEL", "INFO"))
     logger.info("启动后端（{}模式）", "开发" if dev_mode else "生产")
 
+    # 主进程内部 token（只用于 /internal/*；与 WS token 分离，渲染层拿不到）
+    internal_token = (os.environ.get("PET_INTERNAL_TOKEN") or "").strip() or None
+
     # 加载配置：文件不存在时在 PET_DATA_DIR 生成默认模板（§6.3）
     app_config = load_config()
     logger.info("配置已加载：llm.model={} pet.name={}", app_config.llm.model, app_config.pet.name)
@@ -176,7 +179,10 @@ def main() -> int:
         memory_enabled=lambda: runtime.config.memory.enabled,
     )
     app = create_app(
-        dispatcher=dispatcher, app_version=__version__, voice_factory=runtime.voice_factory
+        dispatcher=dispatcher,
+        app_version=__version__,
+        voice_factory=runtime.voice_factory,
+        internal_token=internal_token,
     )
 
     config = uvicorn.Config(

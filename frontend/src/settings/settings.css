@@ -366,3 +366,86 @@ body {
 .set-search-billing p {
   margin: 4px 0 0;
 }
+
+/* ---------------------------------------------------------------- 编码代理分区（2026-10-23） */
+
+.set-coding-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-family: var(--ui-font-sans);
+  font-size: var(--ui-font-size-sm);
+}
+
+.set-coding-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ui-fg-faint);
+}
+
+.set-coding-dot.ok {
+  background: var(--ui-accent);
+}
+
+.set-coding-dot.fail {
+  background: var(--ui-danger);
+}
+
+.set-coding-dot.info {
+  background: var(--ui-link);
+}
+
+.set-coding-state {
+  flex: none;
+  color: var(--ui-fg-dim);
+}
+
+.set-coding-state.ok {
+  color: var(--ui-accent-strong);
+}
+
+.set-coding-state.fail {
+  color: var(--ui-danger);
+}
+
+.set-coding-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ui-fg-dim);
+}
+
+.set-coding-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 2px 0 10px;
+  color: var(--ui-fg-faint);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+  word-break: break-all;
+}
+
+.set-coding-log {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  max-height: 150px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--ui-code-bg);
+  color: var(--ui-code-fg);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.set-coding-hint {
+  margin: 8px 0 0;
+  color: var(--ui-fg-faint);
+  font-family: var(--ui-font-sans);
+  font-size: var(--ui-font-size-xs);
+  line-height: 1.6;
+}

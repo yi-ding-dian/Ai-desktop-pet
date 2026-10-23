@@ -223,6 +223,72 @@ const api: PetBridgeApi = {
     }
   },
 
+  coding: {
+    /** 开始编码任务（工作区为空时主进程弹目录选择框，随后仍有确认气泡） */
+    start(request) {
+      return ipcRenderer.invoke(IPC.CODING_START, request)
+    },
+
+    /** 中止当前编码任务并回收子进程树 */
+    cancel() {
+      return ipcRenderer.invoke(IPC.CODING_CANCEL)
+    },
+
+    /** 取状态快照（工作窗挂载时补状态） */
+    getState() {
+      return ipcRenderer.invoke(IPC.CODING_GET_STATE)
+    },
+
+    /** 订阅状态快照推送；返回取消订阅函数 */
+    onState(cb) {
+      const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof cb>[0]): void => cb(state)
+      ipcRenderer.on(IPC_EVENTS.CODING_STATE, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.CODING_STATE, listener)
+      }
+    },
+
+    /** 探测运行时（是否已装 / 版本 / 能否安装） */
+    detect() {
+      return ipcRenderer.invoke(IPC.CODING_DETECT)
+    },
+
+    /** 安装到小兔自己的数据目录（不污染全局 npm） */
+    install() {
+      return ipcRenderer.invoke(IPC.CODING_INSTALL)
+    },
+
+    cancelInstall() {
+      return ipcRenderer.invoke(IPC.CODING_CANCEL_INSTALL)
+    },
+
+    uninstall() {
+      return ipcRenderer.invoke(IPC.CODING_UNINSTALL)
+    },
+
+    /** 订阅安装进度（npm 输出/阶段变化）；返回取消订阅函数 */
+    onInstallProgress(cb) {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        progress: Parameters<typeof cb>[0]
+      ): void => cb(progress)
+      ipcRenderer.on(IPC_EVENTS.CODING_INSTALL_PROGRESS, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_EVENTS.CODING_INSTALL_PROGRESS, listener)
+      }
+    },
+
+    /** 读取偏好（是否复用宠物 LLM Key） */
+    getPreferences() {
+      return ipcRenderer.invoke(IPC.CODING_GET_PREFERENCES)
+    },
+
+    /** 写入偏好 */
+    setPreferences(preferences) {
+      return ipcRenderer.invoke(IPC.CODING_SET_PREFERENCES, preferences)
+    }
+  },
+
   launcher: {
     /** 已安装应用列表（设置页选择器；主进程扫描 .desktop 并缓存） */
     listApps(request?: LauncherListRequest): Promise<LauncherListResult> {

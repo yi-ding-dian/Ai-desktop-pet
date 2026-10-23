@@ -17,6 +17,7 @@ import Section from '../components/section'
 import { Field, SelectField, TextField } from '../components/fields'
 import { findProvider, LLM_PROVIDER_PRESETS, matchProviderId } from '../form/llm-providers'
 import type { TestResult } from '../hooks/useSettingsController'
+import CodingAgentSection from './CodingAgentSection'
 import type { PanelProps } from './panel-props'
 
 interface LlmPanelProps extends PanelProps {
@@ -77,7 +78,8 @@ export default function LlmPanel({
   }, [models, form.llmModel])
 
   return (
-    <Section title="LLM" desc="对话模型（OpenAI 兼容接口）。密钥保存在本机钥匙串，不写入配置文件。">
+    <>
+      <Section title="LLM" desc="对话模型（OpenAI 兼容接口）。密钥保存在本机钥匙串，不写入配置文件。">
       <div className={guide ? 'set-guide-focus' : undefined}>
         <Field
           label={guide ? '① 选择服务商' : '服务商'}
@@ -181,6 +183,9 @@ export default function LlmPanel({
           </span>
         ) : null}
       </div>
-    </Section>
+      </Section>
+      {/* 首启引导先专注 Key，不显示编码代理；正常设置里放在 LLM 分区下方 */}
+      {guide ? null : <CodingAgentSection />}
+    </>
   )
 }

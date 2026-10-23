@@ -21,11 +21,15 @@
 - ``system``（2026-10-23）：只读系统巡检服务（application 层实现）——注册
   inspect_system（backend + feedback）：系统信息/磁盘/目录占用/大文件/启动项/
   已安装程序/服务/进程；不执行任意命令、不读写文件正文。
+- 编码代理（2026-10-23）：注册 delegate_coding（frontend + prepare）。真正的
+  执行在 Electron 主进程拉起的 DeepSeek Harness（dsh）子进程里；本工具只负责
+  参数校验与派发，任务描述/工作区都必须来自用户本轮请求。
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from backend.modules.tools.registry import ToolRegistry, ToolSpec
@@ -74,6 +78,7 @@ def build_default_registry(
         _register_disk_tools(registry, disk)
     if system is not None:
         _register_system_tools(registry, system)
+    _register_coding_tools(registry)
     return registry
 
 
@@ -609,5 +614,118 @@ def _register_system_tools(registry: ToolRegistry, system: Any) -> None:
             handler=inspect_system,
             feedback=True,
             ack="好，我看看～",
+        )
+    )
+
+
+# ---------------------------------------------------------------- 编码代理（2026-10-23）
+
+#: 编码任务描述上限（与前端主进程一致）
+MAX_CODING_TASK_LENGTH = 2000
+
+
+def _normalize_path_text(value: str) -> str:
+    """路径比较用：去引号、统一分隔符、去尾部分隔符；Windows 忽略大小写。"""
+    text = value.strip().strip('"').strip("'")
+    text = text.replace("\\", "/")
+    while len(text) > 1 and text.endswith("/"):
+        text = text[:-1]
+    return text.lower() if os.name == "nt" else text
+
+
+def _workspace_in_user_text(workspace: str, user_text: str) -> bool:
+    """工作区是否出现在用户本轮原话里（防模型自己拼路径/被内容诱导）。"""
+    if not user_text:
+        return False
+    target = _normalize_path_text(workspace)
+    haystack = _normalize_path_text(user_text)
+    return bool(target) and target in haystack
+
+
+def _register_coding_tools(registry: ToolRegistry) -> None:
+    """注册编码代理派发工具（真正的执行在 Electron 主进程的 dsh 子进程里）。"""
+
+    async def prepare_coding(
+        args: dict[str, Any], user_text: str
+    ) -> dict[str, Any]:
+        task = _string_arg(args, "task")
+        if not task:
+            return {
+                "ok": False,
+                "code": "coding_task_missing",
+                "message": "要做什么？给我一句具体的任务描述。",
+            }
+        if len(task) > MAX_CODING_TASK_LENGTH:
+            return {
+                "ok": False,
+                "code": "coding_task_too_long",
+                "message": f"任务描述太长了（最多 {MAX_CODING_TASK_LENGTH} 字），先说重点。",
+            }
+        if "\0" in task or "\n\n\n" in task:
+            return {
+                "ok": False,
+                "code": "coding_task_invalid",
+                "message": "任务描述里有非法字符，换个说法吧。",
+            }
+
+        workspace = _string_arg(args, "workspace")
+        if workspace:
+            if "\0" in workspace or "\n" in workspace or "\r" in workspace:
+                return {
+                    "ok": False,
+                    "code": "coding_workspace_invalid",
+                    "message": "工作区路径里有非法字符。",
+                }
+            if not os.path.isabs(workspace):
+                return {
+                    "ok": False,
+                    "code": "coding_workspace_relative",
+                    "message": "工作区必须是绝对路径（比如 D:/myProject/xxx）。",
+                }
+            # 只认用户本轮亲口给出的路径：模型不能自己挑一个目录
+            if not _workspace_in_user_text(workspace, user_text):
+                return {
+                    "ok": False,
+                    "code": "coding_workspace_unconfirmed",
+                    "message": (
+                        "这个工作区不在你刚才的话里。请把要改的项目目录明确说一遍"
+                        "（绝对路径），或者让我弹窗让你选。"
+                    ),
+                }
+            workspace = os.path.normpath(workspace)
+
+        return {"ok": True, "args": {"task": task, "workspace": workspace}}
+
+    registry.register(
+        ToolSpec(
+            name="delegate_coding",
+            description=(
+                "把写代码/改代码/跑测试/修 bug 的任务交给编码代理（DeepSeek Harness）。"
+                "编码代理在用户授权的项目目录里工作，每一步进度显示在工作窗，"
+                "写文件/执行命令等风险操作会弹气泡让用户确认。"
+                "只有用户明确要求改代码或修问题时才调用；task 要写清目标与验收方式，"
+                "不要替用户扩需求。workspace 只能是用户本轮亲口给出的绝对路径；"
+                "用户没给就留空，系统会弹目录选择框。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "任务描述（1-2000 字）：要改什么、验收标准",
+                    },
+                    "workspace": {
+                        "type": "string",
+                        "description": (
+                            "项目目录的绝对路径；必须来自用户本轮原话。"
+                            "留空则由用户在弹出的目录选择框里选"
+                        ),
+                    },
+                },
+                "required": ["task"],
+            },
+            executor="frontend",
+            prepare=prepare_coding,
+            ack="好，我安排一下～",
         )
     )

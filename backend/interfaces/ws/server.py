@@ -10,17 +10,21 @@ import asyncio
 import uuid
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Header, HTTPException, WebSocket
+from fastapi.responses import JSONResponse
 from loguru import logger
 from starlette.websockets import WebSocketDisconnect
 
+from backend.interfaces.ws.auth import verify_token
 from backend.interfaces.ws.protocol import (
     ClientMessage,
     make_envelope,
     parse_client_message,
     serialize_envelope,
 )
+from backend.shared.config import load_config
 from backend.shared.errors import ErrorCode, ProtocolError
+from backend.shared.secrets import get_llm_key
 
 if TYPE_CHECKING:  # 避免与 dispatcher 运行时循环 import（类型注解专用）
     from backend.application.voice import VoiceOut
@@ -202,13 +206,42 @@ def create_app(
     dispatcher: Dispatcher,
     app_version: str,
     voice_factory: Callable[[], VoiceOut] | None = None,
+    internal_token: str | None = None,
 ) -> FastAPI:
-    """创建 FastAPI 应用（目前仅 /ws 端点）。
+    """创建 FastAPI 应用（/ws 对话端点 + 主进程内部端点）。
 
     ``voice_factory``：每条连接构造一个连接级语音出站（VoiceOut）——失败降级
     状态随连接存活；None 表示本进程未启用语音（对话链路行为与 Phase 1 一致）。
+    ``internal_token``：**只给主进程**的内部 token（与渲染进程用的 WS token 分开，
+    渲染层永远拿不到）；用于内部 HTTP 端点（编码代理取 Key）。
+    None 时内部端点一律拒绝（单测/独立自测不开放）。
     """
     app = FastAPI(title="AI Desktop Pet Backend", version=app_version)
+
+    @app.get("/internal/llm-key")
+    async def internal_llm_key(
+        x_pet_internal_token: str | None = Header(default=None),
+    ) -> JSONResponse:
+        """把已配置的 LLM Key 交给本机主进程（仅编码代理启动时调用）。
+
+        安全约束：
+        - 必须带 `X-Pet-Internal-Token`（只在主进程内存里，渲染层没有）；
+        - 只绑定 127.0.0.1；响应不缓存、不写日志、不进入任何事件；
+        - 未配置 Key 时返回 ``configured=false``，不报错。
+        """
+        if not internal_token or not verify_token(x_pet_internal_token, internal_token):
+            raise HTTPException(status_code=403, detail="forbidden")
+        key = get_llm_key()
+        # base_url 用于主进程判断「这把 Key 是否适用于 DeepSeek 编码代理」；
+        # 用户把 LLM 换成别的服务商时不能盲目复用。
+        try:
+            base_url = load_config().llm.base_url
+        except Exception:  # 配置读不出来不影响取 Key
+            base_url = ""
+        return JSONResponse(
+            {"configured": bool(key), "key": key, "baseUrl": base_url},
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:
