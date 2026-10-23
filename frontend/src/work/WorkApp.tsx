@@ -37,6 +37,7 @@ import {
 import { renderMarkdownWithCitations } from '../board/markdown'
 import Composer from './Composer'
 import MessageNavigator from './MessageNavigator'
+import TaskPanel from './TaskPanel'
 import ThinkingBlock from './ThinkingBlock'
 import type { NavigatorAnchor } from './navigator'
 import {
@@ -185,8 +186,27 @@ export default function WorkApp(): ReactElement {
   } | null>(null)
   const [browser, setBrowser] = useState<WorkBrowserState>(EMPTY_BROWSER_STATE)
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false)
+  /** 任务标签是否在前（2026-10-23）：与对话/网页标签互斥，对话模式行为完全不变 */
+  const [taskOpen, setTaskOpen] = useState(false)
+  /** 窗口最大化状态（2026-10-23：标题栏最大化/复原按钮） */
+  const [maximized, setMaximized] = useState(false)
   /** 折叠态（最小化 = 屏幕右缘中间的小角标，2026-10-20）：由主进程通知，点角标展开 */
   const [folded, setFolded] = useState(false)
+
+  // 最大化状态：挂载时校准 + 订阅主进程变化
+  useEffect(() => {
+    const bridge = workBridge()
+    if (!bridge?.isMaximized) return
+    let alive = true
+    void bridge.isMaximized().then((value) => {
+      if (alive) setMaximized(value)
+    })
+    const off = bridge.onMaximizedChanged(setMaximized)
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
 
   const move = useFramelessMove()
   const resize = useFramelessResize()
@@ -588,6 +608,12 @@ export default function WorkApp(): ReactElement {
             <IconButton label="最小化" onClick={() => workBridge()?.minimize()}>
               –
             </IconButton>
+            <IconButton
+              label={maximized ? '复原' : '最大化'}
+              onClick={() => workBridge()?.maximizeToggle()}
+            >
+              {maximized ? '❐' : '□'}
+            </IconButton>
             <IconButton label="关闭" onClick={() => workBridge()?.hide()}>
               ×
             </IconButton>
@@ -595,13 +621,28 @@ export default function WorkApp(): ReactElement {
         }
       >
         <div className="work-tabs" role="tablist" aria-label="工作模式标签">
-            <div className={`work-tab${browsing ? '' : ' work-tab-active'}`}>
+            <div className={`work-tab${browsing || taskOpen ? '' : ' work-tab-active'}`}>
               <button
                 type="button"
                 className="work-tab-main"
-                onClick={() => browserActivate(null)}
+                onClick={() => {
+                  setTaskOpen(false)
+                  browserActivate(null)
+                }}
               >
                 <span className="work-tab-title">对话</span>
+              </button>
+            </div>
+            <div className={`work-tab${taskOpen ? ' work-tab-active' : ''}`}>
+              <button
+                type="button"
+                className="work-tab-main"
+                onClick={() => {
+                  browserActivate(null)
+                  setTaskOpen(true)
+                }}
+              >
+                <span className="work-tab-title">任务</span>
               </button>
             </div>
             {visibleTabs.map((tab) => (
@@ -613,7 +654,10 @@ export default function WorkApp(): ReactElement {
                 <button
                   type="button"
                   className="work-tab-main"
-                  onClick={() => browserActivate(tab.id)}
+                  onClick={() => {
+                    setTaskOpen(false)
+                    browserActivate(tab.id)
+                  }}
                 >
                   {tab.loading ? <span className="work-tab-spinner" aria-hidden="true" /> : null}
                   <span className="work-tab-title">{tab.title || hostOf(tab.url)}</span>
@@ -659,6 +703,7 @@ export default function WorkApp(): ReactElement {
                           role="menuitem"
                           className="work-tabs-menu-main"
                           onClick={() => {
+                            setTaskOpen(false)
                             browserActivate(tab.id)
                             setTabsMenuOpen(false)
                           }}
@@ -733,7 +778,13 @@ export default function WorkApp(): ReactElement {
         </div>
       ) : null}
 
-      <div className={`work-chat-layer${browsing ? ' work-chat-hidden' : ''}`}>
+      {taskOpen ? (
+        <div className="work-task-layer">
+          <TaskPanel />
+        </div>
+      ) : null}
+
+      <div className={`work-chat-layer${browsing || taskOpen ? ' work-chat-hidden' : ''}`}>
         <div className="work-body">
           <div className="work-scroll pui-scroll" ref={scrollRef} onScroll={handleScroll}>
             {state.messages.length === 0 ? (
