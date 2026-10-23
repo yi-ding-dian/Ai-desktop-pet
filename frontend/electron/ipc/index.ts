@@ -13,8 +13,13 @@ import {
   powerMonitor,
   shell
 } from 'electron'
-import { IPC, IPC_EVENTS, type PetWindowEdge, type WindowDebugState } from './channels'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { extname } from 'node:path'
+import { IPC, IPC_AGENT, IPC_EVENTS, type PetWindowEdge, type WindowDebugState } from './channels'
 import { backendManager } from '../backend-process'
+import { agentService } from '../agent/service'
+import type { AgentFollowUpPayload } from '../agent/types'
+import { pushToWorkWindow } from '../work'
 import { resolveAppIconImage } from '../app-icon'
 import { openConfirmBubble, setEdgeSpeechSuppression } from '../bubble'
 import {
@@ -102,6 +107,27 @@ function extraProtectedRoots(): ExtraProtectedRoot[] {
     // 某些平台/配置下没有 logs 路径——忽略
   }
   return roots
+}
+
+/** 图片附件缩略图：读原文件转 data URL（限制 8MB，非图片返回 null） */
+function readImagePreview(filePath: string): string | null {
+  const mime: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+    gif: 'image/gif'
+  }
+  try {
+    const ext = extname(filePath).slice(1).toLowerCase()
+    const type = mime[ext]
+    if (!type) return null
+    const stat = statSync(filePath)
+    if (!stat.isFile() || stat.size > 8 * 1024 * 1024) return null
+    return `data:${type};base64,${readFileSync(filePath).toString('base64')}`
+  } catch {
+    return null
+  }
 }
 
 /** 注册全部 IPC 处理器（主进程在窗口创建后调用一次） */
@@ -568,4 +594,33 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   // 后端状态快照：渲染进程晚于 ready 订阅时补状态（否则会漏掉一次性 ready 事件）
   ipcMain.handle(IPC.BACKEND_GET_SNAPSHOT, () => backendManager.getSnapshot())
+
+  // ---------------- 任务模式（2026-10-23）：工作窗「任务」标签页 ----------------
+
+  ipcMain.handle(IPC_AGENT.START, (_event, payload) => agentService.start(payload))
+  ipcMain.handle(IPC_AGENT.GET_STATE, () => agentService.getState())
+  ipcMain.on(IPC_AGENT.CANCEL, () => agentService.cancel('user'))
+  ipcMain.handle(IPC_AGENT.FOLLOW_UP, (_event, payload: AgentFollowUpPayload) =>
+    agentService.followUp(payload)
+  )
+  ipcMain.handle(IPC_AGENT.PREVIEW, (_event, filePath: string) => readImagePreview(filePath))
+  ipcMain.handle(IPC_AGENT.GET_TASKS, () => agentService.listTasks())
+  ipcMain.handle(IPC_AGENT.SELECT, (_event, id: string) => agentService.select(id))
+  ipcMain.handle(IPC_AGENT.DELETE, (_event, id: string) => agentService.deleteTask(id))
+  ipcMain.on(IPC_AGENT.APPROVE, (_event, payload: { id: string; allow: boolean }) => {
+    agentService.respondApproval(payload.id, payload.allow)
+  })
+  ipcMain.handle(IPC_AGENT.PICK_WORKSPACE, async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender) ?? ctx.window
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择任务工作区',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
+  // 状态推送：任务状态以 agentService 为真相源，面板挂载时另有 get-state 补拉
+  agentService.onState((state) => pushToWorkWindow(IPC_AGENT.STATE, state))
+  agentService.onTasks((tasks) => pushToWorkWindow(IPC_AGENT.TASKS, tasks))
 }

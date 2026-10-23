@@ -26,7 +26,7 @@ import { destroyTeaching, enterTeaching, initTeaching, getTeachingMode } from '.
 import { destroySettings, initSettings, onPetScaleChanged } from './settings'
 import { destroyBubble, initBubble } from './bubble'
 import { destroyReminderList, initReminderList } from './reminder-list'
-import { destroyWork, initWork, workWindowActive } from './work'
+import { destroyWork, initWork, workWindowActive, workWindowMaximized } from './work'
 import { destroyFileSelection, initFileSelection } from './files'
 import { destroyLauncher, initLauncher } from './launcher'
 import { applyWindowsAppIdentity } from './platform'
@@ -106,7 +106,7 @@ function createPetWindow(size: Size = PET_WINDOW_SIZE): PlatformWindow {
     window,
     getHitboxVisible: () => hitboxVisible,
     // 教学/工作模式中宠物固定在讲台/依附位，禁用边缘动作（讲台位窗口底会越过工作区底）
-    isQuietMode: () => getTeachingMode() === 'teaching' || workWindowActive()
+    isQuietMode: () => getTeachingMode() === 'teaching' || (workWindowActive() && !workWindowMaximized())
   }
   registerIpcHandlers(ipcCtx)
 

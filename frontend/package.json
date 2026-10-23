@@ -20,6 +20,7 @@
     "test:markdown-citations": "esbuild src/board/markdown-citations.test.ts --bundle --platform=node --format=esm --outfile=out/tests/markdown-citations.test.mjs && node out/tests/markdown-citations.test.mjs",
     "test:reminder-list-geometry": "esbuild electron/reminder-list/geometry.test.ts --bundle --platform=node --format=esm --outfile=out/tests/reminder-list-geometry.test.mjs && node out/tests/reminder-list-geometry.test.mjs",
     "test:path-safety": "esbuild electron/system/path-safety.test.ts --bundle --platform=node --format=esm --outfile=out/tests/path-safety.test.mjs && node out/tests/path-safety.test.mjs",
+    "test:agent": "esbuild electron/agent/workspace.test.ts --bundle --platform=node --format=esm --outfile=out/tests/agent-workspace.test.mjs && esbuild electron/agent/tools.test.ts --bundle --platform=node --format=esm --outfile=out/tests/agent-tools.test.mjs && esbuild electron/agent/agent-loop.test.ts --bundle --platform=node --format=esm --outfile=out/tests/agent-loop.test.mjs && node out/tests/agent-workspace.test.mjs && node out/tests/agent-tools.test.mjs && node out/tests/agent-loop.test.mjs",
     "test:clean-paths": "esbuild electron/system/clean-paths.test.ts --bundle --platform=node --format=esm --outfile=out/tests/clean-paths.test.mjs && node out/tests/clean-paths.test.mjs",
     "test:launcher": "esbuild electron/launcher/desktop-entry.test.ts --bundle --platform=node --format=esm --outfile=out/tests/desktop-entry.test.mjs && esbuild electron/launcher/application-scan.test.ts --bundle --platform=node --format=esm --outfile=out/tests/application-scan.test.mjs && esbuild electron/launcher/windows-apps.test.ts --bundle --platform=node --format=esm --outfile=out/tests/windows-apps.test.mjs && esbuild electron/launcher/program-launch.test.ts --bundle --platform=node --format=esm --outfile=out/tests/program-launch.test.mjs && node out/tests/desktop-entry.test.mjs && node out/tests/application-scan.test.mjs && node out/tests/windows-apps.test.mjs && node out/tests/program-launch.test.mjs",
     "dist:linux": "npm run build && electron-builder --linux AppImage",
@@ -29,6 +30,8 @@
     "dist:win-portable": "npm run build && electron-builder --win portable"
   },
   "devDependencies": {
+    "@earendil-works/pi-agent-core": "^1.4.0",
+    "@earendil-works/pi-ai": "^1.4.0",
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
@@ -37,6 +40,7 @@
     "electron": "33.4.11",
     "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
+    "typebox": "^1.3.27",
     "typescript": "^5.7.2",
     "vite": "^5.4.11"
   },

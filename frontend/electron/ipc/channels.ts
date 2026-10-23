@@ -4,6 +4,27 @@
  * 本文件只含常量与纯类型（不 import electron 运行时），preload / 渲染侧可安全引用。
  */
 import type { MoveResult, Point, Rect, WindowGeometry } from '../window'
+import type {
+  AgentApprovePayload,
+  AgentAttachment,
+  AgentFollowUpPayload,
+  AgentStartPayload,
+  AgentState,
+  AgentTaskSummary
+} from '../agent/types'
+
+// 任务模式类型统一从 channels 出口，渲染侧无需直接依赖主进程目录
+export type {
+  AgentApprovalRequest,
+  AgentApprovePayload,
+  AgentAttachment,
+  AgentFollowUpPayload,
+  AgentStartPayload,
+  AgentState,
+  AgentStep,
+  AgentTaskSummary,
+  AgentTodoItem
+} from '../agent/types'
 
 /**
  * 宠物窗贴边状态（2026-10-20，主进程实时判定后推给渲染进程）：
@@ -338,7 +359,45 @@ export const IPC_WORK = {
   /** 宠物窗 → 主：查询工作窗当前是否存在（宠物窗重载后补状态，invoke → WorkPresencePayload） */
   GET_PRESENCE: 'work:get-presence',
   /** 主 → 工作窗：宠物窗重载完成（清空旧记录、重新拉历史） */
-  PET_READY: 'work:pet-ready'
+  PET_READY: 'work:pet-ready',
+  /** 工作窗：最大化 ⇄ 复原（填充当前显示器工作区；2026-10-23） */
+  MAXIMIZE_TOGGLE: 'work:maximize-toggle',
+  /** 工作窗：查询是否处于最大化（invoke → boolean） */
+  IS_MAXIMIZED: 'work:is-maximized',
+  /** 主 → 工作窗：最大化状态变化（payload: boolean） */
+  MAXIMIZED: 'work:maximized'
+} as const
+
+/**
+ * 任务模式通道（2026-10-23）：「工作窗 → 任务」标签页与主进程 agent 域的协议。
+ *
+ * 对话模式完全不受影响——本组通道只服务任务面板。
+ */
+export const IPC_AGENT = {
+  /** 开始任务（invoke（AgentStartPayload）→ {ok, error?}；立即返回，执行在后台） */
+  START: 'agent:start',
+  /** 中止当前任务（无 payload） */
+  CANCEL: 'agent:cancel',
+  /** 继续追问（invoke（AgentFollowUpPayload）→ {ok, error?}；沿用同一个 Agent 与上下文） */
+  FOLLOW_UP: 'agent:follow-up',
+  /** 读取图片附件为 data URL（invoke（path）→ string | null；仅用于缩略图预览） */
+  PREVIEW: 'agent:preview',
+  /** 查询当前状态（invoke → AgentState；面板晚挂载时补状态） */
+  GET_STATE: 'agent:get-state',
+  /** 选择工作区（invoke → string | null；主进程原生文件夹对话框） */
+  PICK_WORKSPACE: 'agent:pick-workspace',
+  /** 回应确认卡（payload: AgentApprovePayload） */
+  APPROVE: 'agent:approve',
+  /** 主 → 工作窗：状态推送（payload: AgentState，节流 ~120ms） */
+  STATE: 'agent:state',
+  /** 拉取任务列表（invoke → AgentTaskSummary[]） */
+  GET_TASKS: 'agent:get-tasks',
+  /** 切换当前任务（invoke（id）→ {ok, error?}） */
+  SELECT: 'agent:select',
+  /** 删除任务（invoke（id）→ {ok, error?}；运行中的先中止） */
+  DELETE: 'agent:delete',
+  /** 主 → 工作窗：任务列表变化（payload: AgentTaskSummary[]） */
+  TASKS: 'agent:tasks'
 } as const
 
 /** 尾巴朝向：down = 尾巴在气泡左下角（气泡悬于锚点上方，指向下方的宠物）；up = 翻向（气泡在锚点下方） */
@@ -1111,6 +1170,33 @@ export interface PetBridgeApi {
    *  - 宠物面：onSendRequest/sendResult/onHistoryRequest/reportHistory/onInterrupt/onPresence。
    * 方法与窗口不匹配的调用在 main 侧按 sender 过滤，是安全空操作。
    */
+  /** 任务模式（2026-10-23）：工作窗「任务」标签页 */
+  agent: {
+    /** 开始任务（校验失败时 ok=false 并给出原因） */
+    start(payload: AgentStartPayload): Promise<{ ok: boolean; error?: string }>
+    /** 中止当前任务 */
+    cancel(): void
+    /** 继续追问（同一任务上下文；运行中作为插话） */
+    followUp(payload: AgentFollowUpPayload): Promise<{ ok: boolean; error?: string }>
+    /** 图片附件缩略图（data URL；非图片/过大返回 null） */
+    previewImage(path: string): Promise<string | null>
+    /** 查询当前任务状态（面板挂载时补状态） */
+    getState(): Promise<AgentState>
+    /** 弹原生文件夹对话框选工作区（取消返回 null） */
+    pickWorkspace(): Promise<string | null>
+    /** 回应确认卡（用户点允许/拒绝） */
+    approve(payload: AgentApprovePayload): void
+    /** 订阅任务状态；返回取消订阅函数 */
+    onState(cb: (state: AgentState) => void): () => void
+    /** 任务列表（左侧栏） */
+    getTasks(): Promise<AgentTaskSummary[]>
+    /** 切换当前任务 */
+    select(id: string): Promise<{ ok: boolean; error?: string }>
+    /** 删除任务（运行中的先中止） */
+    deleteTask(id: string): Promise<{ ok: boolean; error?: string }>
+    /** 订阅任务列表变化；返回取消订阅函数 */
+    onTasks(cb: (tasks: AgentTaskSummary[]) => void): () => void
+  }
   work: {
     /** 打开工作窗（单例；已存在则 show + focus） */
     open(): void
@@ -1120,6 +1206,12 @@ export interface PetBridgeApi {
     minimize(): void
     /** 工作窗：展开（点击折叠角标恢复原窗口） */
     unfold(): void
+    /** 工作窗：最大化 ⇄ 复原 */
+    maximizeToggle(): void
+    /** 工作窗：查询最大化状态（面板挂载时校准按钮图标） */
+    isMaximized(): Promise<boolean>
+    /** 工作窗：订阅最大化状态变化；返回取消订阅函数 */
+    onMaximizedChanged(cb: (maximized: boolean) => void): () => void
     /** 工作窗：订阅折叠态变化；返回取消订阅函数 */
     onFolded(cb: (folded: boolean) => void): () => void
     /** 工作窗：渲染就绪 */

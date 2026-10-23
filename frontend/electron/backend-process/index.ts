@@ -41,6 +41,8 @@ export class BackendProcessManager {
   private message: string | undefined
   private port: number | undefined
   private token: string | undefined
+  /** 主进程专用凭据（任务模式取 Key）：**不下发**渲染层，也不进 getSnapshot */
+  private internalToken: string | undefined
   private pid: number | undefined
   /** 主动停止标志：置位后不再自动重启 */
   private stopping = false
@@ -66,6 +68,8 @@ export class BackendProcessManager {
 
     // token 每次启动随机生成（32 字节 hex），经 env 传给 Python（设计文档 §3.4）
     this.token = randomBytes(32).toString('hex')
+    // 内部凭据与 WS token 分离：WS token 会下发渲染层，内部凭据只在主进程内存（2026-10-23）
+    this.internalToken = randomBytes(32).toString('hex')
     let child: ChildProcess
     try {
       child = spawn(this.spec.command, this.spec.args, {
@@ -73,6 +77,7 @@ export class BackendProcessManager {
         env: {
           ...process.env,
           PET_TOKEN: this.token,
+          PET_INTERNAL_TOKEN: this.internalToken,
           PET_DATA_DIR: app.getPath('userData'),
           // 运行模式标记（后端当前未消费，按设计文档 §3.4 预留）
           PET_MODE: app.isPackaged ? 'prod' : 'dev',
@@ -141,6 +146,16 @@ export class BackendProcessManager {
     await this.killChild(child)
     this.child = null
     this.setState('stopped')
+  }
+
+  /**
+   * 内部凭据（任务模式向 /internal/llm-key 取聊天 Key）。
+   *
+   * 刻意不放进 getSnapshot：快照会经 IPC 下发渲染层，内部凭据只给主进程自己用。
+   * 非 ready 态返回 undefined（此时端口还没就绪）。
+   */
+  getInternalToken(): string | undefined {
+    return this.state === 'ready' ? this.internalToken : undefined
   }
 
   /** 当前状态快照（IPC invoke 应答） */

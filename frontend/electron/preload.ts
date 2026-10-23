@@ -5,11 +5,17 @@
 import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   IPC,
+  IPC_AGENT,
   IPC_BUBBLE,
   IPC_EVENTS,
   IPC_BALL_ANIMATION,
   IPC_REMINDER_LIST,
   IPC_WORK,
+  type AgentApprovePayload,
+  type AgentFollowUpPayload,
+  type AgentStartPayload,
+  type AgentState,
+  type AgentTaskSummary,
   type BackendReadyPayload,
   type BackendSnapshot,
   type BackendStatusPayload,
@@ -552,6 +558,66 @@ const api: PetBridgeApi = {
     }
   },
 
+  /** 任务模式（2026-10-23）：工作窗「任务」标签页 → 主进程 agent 域 */
+  agent: {
+    start(payload: AgentStartPayload): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.START, payload)
+    },
+
+    cancel(): void {
+      ipcRenderer.send(IPC_AGENT.CANCEL)
+    },
+
+    followUp(payload: AgentFollowUpPayload): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.FOLLOW_UP, payload)
+    },
+
+    previewImage(path: string): Promise<string | null> {
+      return ipcRenderer.invoke(IPC_AGENT.PREVIEW, path)
+    },
+
+    getState(): Promise<AgentState> {
+      return ipcRenderer.invoke(IPC_AGENT.GET_STATE)
+    },
+
+    pickWorkspace(): Promise<string | null> {
+      return ipcRenderer.invoke(IPC_AGENT.PICK_WORKSPACE)
+    },
+
+    approve(payload: AgentApprovePayload): void {
+      ipcRenderer.send(IPC_AGENT.APPROVE, payload)
+    },
+
+    onState(cb: (state: AgentState) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, state: AgentState): void => cb(state)
+      ipcRenderer.on(IPC_AGENT.STATE, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_AGENT.STATE, listener)
+      }
+    },
+
+    getTasks(): Promise<AgentTaskSummary[]> {
+      return ipcRenderer.invoke(IPC_AGENT.GET_TASKS)
+    },
+
+    select(id: string): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.SELECT, id)
+    },
+
+    deleteTask(id: string): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.DELETE, id)
+    },
+
+    onTasks(cb: (tasks: AgentTaskSummary[]) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, tasks: AgentTaskSummary[]): void =>
+        cb(tasks)
+      ipcRenderer.on(IPC_AGENT.TASKS, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_AGENT.TASKS, listener)
+      }
+    }
+  },
+
   /** 工作模式（独立聊天窗，2026-10-18）：发送/历史/镜像经主进程中继 */
   work: {
     open(): void {
@@ -568,6 +634,23 @@ const api: PetBridgeApi = {
 
     unfold(): void {
       ipcRenderer.send(IPC_WORK.UNFOLD)
+    },
+
+    maximizeToggle(): void {
+      ipcRenderer.send(IPC_WORK.MAXIMIZE_TOGGLE)
+    },
+
+    isMaximized(): Promise<boolean> {
+      return ipcRenderer.invoke(IPC_WORK.IS_MAXIMIZED)
+    },
+
+    onMaximizedChanged(cb: (maximized: boolean) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, maximized: boolean): void =>
+        cb(maximized)
+      ipcRenderer.on(IPC_WORK.MAXIMIZED, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.MAXIMIZED, listener)
+      }
     },
 
     onFolded(cb: (folded: boolean) => void): () => void {

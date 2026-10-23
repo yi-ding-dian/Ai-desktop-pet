@@ -78,6 +78,10 @@ let workRectOverride: Rect | null = null
  */
 let folded = false
 let foldedRect: Rect | null = null
+/** 最大化前的矩形（null = 未最大化；2026-10-23） */
+let maximizedFrom: Rect | null = null
+/** 最大化前宠物所在矩形（还原时放回去；2026-10-23） */
+let petMaximizeRestore: Rect | null = null
 /**
  * 进入工作模式前的宠物原位（关闭/最小化时回位目标；只记坐标，尺寸用
  * PET_WINDOW_SIZE——fractional DPI 下 getBounds 的宽高是舍入值）。
@@ -134,7 +138,22 @@ function sendToWork(channel: string, payload?: unknown): void {
   else workWin.webContents.send(channel, payload)
 }
 
+/**
+ * 其他域 → 工作窗的单向推送（2026-10-23，任务模式状态用）。
+ *
+ * 工作窗未打开/已销毁时静默丢弃——任务状态以内置 service 为真相源，
+ * 面板挂载时用 agent:get-state 补拉，不依赖事件不丢。
+ */
+export function pushToWorkWindow(channel: string, payload?: unknown): void {
+  sendToWork(channel, payload)
+}
+
 /** 工作窗是否正在使用（可见、未最小化、未折叠）——宠物依附/自主行为抑制的依据；边缘动作也据此禁用 */
+/** 工作窗是否处于最大化（此时宠物按桌面宠物规则贴边，不再固定依附窗口；2026-10-24） */
+export function workWindowMaximized(): boolean {
+  return maximizedFrom !== null
+}
+
 export function workWindowActive(): boolean {
   const win = workWin
   return (
@@ -215,6 +234,25 @@ function placePet(rect: Rect): void {
   console.log(
     `[work] 宠物依附工作窗左侧：${bounds.x},${bounds.y} → ${point.x},${point.y}（原位 ${petHomeRect?.x ?? bounds.x},${petHomeRect?.y ?? bounds.y}）`
   )
+  void runRelocateAnimation(
+    pet,
+    { x: point.x, y: point.y, width: size.width, height: size.height },
+    { forceGlide: true }
+  )
+}
+
+
+/** 把宠物放到指定点（最大化时用：贴屏幕左缘、竖向居中） */
+function placePetAtPoint(point: Point): void {
+  if (getTeachingMode() !== 'normal') return
+  const pet = petWin
+  if (pet === null || pet.isDestroyed()) return
+  const size = currentPetSize()
+  if (!petPlaced) {
+    const bounds = pet.getBounds()
+    petHomeRect = { x: bounds.x, y: bounds.y, width: size.width, height: size.height }
+    petPlaced = true
+  }
   void runRelocateAnimation(
     pet,
     { x: point.x, y: point.y, width: size.width, height: size.height },
@@ -409,10 +447,9 @@ function createWorkWindow(): BrowserWindow {
     resizable: false,
     movable: false,
     alwaysOnTop: false,
-    // 2026-10-20 用户定稿：工作窗不进任务栏/桌面图标（入口在宠物右键菜单/托盘；
-    // 最小化后还有右缘折叠角标），与教学黑板同款 skipTaskbar。
-    // Linux/DDE 上仅 skipTaskbar 不够，还要 type:'toolbar'（与黑板/气泡窗同法，防 Dock 占格）。
-    skipTaskbar: true,
+    // 2026-10-24 用户改口：工作窗需要在任务栏有图标（最大化后能从任务栏找回）。
+    // 此前的"不进任务栏"定稿作废。
+    skipTaskbar: false,
     ...linuxOnlyWindowOptions(),
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
@@ -458,6 +495,11 @@ function createWorkWindow(): BrowserWindow {
     edgeMargin: WORK_EDGE_MARGIN,
     onBoundsChanged: (rect) => {
       workRectOverride = rect
+      // 用户在最大化状态下拖动/缩放：视为退出最大化，复原目标随之失效
+      if (maximizedFrom) {
+        maximizedFrom = null
+        sendMaximizedState()
+      }
       // 用户拖动/缩放工作窗：宠物同帧跟到新的左缘
       followPetToWork(rect)
     }
@@ -575,7 +617,52 @@ export function openWork(): void {
 }
 
 /** 应用退出清理（will-quit） */
+/** 最大化 ⇄ 复原：填充当前显示器工作区，复原回到保存的矩形（无边框自绘，不用系统最大化） */
+function sendMaximizedState(): void {
+  sendToWork(IPC_WORK.MAXIMIZED, maximizedFrom !== null)
+}
+
+function toggleMaximize(): void {
+  const win = workWin
+  if (win === null || win.isDestroyed()) return
+  if (folded) unfoldWork()
+  if (maximizedFrom) {
+    // 还原：窗口回原矩形，宠物也回最大化前的位置
+    const rect = maximizedFrom
+    maximizedFrom = null
+    applyFramelessBounds(win, rect)
+    const pet = petWin
+    if (petMaximizeRestore) {
+      if (pet && !pet.isDestroyed()) {
+        pet.setBounds(petMaximizeRestore)
+        if (pet.isVisible()) pet.moveTop()
+      }
+      petMaximizeRestore = null
+    } else {
+      placePet(rect)
+    }
+  } else {
+    maximizedFrom = framelessBounds(win)
+    const wa = screen.getDisplayMatching(win.getBounds()).workArea
+    const pet = petWin
+    if (pet && !pet.isDestroyed() && pet.isVisible()) {
+      petMaximizeRestore = pet.getBounds()
+    }
+    const rect = { x: wa.x, y: wa.y, width: wa.width, height: wa.height }
+    applyFramelessBounds(win, rect)
+    // 最大化后宠物按“桌面宠物左缘吸附”落位（窗口贴 wa.x，渲染侧切左边缘姿态）；
+    // 之后可自由拖动，拖到任意屏幕边都会吸附（最大化期间不屏蔽边缘逻辑）
+    const size = currentPetSize()
+    placePetAtPoint({ x: wa.x, y: wa.y + Math.round((wa.height - size.height) / 2) })
+    // 窗口铺满后可能盖住宠物（例如用户关过「置顶」）：显式提到最上层
+    if (pet && !pet.isDestroyed() && pet.isVisible()) pet.moveTop()
+  }
+  sendMaximizedState()
+}
+
 export function destroyWork(): void {
+  maximizedFrom = null
+  petMaximizeRestore = null
   quitting = true
   const win = workWin
   workWin = null
@@ -688,6 +775,16 @@ export function initWork(pet: BrowserWindow): void {
   ipcMain.on(IPC_WORK.MINIMIZE, (event) => {
     if (!isWorkSender(event.sender)) return
     foldWork()
+  })
+
+  ipcMain.on(IPC_WORK.MAXIMIZE_TOGGLE, (event) => {
+    if (!isWorkSender(event.sender)) return
+    toggleMaximize()
+  })
+
+  ipcMain.handle(IPC_WORK.IS_MAXIMIZED, (event) => {
+    if (!isWorkSender(event.sender)) return false
+    return maximizedFrom !== null
   })
 
   ipcMain.on(IPC_WORK.UNFOLD, (event) => {
