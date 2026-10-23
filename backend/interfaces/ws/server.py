@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import asyncio
+import secrets as _secrets
 import uuid
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Header, HTTPException, WebSocket
+from fastapi.responses import JSONResponse
 from loguru import logger
 from starlette.websockets import WebSocketDisconnect
 
@@ -202,13 +204,46 @@ def create_app(
     dispatcher: Dispatcher,
     app_version: str,
     voice_factory: Callable[[], VoiceOut] | None = None,
+    internal_token: str | None = None,
 ) -> FastAPI:
-    """创建 FastAPI 应用（目前仅 /ws 端点）。
+    """创建 FastAPI 应用（/ws 对话端点 + /internal/* 主进程专用端点）。
 
     ``voice_factory``：每条连接构造一个连接级语音出站（VoiceOut）——失败降级
     状态随连接存活；None 表示本进程未启用语音（对话链路行为与 Phase 1 一致）。
+
+    ``internal_token``：主进程专用内部凭据（PET_INTERNAL_TOKEN），与下发给渲染层
+    的 WS token **刻意分离**——渲染进程即使拿到 WS token 也读不到 LLM Key。
+    为 None 时内部端点整体禁用（一律 403）。
     """
     app = FastAPI(title="AI Desktop Pet Backend", version=app_version)
+
+    def _require_internal(token: str | None) -> None:
+        if not internal_token or not token or not _secrets.compare_digest(token, internal_token):
+            raise HTTPException(status_code=403, detail="forbidden")
+
+    @app.get("/internal/llm-key")
+    async def internal_llm_key(
+        x_pet_internal_token: str | None = Header(default=None, alias="X-Pet-Internal-Token"),
+    ) -> JSONResponse:
+        """把当前对话模型的 Key / 端点 / 模型名交给主进程（任务模式复用）。
+
+        只返回内存中的明文（不落盘、不写日志）；渲染层无法访问该端点。
+        """
+        _require_internal(x_pet_internal_token)
+        from backend.shared.config import load_config
+        from backend.shared.secrets import get_llm_key
+
+        key = get_llm_key()
+        try:
+            llm = load_config().llm
+            base_url, model = llm.base_url, llm.model
+        except Exception:  # noqa: BLE001 - 配置损坏不影响端点（返回未配置态）
+            logger.warning("读取 LLM 配置失败，内部端点返回空端点/模型")
+            base_url, model = "", ""
+        return JSONResponse(
+            {"configured": bool(key), "key": key or "", "baseUrl": base_url, "model": model},
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:

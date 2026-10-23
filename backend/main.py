@@ -176,7 +176,11 @@ def main() -> int:
         memory_enabled=lambda: runtime.config.memory.enabled,
     )
     app = create_app(
-        dispatcher=dispatcher, app_version=__version__, voice_factory=runtime.voice_factory
+        dispatcher=dispatcher,
+        app_version=__version__,
+        voice_factory=runtime.voice_factory,
+        # 任务模式取 Key 的内部凭据：只下发给主进程，渲染层拿不到（2026-10-23）
+        internal_token=(os.environ.get("PET_INTERNAL_TOKEN") or "").strip() or None,
     )
 
     config = uvicorn.Config(
