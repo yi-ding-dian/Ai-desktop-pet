@@ -18,6 +18,9 @@
 - ``disk``（2026-10-22）：磁盘体检/清理服务（application 层实现）——注册
   disk_report（backend + feedback，只读）与 clean_disk（frontend + prepare，
   只传白名单 key，实际清理在主进程确认气泡后移入回收站）。
+- ``system``（2026-10-23）：只读系统巡检服务（application 层实现）——注册
+  inspect_system（backend + feedback）：系统信息/磁盘/目录占用/大文件/启动项/
+  已安装程序/服务/进程；不执行任意命令、不读写文件正文。
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ def build_default_registry(
     memory_book: Any | None = None,
     search: Any | None = None,
     disk: Any | None = None,
+    system: Any | None = None,
 ) -> ToolRegistry:
     """构建内置工具注册表（每次返回全新实例，避免调用方之间共享可变状态）。"""
     registry = ToolRegistry()
@@ -68,6 +72,8 @@ def build_default_registry(
         _register_search_tools(registry, search)
     if disk is not None:
         _register_disk_tools(registry, disk)
+    if system is not None:
+        _register_system_tools(registry, system)
     return registry
 
 
@@ -544,5 +550,64 @@ def _register_disk_tools(registry: ToolRegistry, disk: Any) -> None:
             executor="frontend",
             prepare=prepare_clean,
             ack="好，我先跟你确认一下～",
+        )
+    )
+
+
+# ---------------------------------------------------------------- 只读系统巡检（2026-10-23）
+
+
+def _register_system_tools(registry: ToolRegistry, system: Any) -> None:
+    """注册只读系统巡检工具（handler 放线程池，避免阻塞事件循环）。"""
+
+    async def inspect_system(args: dict[str, Any]) -> dict[str, Any]:
+        return await asyncio.to_thread(system.inspect_from_tool, args)
+
+    registry.register(
+        ToolSpec(
+            name="inspect_system",
+            description=(
+                "只读查看本机系统信息：系统配置、磁盘容量、目录占用、最大文件、"
+                "启动项、已安装程序、服务、进程。不执行任意命令、不读写文件正文、"
+                "不 kill 进程、不启停服务。用户问“电脑配置/启动项/装了什么/"
+                "哪些服务在跑/哪个文件夹大/最大的文件”时调用。"
+                "top_dirs/largest_files 的 path 必须是本地绝对目录；limit 默认 10。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "op": {
+                        "type": "string",
+                        "enum": [
+                            "system_info",
+                            "drives",
+                            "top_dirs",
+                            "largest_files",
+                            "startup_items",
+                            "installed_apps",
+                            "services",
+                            "processes",
+                        ],
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "top_dirs / largest_files 的本地绝对目录；"
+                            "其他 op 忽略"
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "description": "返回条数，默认 10",
+                    },
+                },
+                "required": ["op"],
+            },
+            executor="backend",
+            handler=inspect_system,
+            feedback=True,
+            ack="好，我看看～",
         )
     )

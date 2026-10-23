@@ -929,7 +929,8 @@ export interface PetBridgeApi {
     openPath(path: string): Promise<OpenResult>
     /**
      * 宠物面：删除本机文件/文件夹——先从宠物头部弹「删除 / 取消」确认气泡，
-     * **用户点删除后**才把目标移入系统回收站（可恢复）。取消/超时什么都不做。
+     * 再弹一次「再次确认 / 取消」（2026-10-23 敏感删除二次确认）；两次都确认后
+     * 才把目标移入系统回收站（可恢复）。任意一次取消/超时什么都不做。
      */
     deletePathWithConfirm(path: string, name?: string): Promise<DeletePathResult>
     /**

@@ -256,6 +256,18 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         return { confirmed: false, ok: false }
       }
 
+      // 敏感删除二次确认（2026-10-23）：文件删除必须经过两次明确确认
+      const secondConfirmed = await openConfirmBubble({
+        message:
+          `再次确认：要把${label}移入回收站吗？\n${checked.path}\n` +
+          '可在回收站还原。',
+        confirmLabel: '确认删除',
+        cancelLabel: '取消'
+      })
+      if (!secondConfirmed) {
+        return { confirmed: false, ok: false, message: '好，不删了。' }
+      }
+
       // 确认后重新校验：路径可能在弹窗期间被移动/替换
       const rechecked = checkDeletable(checked.path)
       if (!rechecked.ok) {

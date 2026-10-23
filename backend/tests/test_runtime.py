@@ -137,6 +137,7 @@ def test_runtime_assembles_default_tool_registry() -> None:
         "open_work",
         "disk_report",
         "clean_disk",
+        "inspect_system",
     ]
 
 
