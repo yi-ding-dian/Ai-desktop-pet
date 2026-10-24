@@ -23,11 +23,14 @@ import {
 } from 'react'
 import type { PickedFile } from '../../../electron/ipc/channels'
 import type { WsClient } from '../../shared/ws-client'
-import type { PetState } from '../../shared/protocol'
+import { PET_SESSION_ID, type PetState } from '../../shared/protocol'
 import { subscribeVoiceSpeaking, stopVoiceNow } from '../voice'
 // 统一发送入口（P5 §7.5）：关键词（开始教学/下课）+ WS 发送 + 教学模式镜像/气泡都在此
 import { sendUserMessage } from '../teaching'
-import { isForegroundSession } from '../work/active-conversation'
+import {
+  isForegroundSession,
+  setActiveConversationId
+} from '../work/active-conversation'
 import { notifyUserMessage } from './name-onboarding'
 import { clearChatNotice, showChatNotice, subscribeChatNotice, type ChatNotice } from './notice'
 import { speakLocalNotice } from './speech'
@@ -280,8 +283,11 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
     if (!text && attachments.length === 0) return
     // 只选文件没打字：给一个默认分析请求（后端也允许空问题，这里保证气泡/黑板有可读文本）
     const question = text || '帮我看看这个文件'
+    // 从宠物窗口发言：切到固定的宠物会话，并同步前台（气泡/语音跟它走）
+    setActiveConversationId(PET_SESSION_ID)
+    client.send('conversation_focus', { session_id: PET_SESSION_ID })
     // 统一发送入口（teaching 域）：关键词（开始教学/下课）→ WS 发送 → 教学模式镜像 + 头顶气泡
-    if (!sendUserMessage(client, question, attachments)) return
+    if (!sendUserMessage(client, question, attachments, null, PET_SESSION_ID)) return
     // 启动称呼引导（chat 域）：记录"用户已发言"；提问后的回答窗口据此判定拒绝/已回应
     notifyUserMessage(question)
     setInput('')

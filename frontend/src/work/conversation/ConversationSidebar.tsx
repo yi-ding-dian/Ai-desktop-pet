@@ -116,7 +116,11 @@ export default function ConversationSidebar({
     }
   }, [collapsed])
 
-  const groups = useMemo(() => groupConversations(items), [items])
+  const pet = useMemo(() => items.find((item) => item.kind === 'pet'), [items])
+  const groups = useMemo(
+    () => groupConversations(items.filter((item) => item.kind !== 'pet')),
+    [items]
+  )
 
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>): void => {
     event.preventDefault()
@@ -172,6 +176,27 @@ export default function ConversationSidebar({
         <span aria-hidden="true">＋</span> 新对话
       </button>
       <div className="task-list pui-scroll">
+        {pet ? (
+          <button
+            type="button"
+            className={`task-item conv-pet-item${
+              activeId === pet.id && !draft ? ' task-item-active' : ''
+            }${unread.has(pet.id) ? ' task-item-unread' : ''}`}
+            title="和宠物的固定会话（置顶，不可删除）"
+            onClick={() => onSelect(pet.id)}
+          >
+            <span
+              className={`task-item-dot ${
+                streaming.has(pet.id) ? 'task-item-dot-running' : 'task-item-dot-done'
+              }`}
+            />
+            <span className="task-item-text">宠物会话</span>
+            <span className="conv-pet-badge">宠物</span>
+            {unread.has(pet.id) ? (
+              <span className="task-item-unread-dot" aria-label="有新回复" />
+            ) : null}
+          </button>
+        ) : null}
         {draft ? (
           <button type="button" className="task-item task-item-active">
             <span className="task-item-dot task-item-dot-done" />
@@ -179,7 +204,7 @@ export default function ConversationSidebar({
             <span className="task-item-time">草稿</span>
           </button>
         ) : null}
-        {groups.length === 0 && !draft ? (
+        {groups.length === 0 && !draft && !pet ? (
           <div className="task-list-empty">还没有对话</div>
         ) : (
           groups.map((group) => (

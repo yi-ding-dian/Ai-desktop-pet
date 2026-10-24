@@ -463,7 +463,8 @@ export function setupWorkPetSide(client: WsClient): () => void {
         title: String(item.title ?? '新对话'),
         createdAt: Number(item.created_at ?? 0),
         updatedAt: Number(item.updated_at ?? 0),
-        messageCount: Number(item.message_count ?? 0)
+        messageCount: Number(item.message_count ?? 0),
+        kind: item.kind === 'pet' ? ('pet' as const) : ('chat' as const)
       }))
       .filter((item) => item.id.length > 0)
     bridge.work?.reportConversations?.({

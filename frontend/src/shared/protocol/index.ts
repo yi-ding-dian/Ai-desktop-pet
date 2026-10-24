@@ -480,12 +480,16 @@ export interface HistoryData {
 }
 
 /** 对话列表的一行 */
+/** 固定的宠物会话 id（与后端 history.PET_SESSION_ID 对齐）。 */
+export const PET_SESSION_ID = 'pet-primary'
+
 export interface ConversationSummaryData {
   id: string
   title: string
   created_at: number
   updated_at: number
   message_count: number
+  kind?: string
 }
 
 export interface ConversationsData {

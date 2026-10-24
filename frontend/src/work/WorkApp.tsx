@@ -478,9 +478,12 @@ export default function WorkApp(): ReactElement {
         saved = null
       }
       const inList = saved !== null && (items?.some((item) => item.id === saved) ?? false)
+      // 没有保存过选择时，优先最近的普通对话；只有宠物会话/空列表才落到宠物会话
+      const fallbackId =
+        items?.find((item) => item.kind !== 'pet')?.id ?? items?.[0]?.id ?? null
       const id = inList
         ? (saved as string)
-        : (items?.[0]?.id ??
+        : (fallbackId ??
           (items === null ? saved : null) ??
           globalThis.crypto?.randomUUID?.() ??
           `c_${Date.now().toString(36)}`)

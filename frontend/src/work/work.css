@@ -2762,3 +2762,31 @@ body,
 .conv-rename-input:focus {
   outline: none;
 }
+
+.conv-pet-item {
+  margin-bottom: 6px;
+  border-color: var(--ui-border-soft);
+  background: var(--ui-panel);
+}
+
+.conv-pet-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+/* 对话标题栏：标题可占满剩余宽度（之前 max-width:60% 在内容自适应容器里会被压成“宠…”） */
+.conv-main .task-head-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.conv-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}

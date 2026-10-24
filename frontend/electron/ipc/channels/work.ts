@@ -109,6 +109,8 @@ export interface WorkConversationSummary {
   createdAt: number
   updatedAt: number
   messageCount: number
+  /** 'pet' = 固定的宠物会话（置顶、不可改名/删除） */
+  kind: 'pet' | 'chat'
 }
 
 export interface WorkConversationsRequestPayload {
