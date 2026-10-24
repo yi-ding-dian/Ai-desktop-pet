@@ -2329,24 +2329,6 @@ body,
   color: var(--ui-danger);
 }
 
-.task-attach-btn {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--ui-border);
-  border-radius: 50%;
-  background: var(--ui-panel);
-  color: var(--ui-fg-dim);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.task-attach-btn:hover {
-  background: var(--ui-hover);
-  color: var(--ui-fg);
-}
-
 .task-hero-tools {
   display: flex;
   align-items: center;

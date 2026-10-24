@@ -3,6 +3,14 @@ import type { DragEvent as ReactDragEvent, ReactElement } from 'react'
 import type { PickedFile } from '../../../electron/ipc/channels'
 import AttachmentStrip from '../message/AttachmentStrip'
 
+function PaperclipIcon(): ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  )
+}
+
 export interface TaskHeroProps {
   task: string
   workspace: string
@@ -64,12 +72,12 @@ export default function TaskHero({
           <div className="task-hero-tools">
             <button
               type="button"
-              className="task-attach-btn"
+              className="work-attach"
               title="添加文件 / 图片"
               aria-label="添加文件"
               onClick={onPickFiles}
             >
-              +
+              <PaperclipIcon />
             </button>
             <button type="button" className="task-ws-btn" onClick={onPickWorkspace}>
               <span className="task-ws-label">工作区</span>
