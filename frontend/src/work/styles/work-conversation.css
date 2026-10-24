@@ -1,0 +1,106 @@
+/* ============================================================================
+ * 对话左栏与对话标题栏（.conv-*）：置顶宠物会话、改名/删除、未读。
+ * 必须排在 shell 之后：.conv-pet-item 等要覆盖共用的 .task-item 样式。
+ * （拆分自 work.css，2026-10-24；入口见 ../work.css）
+ * ========================================================================= */
+
+/* ---------------------------------------------------------------- 对话左栏（2026-10-24） */
+
+.conv-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.conv-title {
+  overflow: hidden;
+  max-width: 60%;
+  color: var(--ui-fg);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-streaming {
+  flex: none;
+  color: var(--ui-fg-faint);
+  font-size: 11px;
+}
+
+.conv-item-actions {
+  display: none;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.task-item:hover .conv-item-actions,
+.task-item:focus-within .conv-item-actions {
+  display: inline-flex;
+}
+
+.conv-item-action {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ui-fg-faint);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.conv-item-action:hover {
+  background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
+.conv-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 1px 5px;
+  border: 1px solid var(--ui-accent);
+  border-radius: 5px;
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.conv-rename-input:focus {
+  outline: none;
+}
+
+.conv-pet-item {
+  margin-bottom: 6px;
+  border-color: var(--ui-border-soft);
+  background: var(--ui-panel);
+}
+
+.conv-pet-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+/* 对话标题栏：标题可占满剩余宽度（之前 max-width:60% 在内容自适应容器里会被压成“宠…”） */
+
+.conv-main .task-head-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.conv-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
