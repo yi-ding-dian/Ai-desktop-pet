@@ -22,6 +22,8 @@ export interface WorkSendRequestPayload {
   text: string
   attachments: { path: string; name: string }[]
   options: WorkTurnOptions
+  /** 目标对话 id；缺省 = 当前连接会话（旧客户端兼容） */
+  sessionId?: string
 }
 
 /** 发送结果（宠物窗 → 主 → invoke 回执） */
@@ -33,22 +35,35 @@ export interface WorkSendResultPayload {
 
 /** 对话镜像事件（宠物窗 → 主 → 工作窗） */
 export type WorkMirrorEvent =
-  | { kind: 'user_message'; localId: string; text: string; sentAt: number }
-  | { kind: 'reply_start'; messageId: string }
-  | { kind: 'message_saved'; clientId: string; dbId: number; role: string }
-  | { kind: 'message_deleted'; dbId: number; ok: boolean }
-  | { kind: 'sources'; messageId: string; items: WorkSourceItem[] }
-  | { kind: 'reasoning'; messageId: string; text: string }
-  | { kind: 'token'; messageId: string; text: string }
+  | { kind: 'user_message'; localId: string; text: string; sentAt: number; sessionId?: string }
+  | { kind: 'reply_start'; messageId: string; sessionId?: string }
+  | {
+      kind: 'message_saved'
+      clientId: string
+      dbId: number
+      role: string
+      sessionId?: string
+    }
+  | { kind: 'message_deleted'; dbId: number; ok: boolean; sessionId?: string }
+  | { kind: 'sources'; messageId: string; items: WorkSourceItem[]; sessionId?: string }
+  | { kind: 'reasoning'; messageId: string; text: string; sessionId?: string }
+  | { kind: 'token'; messageId: string; text: string; sessionId?: string }
   | {
       kind: 'reply_end'
       messageId: string
       fullText: string
       interrupted: boolean
+      sessionId?: string
     }
-  | { kind: 'state'; state: string }
-  | { kind: 'emotion'; messageId: string; emotion: string; intensity: number }
-  | { kind: 'notice'; code: string; message: string; level?: string }
+  | { kind: 'state'; state: string; sessionId?: string }
+  | {
+      kind: 'emotion'
+      messageId: string
+      emotion: string
+      intensity: number
+      sessionId?: string
+    }
+  | { kind: 'notice'; code: string; message: string; level?: string; sessionId?: string }
 
 /** 历史消息（后端 messages 表行） */
 export interface WorkHistoryMessage {
@@ -59,10 +74,11 @@ export interface WorkHistoryMessage {
   emotion?: string | null
 }
 
-/** 历史请求载荷（session_id 省略 = 当前连接会话） */
+/** 历史请求载荷（sessionId 省略 = 当前连接会话） */
 export interface WorkHistoryRequestPayload {
   requestId: string
   limit?: number
+  sessionId?: string
 }
 
 /** 历史响应（宠物窗 → 主 → invoke 回执） */
@@ -70,6 +86,8 @@ export interface WorkHistoryPayload {
   requestId: string
   ok: boolean
   reason?: string
+  /** 本次历史所属对话（宠物面回填；旧路径缺省） */
+  sessionId?: string
   messages: WorkHistoryMessage[]
   /** 发请求后缓冲的镜像事件（按序合并，避免与历史重复/丢失） */
   bufferedEvents: WorkMirrorEvent[]
@@ -80,6 +98,54 @@ export interface WorkHistoryPayload {
     reasoning: string
     startedAt: number
   }
+}
+
+// ------------------------------------------------------------------ 对话列表（2026-10-24）
+
+/** 对话列表的一行（后端 sessions 表 + 首条消息兜底标题） */
+export interface WorkConversationSummary {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messageCount: number
+}
+
+export interface WorkConversationsRequestPayload {
+  requestId: string
+}
+
+export interface WorkConversationsPayload {
+  requestId: string
+  ok: boolean
+  reason?: string
+  items: WorkConversationSummary[]
+}
+
+export interface WorkRenameConversationRequestPayload {
+  requestId: string
+  id: string
+  title: string
+}
+
+export interface WorkConversationRenamedPayload {
+  requestId: string
+  id: string
+  ok: boolean
+  title?: string
+  reason?: string
+}
+
+export interface WorkDeleteConversationRequestPayload {
+  requestId: string
+  id: string
+}
+
+export interface WorkConversationDeletedPayload {
+  requestId: string
+  id: string
+  ok: boolean
+  reason?: string
 }
 
 /** 工作窗状态（主 → 宠物窗） */

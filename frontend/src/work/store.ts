@@ -53,6 +53,7 @@ export const EMPTY_WORK_STATE: WorkState = {
 
 export type WorkAction =
   | { type: 'reset' }
+  | { type: 'restore'; state: WorkState }
   | {
       type: 'history'
       messages: WorkHistoryMessage[]
@@ -249,6 +250,8 @@ export function workReducer(state: WorkState, action: WorkAction): WorkState {
   switch (action.type) {
     case 'reset':
       return EMPTY_WORK_STATE
+    case 'restore':
+      return action.state
     case 'clear-notice':
       return { ...state, notice: null }
     case 'mirror':

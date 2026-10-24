@@ -16,9 +16,15 @@ import { join } from 'node:path'
 import {
   IPC_AGENT,
   IPC_WORK,
+  type WorkConversationDeletedPayload,
+  type WorkConversationRenamedPayload,
+  type WorkConversationsPayload,
+  type WorkConversationsRequestPayload,
+  type WorkDeleteConversationRequestPayload,
   type WorkHistoryPayload,
   type WorkHistoryRequestPayload,
   type WorkMirrorEvent,
+  type WorkRenameConversationRequestPayload,
   type WorkSendRequestPayload,
   type WorkSendResultPayload
 } from '../ipc/channels'
@@ -91,8 +97,26 @@ interface PendingHistory {
   timer: NodeJS.Timeout
 }
 
+interface PendingConversations {
+  resolve: (result: WorkConversationsPayload) => void
+  timer: NodeJS.Timeout
+}
+
+interface PendingRename {
+  resolve: (result: WorkConversationRenamedPayload) => void
+  timer: NodeJS.Timeout
+}
+
+interface PendingDelete {
+  resolve: (result: WorkConversationDeletedPayload) => void
+  timer: NodeJS.Timeout
+}
+
 const pendingSends = new Map<string, PendingSend>()
 const pendingHistory = new Map<string, PendingHistory>()
+const pendingConversations = new Map<string, PendingConversations>()
+const pendingRenames = new Map<string, PendingRename>()
+const pendingDeletes = new Map<string, PendingDelete>()
 
 // ------------------------------------------------------------------ 小工具
 
@@ -183,6 +207,21 @@ function rejectAll(reason: string): void {
       bufferedEvents: []
     })
     pendingHistory.delete(requestId)
+  }
+  for (const [requestId, pending] of pendingConversations) {
+    clearTimeout(pending.timer)
+    pending.resolve({ requestId, ok: false, reason, items: [] })
+    pendingConversations.delete(requestId)
+  }
+  for (const [requestId, pending] of pendingRenames) {
+    clearTimeout(pending.timer)
+    pending.resolve({ requestId, id: '', ok: false, reason })
+    pendingRenames.delete(requestId)
+  }
+  for (const [requestId, pending] of pendingDeletes) {
+    clearTimeout(pending.timer)
+    pending.resolve({ requestId, id: '', ok: false, reason })
+    pendingDeletes.delete(requestId)
   }
 }
 
@@ -621,11 +660,15 @@ export function initWork(pet: BrowserWindow): void {
 
   ipcMain.on(IPC_WORK.DELETE_MESSAGE, (event, raw: unknown) => {
     if (!isWorkSender(event.sender)) return
-    const value = raw as { dbId?: unknown } | null
+    const value = raw as { dbId?: unknown; sessionId?: unknown } | null
     const dbId =
       value !== null && typeof value?.dbId === 'number' ? Math.trunc(value.dbId) : NaN
     if (!Number.isFinite(dbId) || dbId <= 0) return
-    sendToPet(IPC_WORK.DELETE_MESSAGE_REQUEST, { dbId })
+    const sessionId =
+      typeof value?.sessionId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value.sessionId)
+        ? value.sessionId
+        : undefined
+    sendToPet(IPC_WORK.DELETE_MESSAGE_REQUEST, { dbId, sessionId })
   })
 
   // 内嵌浏览器：渲染面只传意图，视图生命周期/安全策略全在主进程 browser.ts
@@ -725,6 +768,104 @@ export function initWork(pet: BrowserWindow): void {
     if (pending === undefined) return
     clearTimeout(pending.timer)
     pendingHistory.delete(payload.requestId)
+    pending.resolve(payload)
+  })
+
+  ipcMain.handle(IPC_WORK.REQUEST_CONVERSATIONS, (event, raw: unknown) => {
+    if (!isWorkSender(event.sender)) {
+      return { requestId: '', ok: false, reason: 'bad-request', items: [] }
+    }
+    const requestId =
+      typeof (raw as { requestId?: unknown } | null)?.requestId === 'string'
+        ? ((raw as { requestId: string }).requestId)
+        : ''
+    if (!requestId) return { requestId: '', ok: false, reason: 'bad-request', items: [] }
+    if (!petAlive()) return { requestId, ok: false, reason: 'pet-unavailable', items: [] }
+    return new Promise<WorkConversationsPayload>((resolve) => {
+      const timer = setTimeout(() => {
+        pendingConversations.delete(requestId)
+        resolve({ requestId, ok: false, reason: 'timeout', items: [] })
+      }, REQUEST_TIMEOUT_MS)
+      pendingConversations.set(requestId, { resolve, timer })
+      sendToPet(IPC_WORK.CONVERSATIONS_REQUEST, { requestId } satisfies WorkConversationsRequestPayload)
+    })
+  })
+
+  ipcMain.on(IPC_WORK.CONVERSATIONS, (event, raw: unknown) => {
+    if (!isPetSender(event.sender)) return
+    const payload = raw as WorkConversationsPayload
+    const pending = payload ? pendingConversations.get(payload.requestId) : undefined
+    if (!payload || !pending) return
+    clearTimeout(pending.timer)
+    pendingConversations.delete(payload.requestId)
+    pending.resolve(payload)
+  })
+
+  ipcMain.handle(IPC_WORK.RENAME_CONVERSATION, (event, raw: unknown) => {
+    if (!isWorkSender(event.sender)) {
+      return { requestId: '', id: '', ok: false, reason: 'bad-request' }
+    }
+    const value = raw as Partial<WorkRenameConversationRequestPayload> | null
+    const requestId = typeof value?.requestId === 'string' ? value.requestId : ''
+    const id = typeof value?.id === 'string' ? value.id : ''
+    const title = typeof value?.title === 'string' ? value.title.trim().slice(0, 50) : ''
+    if (!requestId || !id || !title) {
+      return { requestId, id, ok: false, reason: 'bad-request' }
+    }
+    if (!petAlive()) return { requestId, id, ok: false, reason: 'pet-unavailable' }
+    return new Promise<WorkConversationRenamedPayload>((resolve) => {
+      const timer = setTimeout(() => {
+        pendingRenames.delete(requestId)
+        resolve({ requestId, id, ok: false, reason: 'timeout' })
+      }, REQUEST_TIMEOUT_MS)
+      pendingRenames.set(requestId, { resolve, timer })
+      sendToPet(IPC_WORK.RENAME_CONVERSATION_REQUEST, {
+        requestId,
+        id,
+        title
+      } satisfies WorkRenameConversationRequestPayload)
+    })
+  })
+
+  ipcMain.on(IPC_WORK.CONVERSATION_RENAMED, (event, raw: unknown) => {
+    if (!isPetSender(event.sender)) return
+    const payload = raw as WorkConversationRenamedPayload
+    const pending = payload ? pendingRenames.get(payload.requestId) : undefined
+    if (!payload || !pending) return
+    clearTimeout(pending.timer)
+    pendingRenames.delete(payload.requestId)
+    pending.resolve(payload)
+  })
+
+  ipcMain.handle(IPC_WORK.DELETE_CONVERSATION, (event, raw: unknown) => {
+    if (!isWorkSender(event.sender)) {
+      return { requestId: '', id: '', ok: false, reason: 'bad-request' }
+    }
+    const value = raw as Partial<WorkDeleteConversationRequestPayload> | null
+    const requestId = typeof value?.requestId === 'string' ? value.requestId : ''
+    const id = typeof value?.id === 'string' ? value.id : ''
+    if (!requestId || !id) return { requestId, id, ok: false, reason: 'bad-request' }
+    if (!petAlive()) return { requestId, id, ok: false, reason: 'pet-unavailable' }
+    return new Promise<WorkConversationDeletedPayload>((resolve) => {
+      const timer = setTimeout(() => {
+        pendingDeletes.delete(requestId)
+        resolve({ requestId, id, ok: false, reason: 'timeout' })
+      }, REQUEST_TIMEOUT_MS)
+      pendingDeletes.set(requestId, { resolve, timer })
+      sendToPet(IPC_WORK.DELETE_CONVERSATION_REQUEST, {
+        requestId,
+        id
+      } satisfies WorkDeleteConversationRequestPayload)
+    })
+  })
+
+  ipcMain.on(IPC_WORK.CONVERSATION_DELETED, (event, raw: unknown) => {
+    if (!isPetSender(event.sender)) return
+    const payload = raw as WorkConversationDeletedPayload
+    const pending = payload ? pendingDeletes.get(payload.requestId) : undefined
+    if (!payload || !pending) return
+    clearTimeout(pending.timer)
+    pendingDeletes.delete(payload.requestId)
     pending.resolve(payload)
   })
 

@@ -56,10 +56,16 @@ import type {
   WorkBrowserAction,
   WorkBrowserOpenPayload,
   WorkBrowserState,
+  WorkConversationDeletedPayload,
+  WorkConversationRenamedPayload,
+  WorkConversationsPayload,
+  WorkConversationsRequestPayload,
+  WorkDeleteConversationRequestPayload,
   WorkHistoryPayload,
   WorkHistoryRequestPayload,
   WorkMirrorEvent,
   WorkPresencePayload,
+  WorkRenameConversationRequestPayload,
   WorkSendRequestPayload,
   WorkSendResultPayload
 } from './work'
@@ -384,10 +390,22 @@ export interface PetBridgeApi {
     requestSend(payload: WorkSendRequestPayload): Promise<WorkSendResultPayload>
     /** 工作窗：请求历史回填（invoke → 历史 + 缓冲事件 + live 快照） */
     requestHistory(payload: WorkHistoryRequestPayload): Promise<WorkHistoryPayload>
+    /** 工作窗：对话列表（invoke） */
+    requestConversations(
+      payload: WorkConversationsRequestPayload
+    ): Promise<WorkConversationsPayload>
+    /** 工作窗：改对话标题（invoke） */
+    renameConversation(
+      payload: WorkRenameConversationRequestPayload
+    ): Promise<WorkConversationRenamedPayload>
+    /** 工作窗：删除对话（invoke） */
+    deleteConversation(
+      payload: WorkDeleteConversationRequestPayload
+    ): Promise<WorkConversationDeletedPayload>
     /** 工作窗：打断当前回复 */
     interrupt(): void
     /** 工作窗：删除单条消息（按后端 DB 行 id；删除结果经 onEvent 的 message_deleted 回传） */
-    deleteMessage(payload: { dbId: number }): void
+    deleteMessage(payload: { dbId: number; sessionId?: string }): void
     /** 工作窗：在内嵌浏览器打开链接（已有同 URL 标签则切换过去） */
     browserOpen(payload: WorkBrowserOpenPayload): void
     /** 工作窗：关闭内嵌浏览器标签 */
@@ -414,10 +432,26 @@ export interface PetBridgeApi {
     onHistoryRequest(cb: (payload: WorkHistoryRequestPayload) => void): () => void
     /** 宠物面：回执历史（含缓冲事件与 live 快照） */
     reportHistory(payload: WorkHistoryPayload): void
+    /** 宠物面：订阅对话列表请求；返回取消订阅函数 */
+    onConversationsRequest(cb: (payload: WorkConversationsRequestPayload) => void): () => void
+    /** 宠物面：回执对话列表 */
+    reportConversations(payload: WorkConversationsPayload): void
+    /** 宠物面：订阅改标题请求；返回取消订阅函数 */
+    onRenameConversationRequest(
+      cb: (payload: WorkRenameConversationRequestPayload) => void
+    ): () => void
+    /** 宠物面：回执改标题 */
+    reportConversationRenamed(payload: WorkConversationRenamedPayload): void
+    /** 宠物面：订阅删除对话请求；返回取消订阅函数 */
+    onDeleteConversationRequest(
+      cb: (payload: WorkDeleteConversationRequestPayload) => void
+    ): () => void
+    /** 宠物面：回执删除对话 */
+    reportConversationDeleted(payload: WorkConversationDeletedPayload): void
     /** 宠物面：订阅打断请求；返回取消订阅函数 */
     onInterrupt(cb: () => void): () => void
     /** 宠物面：订阅删除单条消息请求；返回取消订阅函数 */
-    onDeleteMessage(cb: (payload: { dbId: number }) => void): () => void
+    onDeleteMessage(cb: (payload: { dbId: number; sessionId?: string }) => void): () => void
     /** 宠物面：订阅工作窗存在性；返回取消订阅函数 */
     onPresence(cb: (payload: WorkPresencePayload) => void): () => void
     /** 宠物面：查询工作窗当前是否存在（重载后补状态） */

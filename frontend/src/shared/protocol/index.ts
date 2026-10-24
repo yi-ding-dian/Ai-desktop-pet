@@ -120,6 +120,21 @@ export interface LoadHistoryData {
 /** 删除单条消息（工作模式）：当前会话的 messages 表行 id */
 export interface DeleteMessageData {
   id: number
+  session_id?: string
+}
+
+/** 列出对话（工作窗「对话」左栏） */
+export type ListConversationsData = Record<string, never>
+
+/** 改对话标题 */
+export interface RenameConversationData {
+  id: string
+  title: string
+}
+
+/** 删除对话及全部消息 */
+export interface DeleteConversationData {
+  id: string
 }
 
 /** 行为执行完成/被中断回报（Phase 3） */
@@ -447,6 +462,30 @@ export interface HistoryData {
   messages: Array<Record<string, unknown>>
 }
 
+/** 对话列表的一行 */
+export interface ConversationSummaryData {
+  id: string
+  title: string
+  created_at: number
+  updated_at: number
+  message_count: number
+}
+
+export interface ConversationsData {
+  items: ConversationSummaryData[]
+}
+
+export interface ConversationRenamedData {
+  id: string
+  title: string
+  ok: boolean
+}
+
+export interface ConversationDeletedData {
+  id: string
+  ok: boolean
+}
+
 /** 配置快照（Pydantic 侧 extra=allow，字段自由） */
 export type ConfigData = Record<string, unknown>
 
@@ -541,6 +580,9 @@ export interface ServerEventMap {
   /** 一次性提示（文件分析丢历史等）；前端顶部/输入框上方轻提示 */
   notice: NoticeData
   history: HistoryData
+  conversations: ConversationsData
+  conversation_renamed: ConversationRenamedData
+  conversation_deleted: ConversationDeletedData
   config: ConfigData
   /** 用户画像摘要（get_profile 的响应；启动称呼引导） */
   profile: ProfileData
@@ -568,6 +610,9 @@ export interface ClientEventMap {
   load_history: LoadHistoryData
   /** 工作模式：删除当前会话的一条消息 */
   delete_message: DeleteMessageData
+  list_conversations: ListConversationsData
+  rename_conversation: RenameConversationData
+  delete_conversation: DeleteConversationData
   behavior_done: BehaviorDoneData
   env_update: EnvUpdateData
   get_reminders: GetRemindersData

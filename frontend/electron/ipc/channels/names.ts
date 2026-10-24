@@ -265,6 +265,24 @@ export const IPC_WORK = {
   HISTORY_REQUEST: 'work:history-request',
   /** 宠物窗 → 主：历史响应 */
   HISTORY: 'work:history',
+  /** 工作窗 → 主：对话列表（invoke → WorkConversationsPayload） */
+  REQUEST_CONVERSATIONS: 'work:request-conversations',
+  /** 主 → 宠物窗：对话列表请求 */
+  CONVERSATIONS_REQUEST: 'work:conversations-request',
+  /** 宠物窗 → 主：对话列表响应 */
+  CONVERSATIONS: 'work:conversations',
+  /** 工作窗 → 主：改对话标题（invoke） */
+  RENAME_CONVERSATION: 'work:rename-conversation',
+  /** 主 → 宠物窗：改标题请求 */
+  RENAME_CONVERSATION_REQUEST: 'work:rename-conversation-request',
+  /** 宠物窗 → 主：改标题响应 */
+  CONVERSATION_RENAMED: 'work:conversation-renamed',
+  /** 工作窗 → 主：删除对话（invoke） */
+  DELETE_CONVERSATION: 'work:delete-conversation',
+  /** 主 → 宠物窗：删除对话请求 */
+  DELETE_CONVERSATION_REQUEST: 'work:delete-conversation-request',
+  /** 宠物窗 → 主：删除对话响应 */
+  CONVERSATION_DELETED: 'work:conversation-deleted',
   /** 主 → 宠物窗：工作窗是否存在（true 时宠物面才镜像） */
   PRESENCE: 'work:presence',
   /** 宠物窗 → 主：查询工作窗当前是否存在（宠物窗重载后补状态，invoke → WorkPresencePayload） */

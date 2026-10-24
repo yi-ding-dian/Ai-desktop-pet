@@ -59,10 +59,16 @@ import {
   type WorkBrowserAction,
   type WorkBrowserOpenPayload,
   type WorkBrowserState,
+  type WorkConversationDeletedPayload,
+  type WorkConversationRenamedPayload,
+  type WorkConversationsPayload,
+  type WorkConversationsRequestPayload,
+  type WorkDeleteConversationRequestPayload,
   type WorkHistoryPayload,
   type WorkHistoryRequestPayload,
   type WorkMirrorEvent,
   type WorkPresencePayload,
+  type WorkRenameConversationRequestPayload,
   type WorkSendRequestPayload,
   type WorkSendResultPayload
 } from './ipc/channels'
@@ -702,11 +708,29 @@ const api: PetBridgeApi = {
       return ipcRenderer.invoke(IPC_WORK.REQUEST_HISTORY, payload)
     },
 
+    requestConversations(
+      payload: WorkConversationsRequestPayload
+    ): Promise<WorkConversationsPayload> {
+      return ipcRenderer.invoke(IPC_WORK.REQUEST_CONVERSATIONS, payload)
+    },
+
+    renameConversation(
+      payload: WorkRenameConversationRequestPayload
+    ): Promise<WorkConversationRenamedPayload> {
+      return ipcRenderer.invoke(IPC_WORK.RENAME_CONVERSATION, payload)
+    },
+
+    deleteConversation(
+      payload: WorkDeleteConversationRequestPayload
+    ): Promise<WorkConversationDeletedPayload> {
+      return ipcRenderer.invoke(IPC_WORK.DELETE_CONVERSATION, payload)
+    },
+
     interrupt(): void {
       ipcRenderer.send(IPC_WORK.INTERRUPT)
     },
 
-    deleteMessage(payload: { dbId: number }): void {
+    deleteMessage(payload: { dbId: number; sessionId?: string }): void {
       ipcRenderer.send(IPC_WORK.DELETE_MESSAGE, payload)
     },
 
@@ -790,6 +814,57 @@ const api: PetBridgeApi = {
 
     reportHistory(payload: WorkHistoryPayload): void {
       ipcRenderer.send(IPC_WORK.HISTORY, payload)
+    },
+
+    onConversationsRequest(
+      cb: (payload: WorkConversationsRequestPayload) => void
+    ): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: WorkConversationsRequestPayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_WORK.CONVERSATIONS_REQUEST, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.CONVERSATIONS_REQUEST, listener)
+      }
+    },
+
+    reportConversations(payload: WorkConversationsPayload): void {
+      ipcRenderer.send(IPC_WORK.CONVERSATIONS, payload)
+    },
+
+    onRenameConversationRequest(
+      cb: (payload: WorkRenameConversationRequestPayload) => void
+    ): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: WorkRenameConversationRequestPayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_WORK.RENAME_CONVERSATION_REQUEST, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.RENAME_CONVERSATION_REQUEST, listener)
+      }
+    },
+
+    reportConversationRenamed(payload: WorkConversationRenamedPayload): void {
+      ipcRenderer.send(IPC_WORK.CONVERSATION_RENAMED, payload)
+    },
+
+    onDeleteConversationRequest(
+      cb: (payload: WorkDeleteConversationRequestPayload) => void
+    ): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: WorkDeleteConversationRequestPayload
+      ): void => cb(payload)
+      ipcRenderer.on(IPC_WORK.DELETE_CONVERSATION_REQUEST, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.DELETE_CONVERSATION_REQUEST, listener)
+      }
+    },
+
+    reportConversationDeleted(payload: WorkConversationDeletedPayload): void {
+      ipcRenderer.send(IPC_WORK.CONVERSATION_DELETED, payload)
     },
 
     onInterrupt(cb: () => void): () => void {

@@ -63,7 +63,9 @@ const tokenAccum = new Map<string, string>()
 const stateSubscribers = new Set<(state: TeachingStatePayload) => void>()
 const bubbleSubscribers = new Set<(items: TeachingBubbleItem[]) => void>()
 /** "已发送的用户消息"订阅者（chat 域会话记录 / 工作窗镜像用——统一发送入口成功送出后广播） */
-const sentSubscribers = new Set<(text: string, localId: string) => void>()
+const sentSubscribers = new Set<
+  (text: string, localId: string, sessionId?: string) => void
+>()
 
 /** 订阅教学模式状态（App：面板收起/气泡显隐/讲台走位）；返回取消订阅函数 */
 export function subscribeTeachingState(cb: (state: TeachingStatePayload) => void): () => void {
@@ -83,7 +85,7 @@ export function subscribeTeachingBubbles(cb: (items: TeachingBubbleItem[]) => vo
 
 /** 订阅"已发送的用户消息"（chat 域会话记录 / 工作窗镜像用——两条发送路径统一从此广播）；返回取消订阅函数 */
 export function subscribeSentUserMessages(
-  cb: (text: string, localId: string) => void
+  cb: (text: string, localId: string, sessionId?: string) => void
 ): () => void {
   sentSubscribers.add(cb)
   return () => {
@@ -91,10 +93,10 @@ export function subscribeSentUserMessages(
   }
 }
 
-function emitSent(text: string, localId: string): void {
+function emitSent(text: string, localId: string, sessionId?: string): void {
   for (const cb of [...sentSubscribers]) {
     try {
-      cb(text, localId)
+      cb(text, localId, sessionId)
     } catch (err) {
       console.error('[teaching] 发送订阅者抛错：', err)
     }
@@ -192,7 +194,8 @@ export function sendUserMessage(
   client: WsClient,
   text: string,
   attachments?: readonly UserAttachment[],
-  options?: UserMessageOptions | null
+  options?: UserMessageOptions | null,
+  sessionId?: string
 ): boolean {
   // ① 关键词：必须在发送/镜像之前——"开始教学"之后的消息才进入镜像链路
   if (EXIT_KEYWORDS.test(text)) {
@@ -214,6 +217,7 @@ export function sendUserMessage(
   const payload = {
     text,
     client_id: localId,
+    ...(sessionId ? { session_id: sessionId } : {}),
     ...(refs && refs.length > 0 ? { attachments: refs } : {}),
     ...(Object.keys(mergedOptions).length > 0 ? { options: mergedOptions } : {})
   }
@@ -231,7 +235,7 @@ export function sendUserMessage(
   const displayText = names ? `📎 ${names}${text ? `\n${text}` : ''}` : text
 
   // ②b 已发送广播（chat 域会话记录 / 工作窗镜像用——两条发送路径统一从此广播）
-  emitSent(displayText, localId)
+  emitSent(displayText, localId, sessionId)
 
   // ③ 教学模式中：推入头顶气泡 + 镜像给黑板（黑板用自己的气泡 id 建立问题→段落映射）
   if (isTeachingMode()) {

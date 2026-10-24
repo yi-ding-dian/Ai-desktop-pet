@@ -14,9 +14,15 @@ import { getPetBridge } from '../../shared/pet-bridge'
 import type { WsClient } from '../../shared/ws-client'
 import type { UserMessageOptions } from '../../shared/protocol'
 import type {
+  WorkConversationDeletedPayload,
+  WorkConversationRenamedPayload,
+  WorkConversationsPayload,
+  WorkConversationsRequestPayload,
+  WorkDeleteConversationRequestPayload,
   WorkHistoryPayload,
   WorkHistoryRequestPayload,
   WorkMirrorEvent,
+  WorkRenameConversationRequestPayload,
   WorkSendRequestPayload
 } from '../../../electron/ipc/channels'
 import { sendUserMessage, subscribeSentUserMessages } from '../teaching'
@@ -47,6 +53,22 @@ export function setupWorkPetSide(client: WsClient): () => void {
   let historyPending: WorkHistoryRequestPayload | null = null
   let historyBuffer: WorkMirrorEvent[] = []
   const currentStream = new Map<string, StreamSnapshot>()
+  /** 最近一次发送的目标对话（回复事件没有 session_id，靠它回填到对应会话） */
+  let lastSentSessionId: string | undefined
+  /** 消息 id → 对话 id（流式期间的消息归属） */
+  const messageSessions = new Map<string, string>()
+  /** 最近一次删除消息所属对话（message_deleted 事件没有 session_id） */
+  let lastDeleteSessionId: string | undefined
+  /** 对话列表请求（单飞） */
+  let conversationsPending: string | null = null
+  const renamePending = new Map<
+    string,
+    { id: string; resolve: (payload: WorkConversationRenamedPayload) => void }
+  >()
+  const deletePending = new Map<
+    string,
+    { id: string; resolve: (payload: WorkConversationDeletedPayload) => void }
+  >()
 
   const flush = (): void => {
     if (flushTimer !== null) {
@@ -84,8 +106,14 @@ export function setupWorkPetSide(client: WsClient): () => void {
 
   const report = (event: WorkMirrorEvent): void => {
     if (!workOpen) return
-    // 历史请求在途：事件进缓冲，和历史响应一起原子交回工作窗（不单独发送）
+    // 历史请求在途：只缓冲本次请求会话的事件；别的对话的流照常实时上报，
+    // 否则它们会被塞进本次 history 的 bufferedEvents，串到错误的对话里。
     if (historyPending !== null) {
+      const requested = historyPending.sessionId
+      if (requested && event.sessionId && event.sessionId !== requested) {
+        bridge.work?.reportEvent?.(event)
+        return
+      }
       historyBuffer.push(event)
       return
     }
@@ -127,7 +155,8 @@ export function setupWorkPetSide(client: WsClient): () => void {
       search: payload.options?.search !== false
     }
     const question = trimmed || '帮我看看这个文件'
-    const ok = sendUserMessage(client, question, attachments, options)
+    const ok = sendUserMessage(client, question, attachments, options, payload.sessionId)
+    if (ok) lastSentSessionId = payload.sessionId
     // 与宠物胶囊一致：记录"用户已发言"（启动称呼引导据此判断是否还问名字）
     if (ok) notifyUserMessage(question)
     bridge.work?.sendResult?.({
@@ -152,7 +181,10 @@ export function setupWorkPetSide(client: WsClient): () => void {
       }
       historyPending = payload
       historyBuffer = []
-      const sent = client.send('load_history', { limit: payload.limit ?? 200 })
+      const sent = client.send('load_history', {
+        limit: payload.limit ?? 200,
+        ...(payload.sessionId ? { session_id: payload.sessionId } : {})
+      })
       if (!sent) {
         historyPending = null
         historyBuffer = []
@@ -167,15 +199,85 @@ export function setupWorkPetSide(client: WsClient): () => void {
     }
   )
 
+  const offConversationsRequest = bridge.work?.onConversationsRequest?.(
+    (payload: WorkConversationsRequestPayload) => {
+      if (conversationsPending !== null) {
+        bridge.work?.reportConversations?.({
+          requestId: payload.requestId,
+          ok: false,
+          reason: 'busy',
+          items: []
+        })
+        return
+      }
+      const sent = client.send('list_conversations', {})
+      if (!sent) {
+        bridge.work?.reportConversations?.({
+          requestId: payload.requestId,
+          ok: false,
+          reason: 'not-connected',
+          items: []
+        })
+        return
+      }
+      conversationsPending = payload.requestId
+    }
+  )
+
+  const offRenameConversationRequest = bridge.work?.onRenameConversationRequest?.(
+    (payload: WorkRenameConversationRequestPayload) => {
+      const sent = client.send('rename_conversation', {
+        id: payload.id,
+        title: payload.title
+      })
+      if (!sent) {
+        bridge.work?.reportConversationRenamed?.({
+          requestId: payload.requestId,
+          id: payload.id,
+          ok: false,
+          reason: 'not-connected'
+        })
+        return
+      }
+      renamePending.set(payload.requestId, {
+        id: payload.id,
+        resolve: (result) => bridge.work?.reportConversationRenamed?.(result)
+      })
+    }
+  )
+
+  const offDeleteConversationRequest = bridge.work?.onDeleteConversationRequest?.(
+    (payload: WorkDeleteConversationRequestPayload) => {
+      const sent = client.send('delete_conversation', { id: payload.id })
+      if (!sent) {
+        bridge.work?.reportConversationDeleted?.({
+          requestId: payload.requestId,
+          id: payload.id,
+          ok: false,
+          reason: 'not-connected'
+        })
+        return
+      }
+      deletePending.set(payload.requestId, {
+        id: payload.id,
+        resolve: (result) => bridge.work?.reportConversationDeleted?.(result)
+      })
+    }
+  )
+
   const offInterrupt = bridge.work?.onInterrupt?.(() => {
     const sent = client.send('interrupt', {})
     stopVoiceNow('工作模式停止')
     if (import.meta.env.DEV) console.log(`[work] 打断已发（sent=${sent}）`)
   })
 
-  const offDeleteMessage = bridge.work?.onDeleteMessage?.(({ dbId }) => {
+  const offDeleteMessage = bridge.work?.onDeleteMessage?.(({ dbId, sessionId }) => {
     if (typeof dbId !== 'number' || !Number.isFinite(dbId) || dbId <= 0) return
-    const sent = client.send('delete_message', { id: Math.trunc(dbId) })
+    lastDeleteSessionId = sessionId
+    const sent = client.send('delete_message', {
+      id: Math.trunc(dbId),
+      ...(sessionId ? { session_id: sessionId } : {})
+    })
     if (import.meta.env.DEV) console.log(`[work] 删除消息 id=${dbId}（sent=${sent}）`)
   })
 
@@ -203,26 +305,44 @@ export function setupWorkPetSide(client: WsClient): () => void {
 
   // ------------------------------------------------------------------ WS 镜像
 
-  const offSent = subscribeSentUserMessages((text, localId) => {
+  const offSent = subscribeSentUserMessages((text, localId, sessionId) => {
     lastUserSentAt = Date.now()
+    if (sessionId) lastSentSessionId = sessionId
     emitNow({
       kind: 'user_message',
       localId,
       text,
-      sentAt: lastUserSentAt
+      sentAt: lastUserSentAt,
+      sessionId
     })
   })
 
   const offMessageSaved = client.on('message_saved', ({ client_id, db_id, role }) => {
-    emitNow({ kind: 'message_saved', clientId: client_id, dbId: db_id, role })
+    emitNow({
+      kind: 'message_saved',
+      clientId: client_id,
+      dbId: db_id,
+      role,
+      sessionId: lastSentSessionId
+    })
   })
 
   const offMessageDeleted = client.on('message_deleted', ({ id, ok }) => {
-    emitNow({ kind: 'message_deleted', dbId: id, ok })
+    emitNow({
+      kind: 'message_deleted',
+      dbId: id,
+      ok,
+      sessionId: lastDeleteSessionId ?? lastSentSessionId
+    })
   })
 
   const offSources = client.on('sources', ({ message_id, items }) => {
-    emitNow({ kind: 'sources', messageId: message_id, items })
+    emitNow({
+      kind: 'sources',
+      messageId: message_id,
+      items,
+      sessionId: messageSessions.get(message_id)
+    })
   })
 
   const offReplyStart = client.on('reply_start', ({ message_id }) => {
@@ -231,21 +351,36 @@ export function setupWorkPetSide(client: WsClient): () => void {
       reasoning: '',
       startedAt: lastUserSentAt || Date.now()
     })
-    emitNow({ kind: 'reply_start', messageId: message_id })
+    if (lastSentSessionId) messageSessions.set(message_id, lastSentSessionId)
+    emitNow({
+      kind: 'reply_start',
+      messageId: message_id,
+      sessionId: messageSessions.get(message_id)
+    })
   })
 
   const offReasoning = client.on('reasoning', ({ message_id, text }) => {
     const stream = currentStream.get(message_id)
     if (stream !== undefined) stream.reasoning += text
     else currentStream.set(message_id, { text: '', reasoning: text, startedAt: lastUserSentAt || Date.now() })
-    emitLater({ kind: 'reasoning', messageId: message_id, text })
+    emitLater({
+      kind: 'reasoning',
+      messageId: message_id,
+      text,
+      sessionId: messageSessions.get(message_id)
+    })
   })
 
   const offToken = client.on('token', ({ message_id, text }) => {
     const stream = currentStream.get(message_id)
     if (stream !== undefined) stream.text += text
     else currentStream.set(message_id, { text, reasoning: '', startedAt: lastUserSentAt || Date.now() })
-    emitLater({ kind: 'token', messageId: message_id, text })
+    emitLater({
+      kind: 'token',
+      messageId: message_id,
+      text,
+      sessionId: messageSessions.get(message_id)
+    })
   })
 
   const offReplyEnd = client.on('reply_end', ({ message_id, full_text, interrupted }) => {
@@ -255,22 +390,30 @@ export function setupWorkPetSide(client: WsClient): () => void {
       kind: 'reply_end',
       messageId: message_id,
       fullText: full_text ?? '',
-      interrupted: Boolean(interrupted)
+      interrupted: Boolean(interrupted),
+      sessionId: messageSessions.get(message_id)
     })
+    messageSessions.delete(message_id)
   })
 
   const offState = client.on('state', ({ state }) => {
-    emitNow({ kind: 'state', state })
+    emitNow({ kind: 'state', state, sessionId: lastSentSessionId })
   })
 
   const offEmotion = client.on('emotion', ({ message_id, emotion, intensity }) => {
     // tap_head 的 emotion 没有 message_id：不是对话消息，不镜像
     if (!message_id) return
-    emitNow({ kind: 'emotion', messageId: message_id, emotion, intensity })
+    emitNow({
+      kind: 'emotion',
+      messageId: message_id,
+      emotion,
+      intensity,
+      sessionId: messageSessions.get(message_id)
+    })
   })
 
   const offNotice = client.on('notice', ({ code, message, level }) => {
-    emitNow({ kind: 'notice', code, message, level })
+    emitNow({ kind: 'notice', code, message, level, sessionId: lastSentSessionId })
   })
 
   // 对话/连接错误也镜像到工作窗：用户可能正看着工作窗，不能只让宠物气泡提示
@@ -291,10 +434,63 @@ export function setupWorkPetSide(client: WsClient): () => void {
       /* 主进程未就绪：忽略，后续靠 presence 广播 */
     })
 
+  // 对话列表 / 改名 / 删除：WS 回执转给主进程（主进程再 resolve 工作窗的 invoke）
+  const offConversations = client.on('conversations', (data) => {
+    if (conversationsPending === null) return
+    const requestId = conversationsPending
+    conversationsPending = null
+    const rawItems = Array.isArray(data.items) ? (data.items as unknown[]) : []
+    const items = rawItems
+      .map((item) => (item !== null && typeof item === 'object' ? (item as Record<string, unknown>) : null))
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item) => ({
+        id: String(item.id ?? ''),
+        title: String(item.title ?? '新对话'),
+        createdAt: Number(item.created_at ?? 0),
+        updatedAt: Number(item.updated_at ?? 0),
+        messageCount: Number(item.message_count ?? 0)
+      }))
+      .filter((item) => item.id.length > 0)
+    bridge.work?.reportConversations?.({
+      requestId,
+      ok: true,
+      items
+    } satisfies WorkConversationsPayload)
+  })
+
+  const offConversationRenamed = client.on('conversation_renamed', (data) => {
+    for (const [requestId, pending] of renamePending) {
+      if (pending.id !== data.id) continue
+      renamePending.delete(requestId)
+      pending.resolve({
+        requestId,
+        id: data.id,
+        ok: Boolean(data.ok),
+        title: typeof data.title === 'string' ? data.title : undefined
+      })
+      return
+    }
+  })
+
+  const offConversationDeleted = client.on('conversation_deleted', (data) => {
+    for (const [requestId, pending] of deletePending) {
+      if (pending.id !== data.id) continue
+      deletePending.delete(requestId)
+      pending.resolve({
+        requestId,
+        id: data.id,
+        ok: Boolean(data.ok),
+        reason: data.ok ? undefined : 'delete-failed'
+      })
+      return
+    }
+  })
+
   // 历史响应：与缓冲事件一起原子回给工作窗
   const offHistory = client.on('history', (data) => {
     if (historyPending === null) return
     const requestId = historyPending.requestId
+    const requestedSessionId = historyPending.sessionId
     historyPending = null
     const buffered = historyBuffer
     historyBuffer = []
@@ -303,6 +499,8 @@ export function setupWorkPetSide(client: WsClient): () => void {
       : []
     let live: WorkHistoryPayload['live']
     for (const [messageId, stream] of currentStream) {
+      // 只回填本次请求会话的流式快照，避免别的对话的回复串进来
+      if (requestedSessionId && messageSessions.get(messageId) !== requestedSessionId) continue
       live = {
         messageId,
         text: stream.text,
@@ -310,7 +508,15 @@ export function setupWorkPetSide(client: WsClient): () => void {
         startedAt: stream.startedAt
       }
     }
-    replyHistory({ requestId, ok: true, messages, bufferedEvents: buffered, live })
+    replyHistory({
+      requestId,
+      ok: true,
+      sessionId:
+        typeof data.session_id === 'string' ? data.session_id : requestedSessionId,
+      messages,
+      bufferedEvents: buffered,
+      live
+    })
   })
 
   return () => {
@@ -318,6 +524,9 @@ export function setupWorkPetSide(client: WsClient): () => void {
     flush()
     offSendRequest?.()
     offHistoryRequest?.()
+    offConversationsRequest?.()
+    offRenameConversationRequest?.()
+    offDeleteConversationRequest?.()
     offInterrupt?.()
     offDeleteMessage?.()
     offPresence?.()
@@ -334,6 +543,12 @@ export function setupWorkPetSide(client: WsClient): () => void {
     offNotice()
     offError()
     offHistory()
+    offConversations()
+    offConversationRenamed()
+    offConversationDeleted()
+    renamePending.clear()
+    deletePending.clear()
+    conversationsPending = null
     if (flushTimer !== null) {
       window.clearTimeout(flushTimer)
       flushTimer = null

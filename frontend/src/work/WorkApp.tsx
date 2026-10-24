@@ -20,6 +20,7 @@ import type {
   PickedFile,
   WorkBrowserAction,
   WorkBrowserState,
+  WorkConversationSummary,
   WorkMirrorEvent
 } from '../../electron/ipc/channels'
 import { getPetBridge } from '../shared/pet-bridge'
@@ -33,6 +34,7 @@ import {
 } from '../shared/ui'
 import Composer from './Composer'
 import BrowserBar from './conversation/BrowserBar'
+import ConversationSidebar from './conversation/ConversationSidebar'
 import MessageContextMenu, { type ContextMenuState } from './conversation/MessageContextMenu'
 import MessageList from './conversation/MessageList'
 import WindowTabs from './conversation/WindowTabs'
@@ -44,7 +46,8 @@ import {
   EMPTY_WORK_STATE,
   navigatorMessages,
   workReducer,
-  type WorkMessage
+  type WorkMessage,
+  type WorkState
 } from './store'
 
 /** 惰性取 work 段：旧 preload（主进程未重启）时返回 undefined，全部调用静默降级 */
@@ -106,6 +109,26 @@ export default function WorkApp(): ReactElement {
       return 1
     }
   })
+  /** 对话列表（左栏）与当前对话 */
+  const [conversations, setConversations] = useState<WorkConversationSummary[]>([])
+  const [activeConversationId, setActiveConversationId] = useState('')
+  const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set())
+  const activeConversationRef = useRef('')
+  const stateRef = useRef(state)
+  /** 切走时仍在流式的对话快照（后台继续收事件） */
+  const backgroundRef = useRef<{ id: string; state: WorkState } | null>(null)
+  /** 当前全局正在回复的对话（后端同一时刻只允许一条） */
+  const [streamingConversationId, setStreamingConversationId] = useState<string | null>(null)
+  const streamingConversationRef = useRef<string | null>(null)
+
+  const markStreamingConversation = useCallback((id: string | null): void => {
+    streamingConversationRef.current = id
+    setStreamingConversationId(id)
+  }, [])
+
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
   /** 窗口最大化状态（2026-10-23：标题栏最大化/复原按钮） */
   const [maximized, setMaximized] = useState(false)
   /** 折叠态（最小化 = 屏幕右缘中间的小角标，2026-10-20）：由主进程通知，点角标展开 */
@@ -201,8 +224,11 @@ export default function WorkApp(): ReactElement {
     return map
   }, [userMessages])
   const streaming = state.streamingId !== null
+  const activeConversation = conversations.find((item) => item.id === activeConversationId)
+  const activeTitle = activeConversation?.title ?? '新对话'
+  const draftConversation = activeConversation === undefined
 
-  const requestHistory = useCallback(async (): Promise<void> => {
+  const requestHistory = useCallback(async (sessionId?: string): Promise<void> => {
     const api = workBridge()
     if (!api?.requestHistory) {
       dispatch({
@@ -222,9 +248,13 @@ export default function WorkApp(): ReactElement {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const payload = await api.requestHistory({
           requestId: makeRequestId(),
-          limit: 200
+          limit: 200,
+          ...(sessionId ? { sessionId } : {})
         })
         if (payload.ok) {
+          // 返回的会话与请求不一致（切换竞态）时丢弃
+          if (sessionId && payload.sessionId && payload.sessionId !== sessionId) return
+          if (sessionId && sessionId !== activeConversationRef.current) return
           dispatch({
             type: 'history',
             messages: payload.messages,
@@ -256,28 +286,210 @@ export default function WorkApp(): ReactElement {
     }
   }, [])
 
+  /** 请求对话列表（失败返回 null，交给调用方决定是否保留旧列表） */
+  const requestConversations = useCallback(async (): Promise<WorkConversationSummary[] | null> => {
+    const api = workBridge()
+    if (!api?.requestConversations) return null
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const payload = await api.requestConversations({ requestId: makeRequestId() })
+        if (payload.ok) return payload.items
+        if (payload.reason === 'pet-unavailable' || payload.reason === 'bad-request') break
+      } catch (err) {
+        console.warn('[work] 拉取对话列表失败：', err)
+      }
+      if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 400))
+    }
+    return null
+  }, [])
+
+  /** 刷新列表但不改变当前对话 */
+  const refreshConversations = useCallback(async (): Promise<void> => {
+    const items = await requestConversations()
+    if (items !== null) setConversations(items)
+  }, [requestConversations])
+
+  const activateConversation = useCallback((id: string): void => {
+    activeConversationRef.current = id
+    setActiveConversationId(id)
+    try {
+      localStorage.setItem('pet.work.conversation', id)
+    } catch {
+      /* 忽略 */
+    }
+    setUnreadIds((prev) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }, [])
+
+  /** 切换对话：优先用后台流式快照，否则重置并拉历史 */
+  const switchConversation = useCallback(
+    async (id: string): Promise<void> => {
+      if (!id || id === activeConversationRef.current) return
+      const current = stateRef.current
+      if (current.streamingId && activeConversationRef.current) {
+        backgroundRef.current = { id: activeConversationRef.current, state: current }
+      }
+      activateConversation(id)
+      const background = backgroundRef.current
+      if (background?.id === id) {
+        dispatch({ type: 'restore', state: background.state })
+        backgroundRef.current = null
+        return
+      }
+      dispatch({ type: 'reset' })
+      await requestHistory(id)
+    },
+    [activateConversation, requestHistory]
+  )
+
+  /** 新建对话（草稿，发第一条消息时后端落库） */
+  const newConversation = useCallback((): void => {
+    const current = stateRef.current
+    if (current.streamingId && activeConversationRef.current) {
+      backgroundRef.current = { id: activeConversationRef.current, state: current }
+    }
+    const id = globalThis.crypto?.randomUUID?.() ?? `c_${Date.now().toString(36)}`
+    activateConversation(id)
+    dispatch({ type: 'reset' })
+    nearBottom.current = true
+  }, [activateConversation])
+
+  const renameConversation = useCallback(
+    async (id: string, title: string): Promise<void> => {
+      const api = workBridge()
+      if (!api?.renameConversation) return
+      const result = await api.renameConversation({ requestId: makeRequestId(), id, title })
+      if (!result.ok) {
+        dispatch({
+          type: 'mirror',
+          event: {
+            kind: 'notice',
+            code: 'rename_failed',
+            message: '改名没成功，稍后再试～',
+            level: 'warn'
+          }
+        })
+        return
+      }
+      void refreshConversations()
+    },
+    [refreshConversations]
+  )
+
+  const deleteConversation = useCallback(
+    async (id: string): Promise<void> => {
+      if (!window.confirm('删除这个对话及全部消息？')) return
+      const api = workBridge()
+      if (!api?.deleteConversation) return
+      const result = await api.deleteConversation({ requestId: makeRequestId(), id })
+      if (!result.ok) {
+        dispatch({
+          type: 'mirror',
+          event: {
+            kind: 'notice',
+            code: 'delete_failed',
+            message: '删除失败：对话可能正在回复中～',
+            level: 'warn'
+          }
+        })
+        return
+      }
+      const remaining = conversations.filter((item) => item.id !== id)
+      setConversations(remaining)
+      if (id === activeConversationRef.current) {
+        const next = remaining[0]?.id
+        if (next) {
+          activateConversation(next)
+          dispatch({ type: 'reset' })
+          await requestHistory(next)
+        } else {
+          newConversation()
+        }
+      }
+    },
+    [activateConversation, conversations, newConversation, requestHistory]
+  )
+
   // 订阅镜像 + 就绪握手 + 首次历史回填
   useEffect(() => {
     const api = workBridge()
     if (!api) return
     const offEvent = api.onEvent((event: WorkMirrorEvent) => {
+      const target = event.sessionId ?? activeConversationRef.current
+      if (event.kind === 'reply_start') markStreamingConversation(target)
+      if (
+        (event.kind === 'reply_end' || (event.kind === 'state' && event.state === 'idle')) &&
+        streamingConversationRef.current === target
+      ) {
+        markStreamingConversation(null)
+      }
+      if (target !== activeConversationRef.current) {
+        // 后台对话：写进独立快照，完成时标未读；不影响当前窗口
+        if (backgroundRef.current?.id !== target) {
+          backgroundRef.current = { id: target, state: EMPTY_WORK_STATE }
+        }
+        backgroundRef.current.state = workReducer(backgroundRef.current.state, {
+          type: 'mirror',
+          event
+        })
+        if (event.kind === 'reply_end') {
+          setUnreadIds((prev) => new Set(prev).add(target))
+          void refreshConversations()
+        }
+        return
+      }
       // 历史回填期间丢弃实时事件：宠物窗已把它们放进 bufferedEvents/live 快照
       if (historyLoading.current) return
       dispatch({ type: 'mirror', event })
+      if (event.kind === 'reply_end' || event.kind === 'message_saved') {
+        void refreshConversations()
+      }
     })
     const offPetReady = api.onPetReady(() => {
       dispatch({ type: 'reset' })
-      void requestHistory()
+      void refreshConversations().then(() => requestHistory(activeConversationRef.current))
     })
     const offBrowser = api.onBrowserState?.((next) => setBrowser(next))
     api.ready()
-    void requestHistory()
+
+    const boot = async (): Promise<void> => {
+      const items = await requestConversations()
+      if (items !== null) setConversations(items)
+      let saved: string | null = null
+      try {
+        saved = localStorage.getItem('pet.work.conversation')
+      } catch {
+        saved = null
+      }
+      const inList = saved !== null && (items?.some((item) => item.id === saved) ?? false)
+      const id = inList
+        ? (saved as string)
+        : (items?.[0]?.id ??
+          (items === null ? saved : null) ??
+          globalThis.crypto?.randomUUID?.() ??
+          `c_${Date.now().toString(36)}`)
+      activateConversation(id)
+      dispatch({ type: 'reset' })
+      await requestHistory(id)
+    }
+    void boot()
+
     return () => {
       offEvent()
       offPetReady()
       offBrowser?.()
     }
-  }, [requestHistory])
+  }, [
+    activateConversation,
+    markStreamingConversation,
+    refreshConversations,
+    requestConversations,
+    requestHistory
+  ])
 
   // 提示自动消失（错误保留到用户关闭/下一次提示，避免一闪而过看不到原因）
   useEffect(() => {
@@ -359,13 +571,26 @@ export default function WorkApp(): ReactElement {
         })
         return false
       }
+      if (streamingConversationRef.current !== null) {
+        dispatch({
+          type: 'mirror',
+          event: {
+            kind: 'notice',
+            code: 'busy_other_conversation',
+            message: '另一个对话正在回复中，等它结束后再发～',
+            level: 'warn'
+          }
+        })
+        return false
+      }
       const attachments = files.map((file) => ({ path: file.path, name: file.name }))
       try {
         const result = await api.requestSend({
           requestId: makeRequestId(),
           text,
           attachments,
-          options: { search }
+          options: { search },
+          sessionId: activeConversationRef.current || undefined
         })
         if (!result.ok) {
           dispatch({
@@ -431,10 +656,16 @@ export default function WorkApp(): ReactElement {
     [markCopied]
   )
 
-  const deleteMessage = useCallback((message: WorkMessage): void => {
-    if (message.dbId === undefined) return
-    workBridge()?.deleteMessage?.({ dbId: message.dbId })
-  }, [])
+  const deleteMessage = useCallback(
+    (message: WorkMessage): void => {
+      if (message.dbId === undefined) return
+      workBridge()?.deleteMessage?.({
+        dbId: message.dbId,
+        sessionId: activeConversationRef.current || undefined
+      })
+    },
+    []
+  )
 
   const openContextMenu = useCallback(
     (event: ReactMouseEvent, message: WorkMessage): void => {
@@ -645,39 +876,70 @@ export default function WorkApp(): ReactElement {
         className={`work-chat-layer${browsing || taskOpen ? ' work-chat-hidden' : ''}`}
         style={{ zoom }}
       >
-        <div className="work-body">
-          <div className="work-scroll pui-scroll" ref={scrollRef} onScroll={handleScroll}>
-            <MessageList
-              messages={state.messages}
-              flashId={flashId}
-              copiedId={copiedId}
-              setMessageRef={setMessageRef}
-              onCopy={copyMessage}
-              onDelete={deleteMessage}
-              onContextMenu={openContextMenu}
-              onLinkClick={handleMarkdownClick}
+        <div className="task-layout">
+          <ConversationSidebar
+            items={conversations}
+            activeId={activeConversationId}
+            draft={draftConversation}
+            unread={unreadIds}
+            onNew={newConversation}
+            onSelect={(id) => void switchConversation(id)}
+            onRename={(id, title) => void renameConversation(id, title)}
+            onDelete={(id) => void deleteConversation(id)}
+          />
+          <div className="conv-main">
+            <header className="task-head task-head-slim">
+              <div className="task-head-main">
+                <span className="conv-title" title={activeTitle}>
+                  {activeTitle}
+                </span>
+                {streaming ? (
+                  <span className="conv-streaming">回复中…</span>
+                ) : streamingConversationId && streamingConversationId !== activeConversationId ? (
+                  <span className="conv-streaming">另一对话回复中…</span>
+                ) : null}
+              </div>
+              <div className="task-head-actions">
+                <button type="button" className="task-btn" onClick={newConversation}>
+                  新对话
+                </button>
+              </div>
+            </header>
+            <div className="work-body">
+              <div className="work-scroll pui-scroll" ref={scrollRef} onScroll={handleScroll}>
+                <MessageList
+                  messages={state.messages}
+                  flashId={flashId}
+                  copiedId={copiedId}
+                  setMessageRef={setMessageRef}
+                  onCopy={copyMessage}
+                  onDelete={deleteMessage}
+                  onContextMenu={openContextMenu}
+                  onLinkClick={handleMarkdownClick}
+                />
+              </div>
+              <MessageNavigator
+                anchors={anchors}
+                contentHeight={contentHeight}
+                viewportHeight={viewportHeight}
+                scrollTop={scrollTop}
+                previews={previews}
+                onJump={handleJump}
+                visible={anchors.length >= 1}
+              />
+            </div>
+
+            <Composer
+              streaming={streaming}
+              search={search}
+              onSearchChange={setSearch}
+              onSend={handleSend}
+              onStop={handleInterrupt}
+              notice={state.notice}
+              onDismissNotice={() => dispatch({ type: 'clear-notice' })}
             />
           </div>
-          <MessageNavigator
-            anchors={anchors}
-            contentHeight={contentHeight}
-            viewportHeight={viewportHeight}
-            scrollTop={scrollTop}
-            previews={previews}
-            onJump={handleJump}
-            visible={anchors.length >= 1}
-          />
         </div>
-
-        <Composer
-          streaming={streaming}
-          search={search}
-          onSearchChange={setSearch}
-          onSend={handleSend}
-          onStop={handleInterrupt}
-          notice={state.notice}
-          onDismissNotice={() => dispatch({ type: 'clear-notice' })}
-        />
       </div>
 
       <MessageContextMenu

@@ -35,8 +35,14 @@ export function normalizeSendPayload(raw: unknown): WorkSendRequestPayload | nul
     attachments,
     options: {
       search: optionsRaw.search !== false
-    }
+    },
+    sessionId: normalizeSessionId(value.sessionId)
   }
+}
+
+/** 对话 id：只接受 1–64 位字母数字/下划线/连字符（UUID 也满足）。 */
+function normalizeSessionId(raw: unknown): string | undefined {
+  return typeof raw === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(raw) ? raw : undefined
 }
 
 export function normalizeHistoryPayload(raw: unknown): WorkHistoryRequestPayload | null {
@@ -47,5 +53,9 @@ export function normalizeHistoryPayload(raw: unknown): WorkHistoryRequestPayload
     typeof value.limit === 'number' && Number.isFinite(value.limit)
       ? Math.max(1, Math.min(500, Math.trunc(value.limit)))
       : 200
-  return { requestId: value.requestId, limit }
+  return {
+    requestId: value.requestId,
+    limit,
+    sessionId: normalizeSessionId(value.sessionId)
+  }
 }
