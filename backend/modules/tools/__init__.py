@@ -1,7 +1,7 @@
 """工具机制域（§4.7）：内置工具的注册、协议转换与快通道指令词表。
 
 - ``registry.py``   ← ToolSpec / ToolRegistry（注册表 + OpenAI 协议转换）
-- ``builtin.py``    ← build_default_registry（内置工具注册）
+- ``builtin/``      ← build_default_registry（各业务域的内置工具注册）
 - ``directives.py`` ← match_directive（指令词表快通道）
 
 依赖约定：本域不 import llm / application 域——工具定义只描述"是什么"，

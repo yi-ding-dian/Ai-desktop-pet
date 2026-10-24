@@ -51,6 +51,7 @@ packages = [
     "backend.modules.search",
     "backend.modules.system",
     "backend.modules.tools",
+    "backend.modules.tools.builtin",
     "backend.modules.voice",
     "backend.modules.voice.tts",
     "backend.shared",
