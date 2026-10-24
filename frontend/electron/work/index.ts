@@ -22,37 +22,25 @@ import {
   type WorkSendResultPayload
 } from '../ipc/channels'
 import { resolveAppIconImage } from '../app-icon'
-import { petWindowSize, type Point, type Rect, type Size } from '../window'
-import { getPetScale } from '../pet-scale'
+import type { Rect } from '../window'
 import { attachFrameless, applyFramelessBounds, framelessBounds } from '../window/frameless'
-import { podiumPoint } from '../teaching/geometry'
 import { getTeachingMode } from '../teaching'
 import { linuxOnlyWindowOptions } from '../platform'
-import { runRelocateAnimation } from '../ball-animation'
 import { WorkBrowser } from './browser'
+import {
+  WORK_EDGE_MARGIN,
+  WORK_FOLD_DURATION_MS,
+  WORK_MIN_HEIGHT,
+  WORK_MIN_WIDTH,
+  animateWorkBounds,
+  clampWorkRect,
+  defaultWorkRect,
+  foldedWorkBounds
+} from './geometry'
+import { normalizeHistoryPayload, normalizeSendPayload } from './payload'
+import { PetDock } from './pet-dock'
 
 const isDev = !app.isPackaged
-
-/** 默认尺寸与最小尺寸（DIP） */
-const WORK_DEFAULT_WIDTH = 900
-const WORK_DEFAULT_HEIGHT = 780
-const WORK_MIN_WIDTH = 560
-const WORK_MIN_HEIGHT = 520
-const WORK_EDGE_MARGIN = 10
-
-/**
- * 折叠角标（2026-10-20 用户需求"像板书那样吸附在窗口最右侧中间"）：
- * 尺寸/边距与教学黑板折叠态一致（24×140 贴屏幕右缘、垂直居中、右距 8）。
- * 折叠 = 同一个窗口换尺寸/位置，不引入第三窗；工作窗常态 skipTaskbar
- * （2026-10-20 用户定稿：任务栏不显示图标）。
- */
-const WORK_FOLDED_WIDTH = 24
-const WORK_FOLDED_HEIGHT = 140
-const WORK_FOLDED_MARGIN_RIGHT = 8
-/** 折叠/展开窗口动画时长（ms；同黑板展开⇄折叠的观感节奏） */
-const WORK_FOLD_DURATION_MS = 180
-/** 动画帧间隔（ms，约 60fps） */
-const ANIM_FRAME_MS = 16
 
 /** 发送/历史请求的等待上限（ms）：宠物窗崩溃/重载时不让 invoke 永久挂起 */
 const REQUEST_TIMEOUT_MS = 8_000
@@ -82,16 +70,12 @@ let foldedRect: Rect | null = null
 let maximizedFrom: Rect | null = null
 /** 最大化前宠物所在矩形（还原时放回去；2026-10-23） */
 let petMaximizeRestore: Rect | null = null
-/**
- * 进入工作模式前的宠物原位（关闭/最小化时回位目标；只记坐标，尺寸用
- * PET_WINDOW_SIZE——fractional DPI 下 getBounds 的宽高是舍入值）。
- * petPlaced = 宠物当前是否被工作窗"占用"（防止 show/hide 重复触发时重复回位）。
- */
-let petHomeRect: Rect | null = null
-let petPlaced = false
 /** 退出流程（before-quit 置位）：不再拦截 close，避免最后一个窗口关不掉 */
 let quitting = false
 let ipcRegistered = false
+
+/** 宠物落位（依附/回位/跟随），状态封装在同目录 pet-dock.ts */
+const petDock = new PetDock(() => petWin, getTeachingMode)
 
 /** ready 前缓冲的镜像事件 */
 let eventBuffer: WorkMirrorEvent[] = []
@@ -190,180 +174,7 @@ function rejectAll(reason: string): void {
   }
 }
 
-/** 当前缩放档位下的宠物窗尺寸（工作模式中禁止改档位，值稳定） */
-function currentPetSize(): Size {
-  return petWindowSize(getPetScale())
-}
-
-/**
- * 工作窗左侧的宠物落点（与教学讲台同几何）。
- * 工作窗被拖到屏幕最左时，讲台点会落到屏幕外——夹回工作区左缘，让兔子
- * 贴着窗口左侧、部分叠在窗口上，而不是整窗消失。
- */
-function workAttachPoint(rect: Rect): Point {
-  const point = podiumPoint(rect, getPetScale())
-  const wa = screen.getDisplayMatching(rect).workArea
-  return { x: Math.max(wa.x + 8, point.x), y: point.y }
-}
-
-/**
- * 宠物依附到工作窗左侧（与教学模式讲台同一套几何：图像右缘贴窗左下角、脚底与窗底平齐）。
- *
- * 只有首次依附时记原位（关闭/最小化回位目标）；之后再次调用（用户在工作模式中把宠物
- * 拖走后再点菜单「工作模式」/恢复窗口）会重新吸附到左侧，但不覆盖原位。
- * 已经贴在工作窗左侧时直接跳过，避免重复启动滑步动画。
- */
-function placePet(rect: Rect): void {
-  // 教学模式优先：两边同时在场时不去抢讲台位
-  if (getTeachingMode() !== 'normal') return
-  const pet = petWin
-  if (pet === null || pet.isDestroyed()) return
-  const bounds = pet.getBounds()
-  const size = currentPetSize()
-  if (!petPlaced) {
-    petHomeRect = {
-      x: bounds.x,
-      y: bounds.y,
-      width: size.width,
-      height: size.height
-    }
-    petPlaced = true
-  }
-  const point = workAttachPoint(rect)
-  if (bounds.x === point.x && bounds.y === point.y) return
-  console.log(
-    `[work] 宠物依附工作窗左侧：${bounds.x},${bounds.y} → ${point.x},${point.y}（原位 ${petHomeRect?.x ?? bounds.x},${petHomeRect?.y ?? bounds.y}）`
-  )
-  void runRelocateAnimation(
-    pet,
-    { x: point.x, y: point.y, width: size.width, height: size.height },
-    { forceGlide: true }
-  )
-}
-
-
-/** 把宠物放到指定点（最大化时用：贴屏幕左缘、竖向居中） */
-function placePetAtPoint(point: Point): void {
-  if (getTeachingMode() !== 'normal') return
-  const pet = petWin
-  if (pet === null || pet.isDestroyed()) return
-  const size = currentPetSize()
-  if (!petPlaced) {
-    const bounds = pet.getBounds()
-    petHomeRect = { x: bounds.x, y: bounds.y, width: size.width, height: size.height }
-    petPlaced = true
-  }
-  void runRelocateAnimation(
-    pet,
-    { x: point.x, y: point.y, width: size.width, height: size.height },
-    { forceGlide: true }
-  )
-}
-
-/** 关闭/最小化工作窗：宠物滑步回进入工作模式前的位置（教学模式下让教学域自己管） */
-function returnPetHome(): void {
-  if (!petPlaced) return
-  petPlaced = false
-  const home = petHomeRect
-  petHomeRect = null
-  const pet = petWin
-  if (pet === null || pet.isDestroyed() || home === null) return
-  if (getTeachingMode() !== 'normal') return
-  console.log(`[work] 关闭工作窗，宠物回位 → ${home.x},${home.y}`)
-  void runRelocateAnimation(pet, home, { forceGlide: true })
-}
-
-/**
- * 工作窗被拖动/缩放：宠物同帧跟到新的左缘（与教学 followPodium 同语义）。
- * 尺寸用设计常量，避免 fractional DPI 下把舍入宽高回喂。
- */
-function followPetToWork(rect: Rect): void {
-  if (!petPlaced) return
-  if (getTeachingMode() !== 'normal') return
-  const pet = petWin
-  if (pet === null || pet.isDestroyed() || !pet.isVisible()) return
-  const point = workAttachPoint(rect)
-  const size = currentPetSize()
-  pet.setBounds({ x: point.x, y: point.y, width: size.width, height: size.height })
-}
-
-function defaultWorkRect(): Rect {
-  // 跟随宠物所在显示器；宠物窗不可用时退回主屏
-  const wa =
-    petWin !== null && !petWin.isDestroyed()
-      ? screen.getDisplayMatching(petWin.getBounds()).workArea
-      : screen.getPrimaryDisplay().workArea
-  const width = Math.min(WORK_DEFAULT_WIDTH, Math.max(WORK_MIN_WIDTH, wa.width - 80))
-  const height = Math.min(WORK_DEFAULT_HEIGHT, Math.max(WORK_MIN_HEIGHT, wa.height - 80))
-  return {
-    x: wa.x + wa.width - width - 40,
-    y: wa.y + Math.round((wa.height - height) / 2),
-    width,
-    height
-  }
-}
-
 // ------------------------------------------------------------------ 折叠（最小化 = 右缘角标）
-
-/** 缓动：easeInOutQuad（与黑板折叠动画、宠物滑步同款的柔和起步/收尾） */
-function easeInOutQuad(t: number): number {
-  return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
-}
-
-/** 逐帧缓动窗口矩形：走 applyFramelessBounds（程序化写，不污染用户形态记忆） */
-function animateWorkBounds(win: BrowserWindow, to: Rect, durationMs: number): Promise<void> {
-  const from = framelessBounds(win)
-  const same =
-    from.x === to.x && from.y === to.y && from.width === to.width && from.height === to.height
-  if (durationMs <= 0 || same) {
-    applyFramelessBounds(win, to)
-    return Promise.resolve()
-  }
-  return new Promise((resolve) => {
-    const t0 = Date.now()
-    const timer = setInterval(() => {
-      if (win.isDestroyed() || workWin !== win) {
-        clearInterval(timer)
-        resolve()
-        return
-      }
-      const p = Math.min(1, (Date.now() - t0) / durationMs)
-      const e = easeInOutQuad(p)
-      applyFramelessBounds(win, {
-        x: Math.round(from.x + (to.x - from.x) * e),
-        y: Math.round(from.y + (to.y - from.y) * e),
-        width: Math.round(from.width + (to.width - from.width) * e),
-        height: Math.round(from.height + (to.height - from.height) * e)
-      })
-      if (p >= 1) {
-        clearInterval(timer)
-        resolve()
-      }
-    }, ANIM_FRAME_MS)
-  })
-}
-
-/** 折叠角标矩形：工作区右缘、垂直居中（参数与教学黑板 foldedBounds 一致） */
-function foldedWorkBounds(wa: Rect): Rect {
-  return {
-    x: wa.x + wa.width - WORK_FOLDED_WIDTH - WORK_FOLDED_MARGIN_RIGHT,
-    y: wa.y + Math.round((wa.height - WORK_FOLDED_HEIGHT) / 2),
-    width: WORK_FOLDED_WIDTH,
-    height: WORK_FOLDED_HEIGHT
-  }
-}
-
-/** 展开矩形夹进工作区（换显示器/窗口曾被拖出屏时兜底） */
-function clampWorkRect(rect: Rect, wa: Rect): Rect {
-  const width = Math.min(Math.max(rect.width, WORK_MIN_WIDTH), wa.width)
-  const height = Math.min(Math.max(rect.height, WORK_MIN_HEIGHT), wa.height)
-  return {
-    x: Math.min(Math.max(rect.x, wa.x), wa.x + wa.width - width),
-    y: Math.min(Math.max(rect.y, wa.y), wa.y + wa.height - height),
-    width,
-    height
-  }
-}
 
 /**
  * 最小化 = 折叠到屏幕右缘中间的小角标（用户需求：像板书那样，不要桌面/任务栏图标）。
@@ -379,11 +190,11 @@ function foldWork(): void {
   console.log(`[work] 最小化 → 折叠为屏幕右缘角标（展开矩形 ${foldedRect.x},${foldedRect.y}）`)
   workBrowser?.setFolded(true)
   sendToWork(IPC_WORK.FOLDED, true)
-  returnPetHome()
+  petDock.returnHome()
   notifyPresence(true) // open=true；active=false（折叠不算活跃，宠物面恢复常态）
   win.setAlwaysOnTop(true)
   const wa = screen.getDisplayMatching(foldedRect).workArea
-  void animateWorkBounds(win, foldedWorkBounds(wa), WORK_FOLD_DURATION_MS)
+  void animateWorkBounds(win, foldedWorkBounds(wa), WORK_FOLD_DURATION_MS, () => workWin === win)
 }
 
 /** 展开：角标 → 折叠前的窗口矩形；宠物重新依附到工作窗左侧 */
@@ -391,7 +202,7 @@ function unfoldWork(): void {
   const win = workWin
   if (win === null || win.isDestroyed() || !folded) return
   folded = false
-  const target = foldedRect ?? workRectOverride ?? defaultWorkRect()
+  const target = foldedRect ?? workRectOverride ?? defaultWorkRect(petWin)
   foldedRect = null
   console.log('[work] 点击折叠角标 → 展开工作窗')
   workBrowser?.setFolded(false)
@@ -399,10 +210,10 @@ function unfoldWork(): void {
   win.setAlwaysOnTop(false)
   win.focus()
   const wa = screen.getDisplayMatching(target).workArea
-  void animateWorkBounds(win, clampWorkRect(target, wa), WORK_FOLD_DURATION_MS).then(() => {
+  void animateWorkBounds(win, clampWorkRect(target, wa), WORK_FOLD_DURATION_MS, () => workWin === win).then(() => {
     if (workWin !== win || win.isDestroyed()) return
     notifyPresence(true)
-    placePet(framelessBounds(win))
+    petDock.place(framelessBounds(win))
   })
 }
 
@@ -428,7 +239,7 @@ function resetFoldedState(win: BrowserWindow, restoreBounds: boolean): void {
 // ------------------------------------------------------------------ 窗口生命周期
 
 function createWorkWindow(): BrowserWindow {
-  const initial = workRectOverride ?? defaultWorkRect()
+  const initial = workRectOverride ?? defaultWorkRect(petWin)
   const win = new BrowserWindow({
     // 任务栏图标：与托盘、通知共用兔子图标（2026-10-21）
     icon: resolveAppIconImage(),
@@ -501,7 +312,7 @@ function createWorkWindow(): BrowserWindow {
         sendMaximizedState()
       }
       // 用户拖动/缩放工作窗：宠物同帧跟到新的左缘
-      followPetToWork(rect)
+      petDock.follow(rect)
     }
   })
 
@@ -509,24 +320,24 @@ function createWorkWindow(): BrowserWindow {
   win.on('show', () => {
     if (workWin !== win || quitting) return
     notifyPresence(true)
-    placePet(framelessBounds(win))
+    petDock.place(framelessBounds(win))
   })
   win.on('hide', () => {
     if (workWin !== win || quitting) return
     // 折叠态被隐藏（托盘/外部调用）：先复位折叠并还原展开矩形，下次打开才是正常窗口
     resetFoldedState(win, true)
     notifyPresence(true)
-    returnPetHome()
+    petDock.returnHome()
   })
   win.on('minimize', () => {
     if (workWin !== win || quitting) return
     notifyPresence(true)
-    returnPetHome()
+    petDock.returnHome()
   })
   win.on('restore', () => {
     if (workWin !== win || quitting) return
     notifyPresence(true)
-    placePet(framelessBounds(win))
+    petDock.place(framelessBounds(win))
   })
 
   // 关闭 = 隐藏（保留聊天记录）；退出流程（before-quit）放行
@@ -547,7 +358,7 @@ function createWorkWindow(): BrowserWindow {
     workBrowser = null
     rejectAll('work-window-closed')
     notifyPresence(false)
-    if (!quitting) returnPetHome()
+    if (!quitting) petDock.returnHome()
   })
 
   win.on('ready-to-show', () => {
@@ -564,7 +375,7 @@ function createWorkWindow(): BrowserWindow {
     workBrowser = null
     rejectAll('work-window-failed')
     notifyPresence(false)
-    if (!quitting) returnPetHome()
+    if (!quitting) petDock.returnHome()
     if (!win.isDestroyed()) win.destroy()
   }
   win.webContents.on('did-fail-load', (_event, code, desc, url, isMainFrame) => {
@@ -609,7 +420,7 @@ export function openWork(): void {
     existing.show()
     existing.focus()
     notifyPresence(true)
-    if (alreadyVisible) placePet(framelessBounds(existing))
+    if (alreadyVisible) petDock.place(framelessBounds(existing))
     return
   }
   createWorkWindow()
@@ -639,7 +450,7 @@ function toggleMaximize(): void {
       }
       petMaximizeRestore = null
     } else {
-      placePet(rect)
+      petDock.place(rect)
     }
   } else {
     maximizedFrom = framelessBounds(win)
@@ -652,8 +463,8 @@ function toggleMaximize(): void {
     applyFramelessBounds(win, rect)
     // 最大化后宠物按“桌面宠物左缘吸附”落位（窗口贴 wa.x，渲染侧切左边缘姿态）；
     // 之后可自由拖动，拖到任意屏幕边都会吸附（最大化期间不屏蔽边缘逻辑）
-    const size = currentPetSize()
-    placePetAtPoint({ x: wa.x, y: wa.y + Math.round((wa.height - size.height) / 2) })
+    const size = petDock.size()
+    petDock.placeAt({ x: wa.x, y: wa.y + Math.round((wa.height - size.height) / 2) })
     // 窗口铺满后可能盖住宠物（例如用户关过「置顶」）：显式提到最上层
     if (pet && !pet.isDestroyed() && pet.isVisible()) pet.moveTop()
   }
@@ -672,60 +483,13 @@ export function destroyWork(): void {
   eventBuffer = []
   workBrowser?.destroy()
   workBrowser = null
-  petPlaced = false
-  petHomeRect = null
+  petDock.reset()
   rejectAll('app-quit')
   notifyPresence(false)
   if (win !== null && !win.isDestroyed()) win.destroy()
 }
 
 // ------------------------------------------------------------------ 入站校验
-
-function normalizeSendPayload(raw: unknown): WorkSendRequestPayload | null {
-  if (typeof raw !== 'object' || raw === null) return null
-  const value = raw as Record<string, unknown>
-  if (typeof value.requestId !== 'string' || value.requestId.length === 0) return null
-  if (typeof value.text !== 'string') return null
-  const attachments = Array.isArray(value.attachments)
-    ? value.attachments
-        .map((item) =>
-          typeof item === 'object' && item !== null
-            ? {
-                path: typeof (item as Record<string, unknown>).path === 'string'
-                  ? ((item as Record<string, unknown>).path as string)
-                  : '',
-                name: typeof (item as Record<string, unknown>).name === 'string'
-                  ? ((item as Record<string, unknown>).name as string)
-                  : ''
-              }
-            : null
-        )
-        .filter((item): item is { path: string; name: string } => item !== null && item.path.length > 0)
-    : []
-  const optionsRaw =
-    typeof value.options === 'object' && value.options !== null
-      ? (value.options as Record<string, unknown>)
-      : {}
-  return {
-    requestId: value.requestId,
-    text: value.text,
-    attachments,
-    options: {
-      search: optionsRaw.search !== false
-    }
-  }
-}
-
-function normalizeHistoryPayload(raw: unknown): WorkHistoryRequestPayload | null {
-  if (typeof raw !== 'object' || raw === null) return null
-  const value = raw as Record<string, unknown>
-  if (typeof value.requestId !== 'string' || value.requestId.length === 0) return null
-  const limit =
-    typeof value.limit === 'number' && Number.isFinite(value.limit)
-      ? Math.max(1, Math.min(500, Math.trunc(value.limit)))
-      : 200
-  return { requestId: value.requestId, limit }
-}
 
 // ------------------------------------------------------------------ IPC 接线
 
