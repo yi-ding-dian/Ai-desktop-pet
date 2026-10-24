@@ -40,13 +40,13 @@ import {
   expandedBounds,
   foldedBounds,
   offscreenRight,
-  podiumPetSize,
   podiumPoint
 } from './geometry'
-import { runRelocateAnimation } from '../ball-animation'
-import { petWindowSize } from '../window'
 import { getPetScale } from '../pet-scale'
-import type { Rect, Size } from '../window'
+import type { Rect } from '../window'
+import { BoardInbox } from './inbox'
+import { normalizeEnterReason, normalizeSendPayload } from './payload'
+import { PodiumDock } from './pet-dock'
 import {
   applyFramelessBounds,
   attachFrameless,
@@ -75,10 +75,6 @@ type TeachingMode = 'normal' | 'expanded' | 'folded'
 let petWin: BrowserWindow | null = null
 /** 黑板窗口（懒创建；折叠 = 同一个窗口换尺寸/位置——"角标 = 黑板窗口自身折叠态"，不引入第三窗） */
 let boardWin: BrowserWindow | null = null
-/** 黑板渲染就绪标志（收到 TEACHING_READY 置位；窗口销毁/重建复位） */
-let boardReady = false
-/** 收件箱缓存（boardReady=false 期间的 mirror/goto/visibility，按序回放） */
-let pendingInbox: TeachingBoardInbox[] = []
 /** 状态机当前态 */
 let mode: TeachingMode = 'normal'
 /**
@@ -96,16 +92,15 @@ let boardDetach: (() => void) | null = null
 let opSeq = 0
 /** 本次教学会话内的黑板重建计数（enter 时清零） */
 let rebuildCount = 0
-/**
- * 进入教学前宠物原位（下课回位目标；null = 本次会话没有可回的原位）。
- * 只记坐标，尺寸用 PET_WINDOW_SIZE——fractional DPI 下 getBounds 的宽高是舍入值，
- * 回喂 relocate 会让宠物窗每次开合长大 1px（同 window/index.ts 的约定）。
- */
-let petHomeRect: Rect | null = null
 /** 窗口动画序列号：新动画抢占旧动画（旧动画提前 resolve、不写终点） */
 let animSeq = 0
 /** ipcMain 监听是否已注册（只能注册一次，重复注册会叠加处理器） */
 let ipcRegistered = false
+
+/** 黑板收件箱缓存（就绪前的 mirror/goto/visibility 指令） */
+const inbox = new BoardInbox(MAX_PENDING_INBOX)
+/** 宠物讲台落位与下课回位 */
+const dock = new PodiumDock(() => petWin)
 
 // ------------------------------------------------------------------ 小工具
 
@@ -160,22 +155,6 @@ function currentExpandedBounds(wa: Rect): Rect {
   return boardRectOverride ? clampBoardRect(boardRectOverride, wa) : expandedBounds(wa)
 }
 
-/** 当前缩放档位下的宠物窗尺寸 */
-function currentPetSize(): Size {
-  return petWindowSize(getPetScale())
-}
-
-/** 讲台位跟随：黑板的左下角变了（拖边/移位）→ 宠物同帧 setBounds 跟手（尺寸取当前档位） */
-function followPodium(boardRect: Rect): void {
-  const pet = petWin
-  if (!pet || pet.isDestroyed() || !pet.isVisible()) return
-  const p = podiumPoint(boardRect, getPetScale())
-  // 尺寸取当前缩放档位：拖动高频触发，回喂 getBounds 的舍入宽高会让宠物窗每次 +1px
-  // （见 window/index.ts PET_WINDOW_SIZE）
-  const size = currentPetSize()
-  pet.setBounds({ x: p.x, y: p.y, width: size.width, height: size.height })
-}
-
 /** 写黑板 bounds 的唯一收口（委托通用无边框引擎：请求值记账 + setBounds） */
 function applyBoardBounds(win: BrowserWindow, next: Rect): void {
   applyFramelessBounds(win, next)
@@ -184,37 +163,6 @@ function applyBoardBounds(win: BrowserWindow, next: Rect): void {
 /** 读黑板当前**请求** bounds（委托通用引擎；不直接读 getBounds 的舍入宽高） */
 function readBoardBounds(win: BrowserWindow): Rect {
   return framelessBounds(win)
-}
-
-/**
- * 兔子滑步到讲台位（黑板左下角外侧，geometry.podiumPoint）——**主进程 relocate（forceGlide）**：
- * 不走渲染侧 moveTo（其工作区夹取会让"窗底允许越界"的讲台位停在半路——2026-10-16 真机故障
- * 修复："兔子没有贴到黑板左下角"）；forceGlide 跳过魔法流程（去讲课，不搞"被魔法球捕获"）。
- * enter / unfold 共用；宠物不可用/隐藏时 relocate 内部自动静默处理。
- */
-function glidePetToPodium(boardRect: Rect): void {
-  const pet = petWin
-  if (!pet || pet.isDestroyed()) return
-  const p = podiumPoint(boardRect, getPetScale())
-  const size = podiumPetSize(getPetScale())
-  void runRelocateAnimation(pet, { x: p.x, y: p.y, width: size.width, height: size.height }, {
-    forceGlide: true
-  })
-}
-
-/**
- * 下课回位（2026-10-17 用户定稿）：把宠物送回**进入教学前**的位置。
- * 与设置域 returnPetHome 同语义——回位完成由调用方（exitTeaching）决定广播时机，
- * 让宠物面"面板恢复"与宠物落位同步；宠物隐藏时 relocate 内部只静默改坐标（不强行显示）。
- */
-async function returnPetHome(): Promise<void> {
-  const pet = petWin
-  const home = petHomeRect
-  petHomeRect = null
-  if (!pet || pet.isDestroyed() || !home) return
-  const from = pet.getBounds()
-  console.log(`[teaching] 下课回位：宠物 ${from.x},${from.y} → ${home.x},${home.y}`)
-  await runRelocateAnimation(pet, home)
 }
 
 // ------------------------------------------------------------------ 状态广播 / 收件箱
@@ -255,11 +203,8 @@ function sendInbox(item: TeachingBoardInbox): void {
     console.warn(`[teaching] 黑板不存在，丢弃收件箱指令：${item.type}`)
     return
   }
-  if (!boardReady) {
-    pendingInbox.push(item)
-    if (pendingInbox.length > MAX_PENDING_INBOX) {
-      pendingInbox.splice(0, pendingInbox.length - MAX_PENDING_INBOX)
-    }
+  if (!inbox.isReady()) {
+    inbox.enqueue(item)
     return
   }
   sendTo(win, IPC_EVENTS.TEACHING_BOARD_INBOX, item)
@@ -268,9 +213,8 @@ function sendInbox(item: TeachingBoardInbox): void {
 /** 黑板就绪后按序回放缓存（幂等：缓存为空时无操作） */
 function flushPendingInbox(): void {
   const win = boardWin
-  if (!boardReady || !win || win.isDestroyed() || win.webContents.isDestroyed()) return
-  const items = pendingInbox
-  pendingInbox = []
+  if (!inbox.isReady() || !win || win.isDestroyed() || win.webContents.isDestroyed()) return
+  const items = inbox.take()
   if (items.length === 0) return
   console.log(`[teaching] 黑板已就绪：回放缓存收件箱 ${items.length} 条`)
   for (const item of items) {
@@ -377,7 +321,7 @@ function createBoardWindow(initial: Rect): BrowserWindow {
     canInteract: () => mode === 'expanded',
     onBoundsChanged: (rect) => {
       boardRectOverride = rect
-      followPodium(rect)
+      dock.follow(rect)
     }
   })
 
@@ -434,8 +378,8 @@ function attachBoardEvents(win: BrowserWindow): void {
     const tracked = boardWin === win
     if (tracked) {
       boardWin = null
-      boardReady = false
-      // 不清 pendingInbox：意外关闭走重建时尽力回放（主动销毁路径由 destroyBoardWindow 负责清）
+      inbox.markUnready()
+      // 不清收件箱缓存：意外关闭走重建时尽力回放（主动销毁路径由 destroyBoardWindow 负责清）
     }
     // 主动销毁（destroyBoard 先把 boardWin 置空）不触发兜底；受管窗口意外消失才兜底
     if (tracked) handleBoardFailure('窗口意外关闭（closed）')
@@ -457,8 +401,7 @@ function attachBoardEvents(win: BrowserWindow): void {
 function destroyBoardWindow(): void {
   const win = boardWin
   boardWin = null
-  boardReady = false
-  pendingInbox = []
+  inbox.reset()
   boardDetach?.()
   boardDetach = null
   if (win && !win.isDestroyed()) win.destroy()
@@ -478,9 +421,9 @@ function handleBoardFailure(reason: string): void {
     return
   }
   rebuildCount += 1
-  const kept = pendingInbox.slice(-MAX_PENDING_INBOX)
+  const kept = inbox.tail()
   destroyBoardWindow()
-  pendingInbox = kept
+  inbox.restore(kept)
   const wa = petWorkArea()
   const target = mode === 'folded' ? foldedBounds(wa) : currentExpandedBounds(wa)
   const win = createBoardWindow(target)
@@ -492,7 +435,7 @@ function handleBoardFailure(reason: string): void {
 /** 确保黑板窗口存在；不存在则创建并停在屏外（滑入动画的起点） */
 function ensureBoardWindow(wa: Rect, target: Rect): BrowserWindow {
   if (boardWin && !boardWin.isDestroyed()) return boardWin
-  boardReady = false
+  inbox.markUnready()
   const win = createBoardWindow(offscreenRight(wa, target))
   boardWin = win
   return win
@@ -528,17 +471,10 @@ export async function enterTeaching(reason: TeachingEnterReason): Promise<void> 
     return
   }
 
-  // 记录进入教学前的位置（退出时回位；只取坐标，尺寸用设计常量——见 petHomeRect 注释）。
+  // 记录进入教学前的位置（退出时回位；只取坐标，尺寸用设计常量——见 PodiumDock 注释）。
   // 只在 normal → expanded 跃迁记录：折叠态重复 enter 走上面的 unfoldBoard 分支，
   // 期间宠物可能被用户拖过，但"原位"始终指开课前的那个位置。
-  const homeBounds = win.getBounds()
-  const homeSize = currentPetSize()
-  petHomeRect = {
-    x: homeBounds.x,
-    y: homeBounds.y,
-    width: homeSize.width,
-    height: homeSize.height
-  }
+  dock.recordHome()
 
   const seq = ++opSeq
   mode = 'expanded'
@@ -554,7 +490,7 @@ export async function enterTeaching(reason: TeachingEnterReason): Promise<void> 
     board.showInactive()
     await animateBoard(target, SLIDE_MS)
     if (seq !== opSeq) return // 滑入期间被 exit 等接管：不广播陈旧状态
-    glidePetToPodium(target) // 黑板到位后兔子滑步就位（主进程 relocate；见 glidePetToPodium）
+    dock.glideToPodium(target) // 黑板到位后兔子滑步就位（主进程 relocate；见 PodiumDock.glideToPodium）
     broadcastState(reason)
   } catch (err) {
     console.error('[teaching] 进入教学模式失败，回退 normal：', err)
@@ -562,7 +498,7 @@ export async function enterTeaching(reason: TeachingEnterReason): Promise<void> 
       mode = 'normal'
       destroyBoardWindow()
       // 失败前滑步可能已发出（glide 是 void 异步）：能回就回原位；宠物没动时这是一次原地 relocate
-      void returnPetHome()
+      void dock.returnHome()
       broadcastState('enter-failed')
     }
   }
@@ -595,7 +531,7 @@ function unfoldBoard(reason: string): Promise<void> {
   broadcastState(reason)
   const target = currentExpandedBounds(boardWorkArea())
   void animateBoard(target, TRANSITION_MS)
-  glidePetToPodium(target) // 恢复展开：兔子滑步回讲台（主进程 relocate；见 glidePetToPodium）
+  dock.glideToPodium(target) // 恢复展开：兔子滑步回讲台（主进程 relocate；见 PodiumDock.glideToPodium）
   return Promise.resolve()
 }
 
@@ -616,7 +552,7 @@ export async function exitTeaching(reason: string): Promise<void> {
   const board = boardWin
   if (!board || board.isDestroyed()) {
     destroyBoardWindow()
-    await returnPetHome()
+    await dock.returnHome()
     if (seq !== opSeq) return // 回位期间被新 enter 接管：不广播陈旧 normal
     broadcastState(reason)
     return
@@ -626,7 +562,7 @@ export async function exitTeaching(reason: string): Promise<void> {
   // 滑出期间被新 enter 接管：让新操作独占黑板，不做销毁、不回位、不广播陈旧 normal
   if (seq !== opSeq) return
   destroyBoardWindow()
-  await returnPetHome()
+  await dock.returnHome()
   if (seq !== opSeq) return // 回位期间被新 enter 接管：新操作已广播 teaching，这里不再发 normal
   broadcastState(reason)
 }
@@ -639,38 +575,6 @@ async function gotoMessage(messageId: string): Promise<void> {
 }
 
 // ------------------------------------------------------------------ IPC 接线（渲染 → 主）
-
-/** 校验进入来源（白名单外退回 'keyword'，仅日志意义） */
-function normalizeEnterReason(reason: unknown): TeachingEnterReason {
-  return reason === 'menu' || reason === 'keyword' || reason === 'debug'
-    ? reason
-    : 'keyword'
-}
-
-/**
- * 规范化黑板发送载荷：兼容旧版纯字符串 text；附件只保留 path/name 且最多 3 条
- * （与 files.max_per_turn 一致，后端仍会二次校验）。文本与附件都空则丢弃。
- */
-function normalizeSendPayload(raw: unknown): TeachingSendRequestPayload | null {
-  const value = typeof raw === 'string' ? { text: raw } : raw
-  if (typeof value !== 'object' || value === null) return null
-  const record = value as Record<string, unknown>
-  const text = typeof record.text === 'string' ? record.text : ''
-  const attachments = Array.isArray(record.attachments)
-    ? record.attachments
-        .slice(0, 3)
-        .map((item) => {
-          if (typeof item !== 'object' || item === null) return null
-          const entry = item as Record<string, unknown>
-          const path = typeof entry.path === 'string' ? entry.path : ''
-          const name = typeof entry.name === 'string' ? entry.name : ''
-          return path.length > 0 ? { path, name } : null
-        })
-        .filter((item): item is { path: string; name: string } => item !== null)
-    : []
-  if (text.trim().length === 0 && attachments.length === 0) return null
-  return { text, attachments }
-}
 
 /** 注册教学模式 IPC 处理器（main.ts 在 app ready 后调用一次） */
 export function initTeaching(pet: BrowserWindow): void {
@@ -720,7 +624,7 @@ export function initTeaching(pet: BrowserWindow): void {
   // ---- 黑板面 ----
   ipcMain.on(IPC.TEACHING_READY, (event) => {
     if (!isBoardSender(event.sender)) return
-    boardReady = true
+    inbox.markReady()
     flushPendingInbox()
   })
 
@@ -745,7 +649,7 @@ export function destroyTeaching(): void {
   ++opSeq
   mode = 'normal'
   rebuildCount = 0
-  petHomeRect = null // 退出应用：不做回位动画（宠物窗随后销毁）
+  dock.clearHome() // 退出应用：不做回位动画（宠物窗随后销毁）
   destroyBoardWindow()
   petWin = null
 }
