@@ -1,0 +1,246 @@
+/** 文件系统工具：列目录 / 读 / 搜 / 写 / 改。 */
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync
+} from 'node:fs'
+import { isAbsolute, join } from 'node:path'
+import { Type } from 'typebox'
+import type { AgentTool } from '@earendil-works/pi-agent-core'
+import { resolveInsideWorkspace } from '../workspace'
+import {
+  READ_LIMIT_BYTES,
+  SKIP_DIRS,
+  WRITE_LIMIT_BYTES,
+  atomicWrite,
+  formatBytes,
+  isProbablyBinary,
+  ok,
+  toRel,
+  walkFiles,
+  type ToolContext
+} from './common'
+
+export function createListFiles(root: string): AgentTool {
+  const listFiles: AgentTool = {
+    name: 'list_files',
+    label: '列出目录',
+    description:
+      '列出工作区内的目录结构（默认跳过 .git/node_modules/dist 等）。path 相对工作区，depth 1–3。',
+    parameters: Type.Object({
+      path: Type.Optional(Type.String({ description: '相对工作区的目录，默认工作区根' })),
+      depth: Type.Optional(Type.Number({ description: '递归层数 1–3，默认 2' }))
+    }),
+    execute: async (_id, params) => {
+      const p = params as { path?: string; depth?: number }
+      const abs = resolveInsideWorkspace(root, p.path && p.path.trim() ? p.path : '.')
+      if (!existsSync(abs) || !statSync(abs).isDirectory()) throw new Error('不是目录：' + toRel(root, abs))
+      const depth = Math.min(Math.max(Math.trunc(p.depth ?? 2), 1), 3)
+      const lines: string[] = []
+      const walk = (dir: string, level: number): void => {
+        if (lines.length >= 300) return
+        let entries
+        try {
+          entries = readdirSync(dir, { withFileTypes: true })
+        } catch {
+          return
+        }
+        const sorted = entries.slice().sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+        for (const entry of sorted) {
+          if (lines.length >= 300) return
+          const itemAbs = join(dir, entry.name)
+          if (entry.isSymbolicLink()) continue
+          const indent = '  '.repeat(level)
+          if (entry.isDirectory()) {
+            if (SKIP_DIRS.has(entry.name)) continue
+            lines.push(`${indent}${entry.name}/`)
+            if (level + 1 < depth) walk(itemAbs, level + 1)
+          } else if (entry.isFile()) {
+            const size = (() => {
+              try {
+                return statSync(itemAbs).size
+              } catch {
+                return 0
+              }
+            })()
+            lines.push(`${indent}${entry.name}  (${formatBytes(size)})`)
+          }
+        }
+      }
+      walk(abs, 0)
+      const body = lines.length ? lines.join('\n') : '（空目录）'
+      return ok(`${toRel(root, abs)}/\n${body}`)
+    }
+  }
+  return listFiles
+}
+
+export function createReadFile(root: string, ctx: ToolContext): AgentTool {
+  /** 读路径：工作区内，或用户亲手附上的文件（只读）；其它一律拒绝 */
+  const resolveReadable = (rawPath: string): string => {
+    const trimmed = (rawPath ?? '').trim()
+    const extra = ctx.extraReadPaths ?? []
+    if (isAbsolute(trimmed)) {
+      const normalized = trimmed.replace(/\\/g, '/').toLowerCase()
+      if (extra.some((item) => item.replace(/\\/g, '/').toLowerCase() === normalized)) {
+        return trimmed
+      }
+    }
+    return resolveInsideWorkspace(root, trimmed)
+  }
+
+  const readFile: AgentTool = {
+    name: 'read_file',
+    label: '读取文件',
+    description: '读取工作区内的文本文件，返回带行号的内容。可用 offset/limit 按行区间读取。',
+    parameters: Type.Object({
+      path: Type.String({ description: '相对工作区的文件路径' }),
+      offset: Type.Optional(Type.Number({ description: '起始行（1 起）' })),
+      limit: Type.Optional(Type.Number({ description: '最多读取多少行，默认 400，上限 2000' }))
+    }),
+    execute: async (_id, params) => {
+      const p = params as { path: string; offset?: number; limit?: number }
+      const abs = resolveReadable(p.path)
+      if (!existsSync(abs)) throw new Error('文件不存在：' + toRel(root, abs))
+      const stat = statSync(abs)
+      if (!stat.isFile()) throw new Error('不是文件：' + toRel(root, abs))
+      if (stat.size > READ_LIMIT_BYTES) {
+        throw new Error(`文件过大（${formatBytes(stat.size)}），上限 ${formatBytes(READ_LIMIT_BYTES)}；请改用 search_text 定位`)
+      }
+      const buf = readFileSync(abs)
+      if (isProbablyBinary(buf)) throw new Error('看起来是二进制文件，无法作为文本读取')
+      const lines = buf.toString('utf8').split(/\r?\n/)
+      const offset = Math.max(Math.trunc(p.offset ?? 1), 1)
+      const limit = Math.min(Math.max(Math.trunc(p.limit ?? 400), 1), 2000)
+      const slice = lines.slice(offset - 1, offset - 1 + limit)
+      const numbered = slice
+        .map((line, i) => `${String(offset + i).padStart(5, ' ')}| ${line}`)
+        .join('\n')
+      const more =
+        offset - 1 + limit < lines.length
+          ? `\n…（共 ${lines.length} 行，已显示 ${offset}–${offset + slice.length - 1} 行）`
+          : ''
+      return ok(numbered + more)
+    }
+  }
+  return readFile
+}
+
+export function createSearchText(root: string): AgentTool {
+  const searchText: AgentTool = {
+    name: 'search_text',
+    label: '搜索文本',
+    description: '在工作区内按内容搜索（不区分大小写），返回 文件:行号:内容。适合定位函数、报错、文档段落。',
+    parameters: Type.Object({
+      query: Type.String({ description: '要搜索的文本（不支持正则）' }),
+      path: Type.Optional(Type.String({ description: '限定目录，默认工作区根' })),
+      max_results: Type.Optional(Type.Number({ description: '最多返回条数，默认 50，上限 100' }))
+    }),
+    execute: async (_id, params) => {
+      const p = params as { query: string; path?: string; max_results?: number }
+      const needle = (p.query ?? '').trim()
+      if (!needle) throw new Error('搜索内容不能为空')
+      const abs = resolveInsideWorkspace(root, p.path && p.path.trim() ? p.path : '.')
+      const limit = Math.min(Math.max(Math.trunc(p.max_results ?? 50), 1), 100)
+      const lower = needle.toLowerCase()
+      const hits: string[] = []
+      let scanned = 0
+      for (const file of walkFiles(root, abs, 8)) {
+        if (hits.length >= limit) break
+        scanned += 1
+        if (scanned > 5000) break
+        let stat
+        try {
+          stat = statSync(file)
+        } catch {
+          continue
+        }
+        if (stat.size > READ_LIMIT_BYTES) continue
+        let buf
+        try {
+          buf = readFileSync(file)
+        } catch {
+          continue
+        }
+        if (isProbablyBinary(buf)) continue
+        const lines = buf.toString('utf8').split(/\r?\n/)
+        for (let i = 0; i < lines.length; i += 1) {
+          if (!lines[i].toLowerCase().includes(lower)) continue
+          hits.push(`${toRel(root, file)}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
+          if (hits.length >= limit) break
+        }
+      }
+      return ok(
+        hits.length ? hits.join('\n') : `没有找到「${needle}」（扫描 ${scanned} 个文件）`
+      )
+    }
+  }
+  return searchText
+}
+
+export function createWriteFile(root: string): AgentTool {
+  const writeFile: AgentTool = {
+    name: 'write_file',
+    label: '写入文件',
+    description: '在工作区内新建或整体覆盖一个文本文件。覆盖前会请用户确认。',
+    parameters: Type.Object({
+      path: Type.String({ description: '相对工作区的文件路径' }),
+      content: Type.String({ description: '完整文件内容' })
+    }),
+    execute: async (_id, params) => {
+      const p = params as { path: string; content: string }
+      const abs = resolveInsideWorkspace(root, p.path)
+      const size = Buffer.byteLength(p.content ?? '', 'utf8')
+      if (size > WRITE_LIMIT_BYTES) {
+        throw new Error(`内容过大（${formatBytes(size)}），上限 ${formatBytes(WRITE_LIMIT_BYTES)}`)
+      }
+      const existed = existsSync(abs)
+      atomicWrite(abs, p.content ?? '')
+      return ok(`${existed ? '已覆盖' : '已创建'} ${toRel(root, abs)}（${formatBytes(size)}）`)
+    }
+  }
+  return writeFile
+}
+
+export function createEditFile(root: string): AgentTool {
+  const editFile: AgentTool = {
+    name: 'edit_file',
+    label: '修改文件',
+    description:
+      '把文件中的 old_string 精确替换成 new_string。old_string 必须在文件中唯一命中（除非 replace_all=true）。',
+    parameters: Type.Object({
+      path: Type.String({ description: '相对工作区的文件路径' }),
+      old_string: Type.String({ description: '要替换的原文本（需唯一命中）' }),
+      new_string: Type.String({ description: '替换后的文本' }),
+      replace_all: Type.Optional(Type.Boolean({ description: '是否替换全部命中，默认 false' }))
+    }),
+    execute: async (_id, params) => {
+      const p = params as {
+        path: string
+        old_string: string
+        new_string: string
+        replace_all?: boolean
+      }
+      const abs = resolveInsideWorkspace(root, p.path)
+      if (!existsSync(abs)) throw new Error('文件不存在：' + toRel(root, abs))
+      if (!p.old_string) throw new Error('old_string 不能为空')
+      const original = readFileSync(abs, 'utf8')
+      const count = original.split(p.old_string).length - 1
+      if (count === 0) throw new Error('文件里没有找到 old_string，请先读取确认原文')
+      if (count > 1 && !p.replace_all) {
+        throw new Error(`old_string 命中了 ${count} 处，不唯一；请提供更长的上下文或设置 replace_all=true`)
+      }
+      const next = p.replace_all
+        ? original.split(p.old_string).join(p.new_string)
+        : original.replace(p.old_string, p.new_string)
+      const size = Buffer.byteLength(next, 'utf8')
+      if (size > WRITE_LIMIT_BYTES) {
+        throw new Error(`修改后文件过大（${formatBytes(size)}），上限 ${formatBytes(WRITE_LIMIT_BYTES)}`)
+      }
+      atomicWrite(abs, next)
+      return ok(`已修改 ${toRel(root, abs)}（替换 ${p.replace_all ? count : 1} 处）`)
+    }
+  }
+  return editFile
+}
