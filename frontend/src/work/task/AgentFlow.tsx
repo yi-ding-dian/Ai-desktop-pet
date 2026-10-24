@@ -1,5 +1,5 @@
 /** 任务消息流：用户回合 / 思考 / 工具调用 / 回合统计 / 回答 / 待办 / 审批。 */
-import { useLayoutEffect, useRef, type ReactElement } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { renderMarkdownWithCitations } from '../../board/markdown'
 import type { AgentState, AgentStep, AgentTodoItem } from '../../../electron/ipc/channels'
 import { formatTime, formatTokens, handleMarkdownClick } from '../format'
@@ -230,6 +230,78 @@ function RoundStats({ step }: { step: AgentStep }): ReactElement {
   )
 }
 
+/** 提问卡：模型问你 2–4 选一，或自己输入“其他”。 */
+function QuestionCard({
+  question,
+  onAnswer
+}: {
+  question: NonNullable<AgentState['question']>
+  onAnswer?: (id: string, answer: string) => void
+}): ReactElement {
+  const [other, setOther] = useState('')
+  const [showOther, setShowOther] = useState(false)
+  const submit = (): void => {
+    const text = other.trim()
+    if (text) onAnswer?.(question.id, text)
+  }
+  return (
+    <div className="task-question">
+      <div className="task-question-head">
+        <span className="task-approval-icon" aria-hidden="true">
+          ✦
+        </span>
+        <span>需要你决定</span>
+      </div>
+      <div className="task-question-text">{question.question}</div>
+      <div className="task-question-options">
+        {question.options.map((option) => (
+          <button
+            key={option}
+            type="button"
+            className="task-question-option"
+            onClick={() => onAnswer?.(question.id, option)}
+          >
+            {option}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="task-question-option task-question-option-other"
+          onClick={() => setShowOther((value) => !value)}
+        >
+          其他…
+        </button>
+      </div>
+      {showOther ? (
+        <div className="task-question-other">
+          <input
+            className="task-question-input"
+            value={other}
+            autoFocus
+            placeholder="输入你的答案"
+            onChange={(event) => setOther(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                submit()
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="task-btn task-btn-primary"
+            disabled={other.trim().length === 0}
+            onClick={submit}
+          >
+            提交
+          </button>
+        </div>
+      ) : null}
+      <div className="task-approval-hint">任务会一直等你回答（最长 30 分钟）</div>
+    </div>
+  )
+}
+
 export interface AgentFlowProps {
   task?: string
   workspace?: string
@@ -244,6 +316,12 @@ export interface AgentFlowProps {
   error?: string
   approval?: AgentState['approval']
   remaining: number
+  question?: AgentState['question']
+  status?: AgentState['status']
+  mode?: AgentState['mode']
+  canExecutePlan?: boolean
+  onAnswer?: (id: string, answer: string) => void
+  onExecutePlan?: (mode: 'standard' | 'auto') => void
   onToggle: (step: AgentStep) => void
   onCopy: (id: string, text: string) => void
   onCommandMenu: (command: string, x: number, y: number) => void
@@ -264,6 +342,12 @@ export default function AgentFlow({
   error,
   approval,
   remaining,
+  question,
+  status,
+  mode,
+  canExecutePlan = false,
+  onAnswer,
+  onExecutePlan,
   onToggle,
   onCopy,
   onCommandMenu,
@@ -398,6 +482,10 @@ export default function AgentFlow({
         </div>
       ) : null}
 
+      {question ? (
+        <QuestionCard key={question.id} question={question} onAnswer={onAnswer} />
+      ) : null}
+
       {summary && !summaryDuplicated ? (
         <div className="task-msg task-msg-assistant">
           <div
@@ -412,6 +500,38 @@ export default function AgentFlow({
             copied={copiedId === 'summary'}
             onCopy={() => onCopy('summary', summary)}
           />
+        </div>
+      ) : null}
+
+      {status === 'planned' ? (
+        <div className="task-plan-card">
+          <div className="task-plan-head">✦ 计划已完成</div>
+          <div className="task-plan-text">
+            {canExecutePlan
+              ? '选择执行模式后，在同一任务里继续（保留当前计划和上下文）。'
+              : '任务上下文已释放，无法直接执行；请新开任务并把计划贴过去。'}
+          </div>
+          <div className="task-plan-actions">
+            <button
+              type="button"
+              className="task-btn task-btn-primary"
+              disabled={!canExecutePlan}
+              onClick={() => onExecutePlan?.('standard')}
+            >
+              按标准执行
+            </button>
+            <button
+              type="button"
+              className="task-btn"
+              disabled={!canExecutePlan}
+              onClick={() => onExecutePlan?.('auto')}
+            >
+              按自动执行
+            </button>
+          </div>
+          <div className="task-plan-hint">
+            {mode === 'plan' ? '当前仍是计划模式；点上面按钮会切出只读。' : ''}
+          </div>
         </div>
       ) : null}
 

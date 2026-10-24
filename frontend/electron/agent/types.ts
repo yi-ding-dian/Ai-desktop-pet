@@ -4,15 +4,35 @@
  * 本文件不 import 任何运行时（同 ipc/channels 的约定），preload / 渲染侧可安全引用。
  */
 
-/** 任务状态：preparing = 取 Key / 建 Agent；waiting = 等用户确认（同时仍在 running 语义） */
+/**
+ * 执行模式（2026-10-24）：
+ * - standard：工作区内读写删免确认；工作区外不可逆操作确认；bash 一律确认；
+ * - auto：除致命命令外全部免确认；
+ * - plan：只读，只产出计划与待办，结束后停在 planned。
+ */
+export type ExecutionMode = 'standard' | 'auto' | 'plan'
+
+/** 任务状态：preparing = 取 Key / 建 Agent；waiting = 等用户处理（确认/回答） */
 export type AgentStatus =
   | 'idle'
+  | 'queued'
   | 'preparing'
   | 'running'
   | 'waiting'
+  | 'planned'
   | 'done'
   | 'failed'
   | 'cancelled'
+
+/** 任务在等待什么：确认卡或提问卡 */
+export type AgentWaitingKind = 'approval' | 'question'
+
+/** 后台任务需要用户处理（主进程弹通知 / 任务列表角标） */
+export interface AgentAttention {
+  id: string
+  task: string
+  kind: AgentWaitingKind
+}
 
 export type AgentStepKind = 'text' | 'thinking' | 'tool' | 'todo' | 'error' | 'round' | 'stats'
 export type AgentStepStatus = 'running' | 'done' | 'failed' | 'blocked'
@@ -75,6 +95,35 @@ export interface AgentSourceItem {
   date: string
 }
 
+/** 一次「向用户提问」（ask_user 工具）：模型阻塞等待用户选择或自由输入 */
+export interface AgentQuestionRequest {
+  id: string
+  /** 要问用户的问题（一两句话） */
+  question: string
+  /** 2–4 个选项（用户也可以自行输入“其他”） */
+  options: string[]
+  /** 发起时间（ms），面板显示用 */
+  createdAt: number
+}
+
+/** ask_user 的回答：answer 为空串表示用户没答（取消/中止） */
+export interface AgentQuestionAnswerPayload {
+  id: string
+  answer: string
+}
+
+/** 切换执行模式 */
+export interface AgentSetModePayload {
+  id: string
+  mode: ExecutionMode
+}
+
+/** 计划任务「按此执行」：只能切到可执行的模式 */
+export interface AgentExecutePlanPayload {
+  id: string
+  mode: Exclude<ExecutionMode, 'plan'>
+}
+
 /** 一次待确认操作（写文件 / 改文件 / 跑命令） */
 export interface AgentApprovalRequest {
   id: string
@@ -83,7 +132,7 @@ export interface AgentApprovalRequest {
   title: string
   /** bash 的完整命令 */
   command?: string
-  /** 涉及的文件（相对工作区） */
+  /** 涉及的文件（工作区内相对路径，或工作区外绝对路径） */
   path?: string
   /** diff 或参数摘要（已截断） */
   preview?: string
@@ -110,6 +159,8 @@ export interface AgentState {
   task: string
   /** 工作区绝对路径（用户通过原生对话框选定） */
   workspace: string
+  /** 当前执行模式 */
+  mode: ExecutionMode
   startedAt?: number
   endedAt?: number
   steps: AgentStep[]
@@ -123,6 +174,8 @@ export interface AgentState {
   /** 联网搜索/抓取收集到的来源（按 URL 去重；引用悬浮卡片用） */
   sources?: AgentSourceItem[]
   approval?: AgentApprovalRequest
+  /** 当前等待用户回答的问题（ask_user；回答后清空） */
+  question?: AgentQuestionRequest
   /** 任务结束时的模型总结 */
   summary?: string
   /** 失败原因（已脱敏） */
@@ -137,6 +190,12 @@ export interface AgentTaskSummary {
   createdAt: number
   updatedAt: number
   status: AgentStatus
+  /** 当前执行模式 */
+  mode: ExecutionMode
+  /** 正在等用户处理什么（确认/回答）；不在 waiting 时缺省 */
+  waitingFor?: AgentWaitingKind
+  /** 排队位置（1 起）；不在排队时缺省 */
+  queuePosition?: number
   /** 后台完成、用户尚未查看（点开后清除；不跨应用重启保留） */
   hasUpdate?: boolean
 }
@@ -146,6 +205,8 @@ export interface AgentStartPayload {
   task: string
   workspace: string
   attachments?: AgentAttachment[]
+  /** 执行模式；缺省 standard（旧渲染侧不带也能用） */
+  mode?: ExecutionMode
 }
 
 /** agent:follow-up 的入参 */

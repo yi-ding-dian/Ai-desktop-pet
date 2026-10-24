@@ -19,7 +19,7 @@ import { IPC, IPC_AGENT, IPC_EVENTS, type PetWindowEdge, type WindowDebugState }
 import { backendManager } from '../backend-process'
 import { agentService } from '../agent/service'
 import type { AgentFollowUpPayload } from '../agent/types'
-import { pushToWorkWindow } from '../work'
+import { focusTaskInWorkWindow, pushToWorkWindow } from '../work'
 import { resolveAppIconImage } from '../app-icon'
 import { openConfirmBubble, setEdgeSpeechSuppression } from '../bubble'
 import {
@@ -599,7 +599,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(IPC_AGENT.START, (_event, payload) => agentService.start(payload))
   ipcMain.handle(IPC_AGENT.GET_STATE, () => agentService.getState())
-  ipcMain.on(IPC_AGENT.CANCEL, () => agentService.cancel('user'))
+  ipcMain.handle(IPC_AGENT.CANCEL, (_event, id: unknown) =>
+    agentService.cancel(typeof id === 'string' && id ? id : agentService.getState().id, 'user')
+  )
   ipcMain.handle(IPC_AGENT.FOLLOW_UP, (_event, payload: AgentFollowUpPayload) =>
     agentService.followUp(payload)
   )
@@ -613,6 +615,11 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.on(IPC_AGENT.APPROVE, (_event, payload: { id: string; allow: boolean }) => {
     agentService.respondApproval(payload.id, payload.allow)
   })
+  ipcMain.handle(IPC_AGENT.ANSWER_QUESTION, (_event, payload) =>
+    agentService.respondQuestion(payload)
+  )
+  ipcMain.handle(IPC_AGENT.SET_MODE, (_event, payload) => agentService.setMode(payload))
+  ipcMain.handle(IPC_AGENT.EXECUTE_PLAN, (_event, payload) => agentService.executePlan(payload))
   ipcMain.handle(IPC_AGENT.PICK_WORKSPACE, async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender) ?? ctx.window
     const result = await dialog.showOpenDialog(win, {
@@ -626,4 +633,20 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   // 状态推送：任务状态以 agentService 为真相源，面板挂载时另有 get-state 补拉
   agentService.onState((state) => pushToWorkWindow(IPC_AGENT.STATE, state))
   agentService.onTasks((tasks) => pushToWorkWindow(IPC_AGENT.TASKS, tasks))
+  // 后台任务等待确认/回答：系统通知 + 点击直达该任务
+  agentService.onAttention((attention) => {
+    if (!Notification.isSupported()) return
+    const title = attention.kind === 'approval' ? '任务需要你确认' : '任务在等你回答'
+    const body = attention.task.slice(0, 120)
+    const notification = new Notification({
+      title,
+      body,
+      icon: resolveAppIconImage()
+    })
+    notification.on('click', () => {
+      agentService.select(attention.id)
+      focusTaskInWorkWindow(attention.id)
+    })
+    notification.show()
+  })
 }

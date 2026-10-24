@@ -12,7 +12,10 @@ import {
   IPC_REMINDER_LIST,
   IPC_WORK,
   type AgentApprovePayload,
+  type AgentExecutePlanPayload,
   type AgentFollowUpPayload,
+  type AgentQuestionAnswerPayload,
+  type AgentSetModePayload,
   type AgentStartPayload,
   type AgentState,
   type AgentTaskSummary,
@@ -564,8 +567,8 @@ const api: PetBridgeApi = {
       return ipcRenderer.invoke(IPC_AGENT.START, payload)
     },
 
-    cancel(): void {
-      ipcRenderer.send(IPC_AGENT.CANCEL)
+    cancel(id: string): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.CANCEL, id)
     },
 
     followUp(payload: AgentFollowUpPayload): Promise<{ ok: boolean; error?: string }> {
@@ -590,6 +593,28 @@ const api: PetBridgeApi = {
 
     approve(payload: AgentApprovePayload): void {
       ipcRenderer.send(IPC_AGENT.APPROVE, payload)
+    },
+
+    answerQuestion(
+      payload: AgentQuestionAnswerPayload
+    ): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.ANSWER_QUESTION, payload)
+    },
+
+    setMode(payload: AgentSetModePayload): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.SET_MODE, payload)
+    },
+
+    executePlan(payload: AgentExecutePlanPayload): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.EXECUTE_PLAN, payload)
+    },
+
+    onFocusTask(cb: (id: string) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, id: string): void => cb(id)
+      ipcRenderer.on(IPC_AGENT.FOCUS_TASK, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_AGENT.FOCUS_TASK, listener)
+      }
     },
 
     onState(cb: (state: AgentState) => void): () => void {

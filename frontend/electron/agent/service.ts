@@ -5,27 +5,30 @@
  *  - 校验工作区 → 向后端内部端点取聊天 Key → 建 pi-agent-core Agent；
  *  - 每个任务一个 Session：步骤、待办、确认卡、Agent 上下文各自独立；
  *  - 把 Agent 事件流翻译成面板步骤，节流推给渲染层；
- *  - 写文件 / 改文件 / 跑命令前弹确认（beforeToolCall），拒绝即阻断；
+ *  - 按执行模式（标准/自动/计划）决定确认与拒绝（beforeToolCall → policy）；
+ *  - 最多 2 个任务真并行，其余排队；同工作区互斥；
+ *  - 支持 ask_user 提问卡、计划模式「按此执行」；
  *  - 中止、超时、审计、错误脱敏；任务记录落盘，重启后可回看。
  *
- * 并发约定：同一时间只允许一个任务运行（runningId）；其它任务可停在结束态并随意切换。
- *
- * 目录分工：session（会话模型与常量）/ attachments / events（事件翻译）/
- * llm-key / store（落盘）。
+ * 目录分工：session（会话模型与常量）/ queue（并发队列纯逻辑）/ policy（权限）/
+ * attachments / events（事件翻译）/ llm-key / store（落盘）。
  */
 import { randomUUID } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { buildAgent } from './pi'
-import { createTools, describeToolCall, needsApproval, type ApprovalDescription } from './tools'
+import { createTools, describeToolCall, type ApprovalDescription } from './tools'
+import { decideToolCall } from './policy'
+import { MAX_PARALLEL_TASKS, findRunnableIndex, type QueueItem } from './queue'
 import { resolveWorkspace } from './workspace'
 import { loadSessions, saveSessions, type PersistedSession, type PersistedState } from './store'
 import { buildPrompt, normalizeAttachments } from './attachments'
 import { AgentEventTranslator } from './events'
 import { fetchLlmKey } from './llm-key'
 import { callInternal } from './internal-api'
+import { buildModeInstruction } from './prompt'
 import {
   APPROVAL_TIMEOUT_MS,
   MAX_LIVE_AGENTS,
@@ -34,6 +37,8 @@ import {
   TASK_TIMEOUT_MS,
   createSession,
   emptyState,
+  finalizeRunningSteps,
+  normalizeMode,
   restoreSession,
   sanitizeError,
   type Session,
@@ -43,19 +48,29 @@ import {
 import type {
   AgentApprovalRequest,
   AgentAttachment,
+  AgentAttention,
+  AgentExecutePlanPayload,
   AgentFollowUpPayload,
+  AgentQuestionAnswerPayload,
+  AgentSetModePayload,
   AgentStartPayload,
   AgentState,
-  AgentTaskSummary
+  AgentTaskSummary,
+  ExecutionMode
 } from './types'
 
 export class AgentService {
   private sessions = new Map<string, Session>()
   private activeId: string | null = null
-  /** 正在运行的任务（全局只允许一个） */
-  private runningId: string | null = null
+  /** 正在执行的任务（最多 MAX_PARALLEL_TASKS 个） */
+  private runningIds = new Set<string>()
+  /** 工作区 realpath → 正在使用它的任务 id（同工作区互斥） */
+  private workspaceRuns = new Map<string, string>()
+  /** 等待执行的任务（start / continue 各一条） */
+  private queue: QueueItem[] = []
   private stateListeners = new Set<StateListener>()
   private tasksListeners = new Set<TasksListener>()
+  private attentionListeners = new Set<(event: AgentAttention) => void>()
   private pushTimer: NodeJS.Timeout | null = null
   private saveTimer: NodeJS.Timeout | null = null
   private loaded = false
@@ -81,6 +96,12 @@ export class AgentService {
     return () => this.tasksListeners.delete(listener)
   }
 
+  /** 后台任务进入等待（确认/回答）时提醒主进程弹通知 */
+  onAttention(listener: (event: AgentAttention) => void): () => void {
+    this.attentionListeners.add(listener)
+    return () => this.attentionListeners.delete(listener)
+  }
+
   /** 当前任务状态（没有任务时返回空态） */
   getState(): AgentState {
     this.ensureLoaded()
@@ -93,15 +114,26 @@ export class AgentService {
     this.ensureLoaded()
     return [...this.sessions.values()]
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map((session) => ({
-        id: session.state.id,
-        task: session.state.task,
-        workspace: session.state.workspace,
-        createdAt: session.createdAt,
-        updatedAt: session.updatedAt,
-        status: session.state.status,
-        hasUpdate: session.hasUpdate
-      }))
+      .map((session) => {
+        const queueIndex = this.queue.findIndex((item) => item.sessionId === session.state.id)
+        return {
+          id: session.state.id,
+          task: session.state.task,
+          workspace: session.state.workspace,
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
+          status: session.state.status,
+          mode: session.state.mode,
+          waitingFor:
+            session.pending !== null
+              ? ('approval' as const)
+              : session.pendingQuestion !== null
+                ? ('question' as const)
+                : undefined,
+          queuePosition: queueIndex >= 0 ? queueIndex + 1 : undefined,
+          hasUpdate: session.hasUpdate
+        }
+      })
   }
 
   /** 切换当前任务 */
@@ -131,30 +163,33 @@ export class AgentService {
     const session = this.sessions.get(id)
     if (!session) return { ok: false, error: '任务不存在' }
 
-    if (session.running) {
-      this.clearTaskTimer(session)
-      session.agent?.abort()
-      this.resolveApproval(session, false)
-      session.agent = null
-      session.running = false
-      if (this.runningId === id) this.runningId = null
-    }
+    this.dropQueue(id)
+    this.clearTaskTimer(session)
+    session.state.status = 'cancelled'
+    finalizeRunningSteps(session.state.steps, Date.now())
+    session.agent?.abort()
+    this.resolveApproval(session, false)
+    this.resolveQuestion(session, null)
+    session.state.approval = undefined
+    session.state.question = undefined
+    session.agent = null
     this.sessions.delete(id)
     this.audit('delete', { id })
     if (this.activeId === id) {
       const next = [...this.sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt)[0]
       this.activeId = next ? next.state.id : null
     }
+    this.releaseExecution(session)
+    this.pumpQueue()
     this.flush()
     this.pushTasks()
     this.scheduleSave()
     return { ok: true }
   }
 
-  /** 开始新任务：校验通过即返回，真正的执行在后台跑 */
+  /** 开始新任务：校验通过即入队；有空槽位时立即启动 */
   start(payload: AgentStartPayload): { ok: boolean; error?: string } {
     this.ensureLoaded()
-    if (this.runningId) return { ok: false, error: '已有任务在跑，先中止或等它结束' }
     const task = (payload?.task ?? '').trim()
     if (!task) return { ok: false, error: '任务描述不能为空' }
     if (task.length > 2000) return { ok: false, error: '任务描述过长（上限 2000 字）' }
@@ -169,7 +204,8 @@ export class AgentService {
     const attachments = normalizeAttachments(payload?.attachments)
     const id = randomUUID()
     const now = Date.now()
-    const session: Session = createSession(id, task, workspace, now)
+    const mode = normalizeMode(payload?.mode)
+    const session: Session = createSession(id, task, workspace, now, mode)
     session.attachmentPaths.push(...attachments.map((item) => item.path))
     session.roundStartedAt = now
     session.roundCalls = 0
@@ -178,18 +214,18 @@ export class AgentService {
     session.roundCache = 0
     this.sessions.set(id, session)
     this.activeId = id
-    this.runningId = id
+    this.queue.push({ sessionId: id, workspace, kind: 'start', enqueuedAt: now, attachments })
     this.push(true)
     this.pushTasks()
     this.scheduleSave()
-    void this.runTask(session, task, workspace, attachments)
+    this.pumpQueue()
     return { ok: true }
   }
 
   /**
    * 继续追问：作用于**当前任务**，沿用同一个 Agent（带上下文）。
    *
-   * 任务正常结束/失败后可用；中止或应用重启后不可用。
+   * 运行中作为插话（steer）；排队中拒绝；有槽位立即执行，否则排队。
    */
   followUp(payload: AgentFollowUpPayload | string): { ok: boolean; error?: string } {
     this.ensureLoaded()
@@ -202,6 +238,12 @@ export class AgentService {
     const trimmed = text.trim()
     if (!trimmed) return { ok: false, error: '内容不能为空' }
     if (trimmed.length > 2000) return { ok: false, error: '内容过长（上限 2000 字）' }
+    if (session.state.status === 'queued') {
+      return { ok: false, error: '任务在排队，开始后再发送' }
+    }
+    if (session.state.status === 'waiting') {
+      return { ok: false, error: '请先处理上方的确认/提问' }
+    }
 
     const attachments = normalizeAttachments(
       typeof payload === 'string' ? [] : payload?.attachments
@@ -236,46 +278,61 @@ export class AgentService {
       })
       return { ok: true }
     }
-    if (this.runningId && this.runningId !== session.state.id) {
-      return { ok: false, error: '另一个任务正在运行，等它结束再发' }
-    }
 
-    session.roundStartedAt = Date.now()
-    session.roundCalls = 0
-    session.roundInput = 0
-    session.roundOutput = 0
-    session.roundCache = 0
-    session.running = true
-    this.runningId = session.state.id
-    session.state.status = 'running'
-    session.state.summary = undefined
-    session.state.error = undefined
-    session.state.endedAt = undefined
-    session.state.approval = undefined
-    void this.executeTurn(session, prompt.text, prompt.images)
-    return { ok: true }
+    return this.enqueueContinue(session, prompt.text, prompt.images)
   }
 
-  /** 中止当前任务：关掉 Agent、拒掉在途确认、清理定时器 */
-  cancel(reason: 'user' | 'timeout' = 'user'): void {
-    const session = this.activeSession()
-    if (!session || !session.running) return
+  /** 计划任务「按此执行」：切到标准/自动后在同一 Agent 上下文继续。 */
+  executePlan(payload: AgentExecutePlanPayload): { ok: boolean; error?: string } {
+    this.ensureLoaded()
+    const session = this.sessions.get(payload?.id ?? '')
+    if (!session) return { ok: false, error: '任务不存在' }
+    if (session.state.status !== 'planned') {
+      return { ok: false, error: '这个任务当前不是「待执行」状态' }
+    }
+    if (!session.agent) {
+      return { ok: false, error: '任务上下文已释放，无法按此执行；请新开任务' }
+    }
+    const mode: ExecutionMode = payload.mode === 'auto' ? 'auto' : 'standard'
+    const switched = this.setMode({ id: session.state.id, mode })
+    if (!switched.ok) return switched
+    return this.enqueueContinue(
+      session,
+      '用户已批准上面的计划。请按计划开始执行：先用 todo 更新进度，再逐步完成；完成后给出改了什么/怎么验证/剩余风险。'
+    )
+  }
+
+  /** 中止指定任务：关掉 Agent、拒掉在途确认/提问、清理定时器 */
+  cancel(id: string, reason: 'user' | 'timeout' = 'user'): { ok: boolean; error?: string } {
+    this.ensureLoaded()
+    const session = this.sessions.get(id)
+    if (!session) return { ok: false, error: '任务不存在' }
+    const status = session.state.status
+    if (status === 'done' || status === 'failed' || status === 'cancelled') {
+      return { ok: false, error: '任务已经结束' }
+    }
+
+    this.dropQueue(id)
     this.clearTaskTimer(session)
     session.agent?.abort()
     this.resolveApproval(session, false)
+    this.resolveQuestion(session, null)
     session.state.approval = undefined
+    session.state.question = undefined
     session.state.status = 'cancelled'
     session.state.endedAt = Date.now()
+    finalizeRunningSteps(session.state.steps, session.state.endedAt)
     session.state.error = reason === 'timeout' ? '任务超过 30 分钟上限，已自动中止' : undefined
     this.markFinished(session)
-    session.running = false
-    if (this.runningId === session.state.id) this.runningId = null
     // 被 abort 的 Agent 不能续跑：清掉，继续聊需要重新开始任务
     session.agent = null
+    this.releaseExecution(session)
+    this.pumpQueue()
     this.audit('cancel', { id: session.state.id, reason })
-    this.push(true)
+    if (session.state.id === this.activeId) this.push(true)
     this.pushTasks()
     this.scheduleSave()
+    return { ok: true }
   }
 
   /** 用户对确认卡的选择（按 pending id 找所属任务，可能在后台任务上） */
@@ -288,18 +345,156 @@ export class AgentService {
       if (session.state.status === 'waiting') session.state.status = 'running'
       this.audit('approval', { id: session.state.id, approvalId: id, allow })
       if (session.state.id === this.activeId) this.push(true)
+      this.pushTasks()
       return
     }
   }
 
-  // ---------------- 执行 ----------------
+  /** 用户回答提问（按 pending id 找所属任务） */
+  respondQuestion(payload: AgentQuestionAnswerPayload): { ok: boolean; error?: string } {
+    const answer = (payload?.answer ?? '').trim()
+    for (const session of this.sessions.values()) {
+      const pending = session.pendingQuestion
+      if (!pending || pending.id !== payload?.id) continue
+      this.resolveQuestion(session, answer || null)
+      session.state.question = undefined
+      if (session.state.status === 'waiting') session.state.status = 'running'
+      this.audit('question-answer', {
+        id: session.state.id,
+        questionId: pending.id,
+        answered: answer.length > 0
+      })
+      if (session.state.id === this.activeId) this.push(true)
+      this.pushTasks()
+      return { ok: true }
+    }
+    return { ok: false, error: '问题已经结束' }
+  }
 
-  private async runTask(
+  /** 任务内切换执行模式：从下一次工具调用起生效 */
+  setMode(payload: AgentSetModePayload): { ok: boolean; error?: string } {
+    this.ensureLoaded()
+    const session = this.sessions.get(payload?.id ?? '')
+    if (!session) return { ok: false, error: '任务不存在' }
+    const mode = normalizeMode(payload.mode)
+    if (session.state.mode === mode) return { ok: true }
+
+    // 切到只读前先把在途确认按拒绝收尾，避免切完还执行旧确认
+    if (mode === 'plan' && session.pending) {
+      this.resolveApproval(session, false)
+      session.state.approval = undefined
+      if (session.state.status === 'waiting') session.state.status = 'running'
+    }
+
+    session.mode = mode
+    session.state.mode = mode
+    this.audit('mode-change', { id: session.state.id, mode })
+    if (session.agent) {
+      const message = {
+        role: 'system' as const,
+        content: buildModeInstruction(mode),
+        timestamp: Date.now()
+      }
+      try {
+        if (session.running || session.state.status === 'waiting') {
+          session.agent.steer(message)
+        } else {
+          session.agent.state.messages = [...session.agent.state.messages, message]
+        }
+      } catch (err) {
+        // 提示词更新失败不影响权限切换（policy 每次读实时 mode）
+        console.warn('[agent] 模式说明注入失败：', (err as Error).message)
+      }
+    }
+    if (session.state.id === this.activeId) this.push(true)
+    this.pushTasks()
+    this.scheduleSave()
+    return { ok: true }
+  }
+
+  // ---------------- 执行与并发 ----------------
+
+  /** 把一轮「继续」放进队列；有空槽位会立即被 pumpQueue 拉起。 */
+  private enqueueContinue(
     session: Session,
-    task: string,
-    workspace: string,
-    attachments: AgentAttachment[]
-  ): Promise<void> {
+    text: string,
+    images?: ImageContent[]
+  ): { ok: boolean; error?: string } {
+    if (this.queue.some((item) => item.sessionId === session.state.id)) {
+      return { ok: false, error: '这个任务已经有一轮在排队' }
+    }
+    session.roundStartedAt = Date.now()
+    session.roundCalls = 0
+    session.roundInput = 0
+    session.roundOutput = 0
+    session.roundCache = 0
+    session.state.status = 'queued'
+    session.state.error = undefined
+    session.state.endedAt = undefined
+    session.state.approval = undefined
+    session.state.question = undefined
+    this.queue.push({
+      sessionId: session.state.id,
+      workspace: session.state.workspace,
+      kind: 'continue',
+      enqueuedAt: Date.now(),
+      text,
+      images
+    })
+    if (session.state.id === this.activeId) this.push(true)
+    this.pushTasks()
+    this.scheduleSave()
+    this.pumpQueue()
+    return { ok: true }
+  }
+
+  /** 尝试按队列启动任务；槽位或工作区不满足时停止。 */
+  private pumpQueue(): void {
+    while (this.runningIds.size < MAX_PARALLEL_TASKS) {
+      const index = findRunnableIndex(this.queue, new Set(this.workspaceRuns.keys()))
+      if (index < 0) break
+      const [item] = this.queue.splice(index, 1)
+      const session = this.sessions.get(item.sessionId)
+      if (!session) continue
+      const status = session.state.status
+      if (status === 'cancelled' || status === 'failed' || status === 'done') continue
+
+      this.runningIds.add(session.state.id)
+      this.workspaceRuns.set(session.state.workspace, session.state.id)
+      session.running = true
+      session.state.status = item.kind === 'start' ? 'preparing' : 'running'
+      if (item.kind === 'continue') {
+        session.roundGenMs = 0
+        session.turnStartedAt = 0
+      }
+      if (session.state.id === this.activeId) this.push(true)
+      this.pushTasks()
+      if (item.kind === 'start') {
+        void this.launch(session, item.attachments ?? [])
+      } else {
+        void this.executeTurn(session, item.text ?? '', item.images)
+      }
+    }
+  }
+
+  /** 释放执行槽位并尝试拉起队列里的下一个（幂等）。 */
+  private releaseExecution(session: Session): void {
+    const id = session.state.id
+    const released = this.runningIds.delete(id)
+    if (this.workspaceRuns.get(session.state.workspace) === id) {
+      this.workspaceRuns.delete(session.state.workspace)
+    }
+    session.running = false
+    if (released) this.pumpQueue()
+  }
+
+  /** 移除某个任务尚未开始的排队项。 */
+  private dropQueue(id: string): void {
+    this.queue = this.queue.filter((item) => item.sessionId !== id)
+  }
+
+  private async launch(session: Session, attachments: AgentAttachment[]): Promise<void> {
+    const workspace = session.state.workspace
     try {
       const key = await fetchLlmKey()
       const tools = createTools({
@@ -308,19 +503,49 @@ export class AgentService {
         extraReadPaths: session.attachmentPaths,
         onTodo: (items) => this.translator.applyTodo(session, items),
         // 联网搜索/抓取：开关与格式化都在后端（设置 → 搜索）
-        callInternal
+        callInternal,
+        askUser: (question, options) => this.askQuestion(session, question, options),
+        trashPath: (abs) => shell.trashItem(abs)
       })
 
       const built = buildAgent({
         apiKey: key.key,
         baseUrl: key.baseUrl,
         model: key.model,
+        mode: session.state.mode,
         tools,
         beforeToolCall: async ({ toolCall, args }) => {
-          if (!needsApproval(toolCall.name)) return undefined
+          const decision = decideToolCall({
+            mode: session.state.mode,
+            toolName: toolCall.name,
+            args,
+            workspace
+          })
+          if (decision.action === 'allow') return undefined
+          if (decision.action === 'deny') {
+            this.audit('tool-denied', {
+              id: session.state.id,
+              tool: toolCall.name,
+              mode: session.state.mode,
+              reason: decision.reason
+            })
+            return { block: true, reason: decision.reason }
+          }
           const desc = describeToolCall(toolCall.name, args, workspace)
-          const allowed = await this.askApproval(session, toolCall.name, desc)
-          if (allowed) return undefined
+          const allowed = await this.askApproval(session, toolCall.name, {
+            ...desc,
+            dangerous: decision.dangerous || desc.dangerous,
+            preview: [decision.reason, desc.preview].filter(Boolean).join('\n\n') || undefined
+          })
+          if (allowed) {
+            this.audit('tool-auto', {
+              id: session.state.id,
+              tool: toolCall.name,
+              mode: session.state.mode,
+              decision: 'confirmed'
+            })
+            return undefined
+          }
           return {
             block: true,
             reason: '用户拒绝了这次操作。不要原样重试，换方案或停下来问用户。'
@@ -328,30 +553,39 @@ export class AgentService {
         }
       })
 
+      // 准备期间任务可能已被取消/删除
+      if (session.state.status === 'cancelled' || !this.sessions.has(session.state.id)) {
+        this.releaseExecution(session)
+        return
+      }
       session.agent = built.agent
       this.modelId = built.modelId
       session.state.context = { used: 0, window: built.contextWindow }
       session.agent.subscribe((event) => this.translator.onAgentEvent(session, event))
       this.audit('start', {
         id: session.state.id,
-        task,
+        task: session.state.task,
         workspace,
+        mode: session.state.mode,
         model: this.modelId,
-        attachments: attachments.length
+        attachments: session.attachmentPaths.length
       })
-      const prompt = buildPrompt(task, attachments)
+      const prompt = buildPrompt(session.state.task, attachments)
       await this.executeTurn(session, prompt.text, prompt.images)
     } catch (err) {
       // 走到这里只可能是准备阶段失败（取 Key / 建 Agent）
-      if (session.state.status === 'cancelled') return
+      if (session.state.status === 'cancelled') {
+        this.releaseExecution(session)
+        return
+      }
       session.state.status = 'failed'
       session.state.error = sanitizeError((err as Error)?.message ?? String(err))
       session.state.endedAt = Date.now()
+      finalizeRunningSteps(session.state.steps, session.state.endedAt)
       this.markFinished(session)
       session.agent = null
-      session.running = false
-      if (this.runningId === session.state.id) this.runningId = null
       this.audit('failed', { id: session.state.id, error: session.state.error })
+      this.releaseExecution(session)
       this.push(true)
       this.pushTasks()
       this.scheduleSave()
@@ -359,7 +593,7 @@ export class AgentService {
     }
   }
 
-  /** 跑一轮对话：首轮与继续追问共用（定时器、完成/失败收尾、running 释放） */
+  /** 跑一轮对话：首轮与继续追问共用（定时器、完成/失败收尾、槽位释放） */
   private async executeTurn(
     session: Session,
     text: string,
@@ -367,8 +601,7 @@ export class AgentService {
   ): Promise<void> {
     const agent = session.agent
     if (!agent) {
-      session.running = false
-      if (this.runningId === session.state.id) this.runningId = null
+      this.releaseExecution(session)
       return
     }
     session.state.status = 'running'
@@ -378,19 +611,20 @@ export class AgentService {
     this.push(true)
     this.clearTaskTimer(session)
     session.taskTimer = setTimeout(() => {
-      if (this.activeId !== session.state.id) this.activeId = session.state.id
-      this.cancel('timeout')
+      this.cancel(session.state.id, 'timeout')
     }, TASK_TIMEOUT_MS)
     try {
       await agent.prompt(text, images && images.length > 0 ? images : undefined)
       // 中止可能发生在 await 期间：状态被 cancel() 改成 cancelled 时不覆盖
       if ((session.state.status as AgentState['status']) === 'cancelled') return
       session.state.summary = this.translator.extractSummary(agent)
-      session.state.status = 'done'
+      session.state.status = session.state.mode === 'plan' ? 'planned' : 'done'
       session.state.endedAt = Date.now()
       this.markFinished(session)
-      this.audit('done', { id: session.state.id, steps: session.state.steps.length })
-      this.releaseExtraAgents()
+      this.audit(session.state.status === 'planned' ? 'planned' : 'done', {
+        id: session.state.id,
+        steps: session.state.steps.length
+      })
       this.push(true)
       this.pushTasks()
       this.scheduleSave()
@@ -399,6 +633,7 @@ export class AgentService {
       session.state.status = 'failed'
       session.state.error = sanitizeError((err as Error)?.message ?? String(err))
       session.state.endedAt = Date.now()
+      finalizeRunningSteps(session.state.steps, session.state.endedAt)
       this.markFinished(session)
       this.audit('failed', { id: session.state.id, error: session.state.error })
       this.push(true)
@@ -407,8 +642,8 @@ export class AgentService {
     } finally {
       this.clearTaskTimer(session)
       this.finishRound(session)
-      session.running = false
-      if (this.runningId === session.state.id) this.runningId = null
+      this.releaseExtraAgents()
+      this.releaseExecution(session)
     }
   }
 
@@ -443,7 +678,7 @@ export class AgentService {
     session.turnStartedAt = 0
   }
 
-  // ---------------- 确认 ----------------
+  // ---------------- 确认与提问 ----------------
 
   private askApproval(
     session: Session,
@@ -451,8 +686,10 @@ export class AgentService {
     desc: ApprovalDescription
   ): Promise<boolean> {
     // 一批里可能有多个待确认调用：排队逐个弹，避免后一个覆盖前一个的 pending
-    const task = session.approvalChain.then(() => this.waitForApproval(session, toolName, desc))
-    session.approvalChain = task.catch(() => false)
+    const task = session.interactionChain.then(() =>
+      this.waitForApproval(session, toolName, desc)
+    )
+    session.interactionChain = task.catch(() => false)
     return task
   }
 
@@ -462,6 +699,11 @@ export class AgentService {
     desc: ApprovalDescription
   ): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
+      // 排队等待确认期间任务已被取消：不再弹卡
+      if (session.state.status === 'cancelled') {
+        resolve(false)
+        return
+      }
       const id = randomUUID()
       const request: AgentApprovalRequest = {
         ...desc,
@@ -488,6 +730,7 @@ export class AgentService {
       session.state.approval = request
       session.state.status = 'waiting'
       this.touch(session)
+      this.notifyAttention(session, 'approval')
     })
   }
 
@@ -497,6 +740,62 @@ export class AgentService {
     clearTimeout(pending.timer)
     session.pending = null
     pending.resolve(allow)
+  }
+
+  /** ask_user：与确认卡共用 interactionChain，保证同一任务不会同时出现两张卡。 */
+  private askQuestion(
+    session: Session,
+    question: string,
+    options: string[]
+  ): Promise<string | null> {
+    const task = session.interactionChain.then(() =>
+      this.waitForAnswer(session, question, options)
+    )
+    session.interactionChain = task.catch(() => null)
+    return task
+  }
+
+  private waitForAnswer(
+    session: Session,
+    question: string,
+    options: string[]
+  ): Promise<string | null> {
+    return new Promise<string | null>((resolve) => {
+      // 排队等待回答期间任务已被取消：直接按未回答结束
+      if (session.state.status === 'cancelled') {
+        resolve(null)
+        return
+      }
+      const id = randomUUID()
+      session.pendingQuestion = { id, resolve }
+      session.state.question = {
+        id,
+        question,
+        options,
+        createdAt: Date.now()
+      }
+      session.state.status = 'waiting'
+      this.touch(session)
+      this.notifyAttention(session, 'question')
+    })
+  }
+
+  private resolveQuestion(session: Session, answer: string | null): void {
+    const pending = session.pendingQuestion
+    if (!pending) return
+    session.pendingQuestion = null
+    pending.resolve(answer)
+  }
+
+  /** 后台任务进入等待时提醒主进程（当前正在看的任务不打扰）。 */
+  private notifyAttention(session: Session, kind: 'approval' | 'question'): void {
+    if (this.panelActive && this.activeId === session.state.id) return
+    const event: AgentAttention = {
+      id: session.state.id,
+      task: session.state.task,
+      kind
+    }
+    for (const listener of this.attentionListeners) listener(event)
   }
 
   // ---------------- 生命周期杂项 ----------------
@@ -519,10 +818,13 @@ export class AgentService {
     this.scheduleSave()
   }
 
-  /** 释放超出上限的 Agent（只影响续聊，步骤/总结仍可回看） */
+  /** 释放超出上限的 Agent（只影响续聊；运行中/排队中/当前任务不释放） */
   private releaseExtraAgents(): void {
+    const pinned = new Set<string>(this.runningIds)
+    for (const item of this.queue) pinned.add(item.sessionId)
+    if (this.activeId) pinned.add(this.activeId)
     const alive = [...this.sessions.values()]
-      .filter((session) => session.agent !== null)
+      .filter((session) => session.agent !== null && !pinned.has(session.state.id))
       .sort((a, b) => b.updatedAt - a.updatedAt)
     for (const session of alive.slice(MAX_LIVE_AGENTS)) {
       session.agent = null
@@ -535,8 +837,6 @@ export class AgentService {
     this.loaded = true
     const persisted = loadSessions()
     for (const record of persisted.sessions) {
-      const interrupted =
-        record.status === 'running' || record.status === 'preparing' || record.status === 'waiting'
       this.sessions.set(record.id, restoreSession(record))
     }
     this.activeId =
@@ -559,6 +859,7 @@ export class AgentService {
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
             status: session.state.status,
+            mode: session.state.mode,
             steps: session.state.steps,
             todos: session.state.todos,
             usage: session.state.usage,
@@ -594,7 +895,10 @@ export class AgentService {
       resumable: session !== null && session.agent !== null,
       steps: state.steps.map((step) => ({ ...step })),
       todos: state.todos.map((item) => ({ ...item })),
-      approval: state.approval ? { ...state.approval } : undefined
+      approval: state.approval ? { ...state.approval } : undefined,
+      question: state.question
+        ? { ...state.question, options: [...state.question.options] }
+        : undefined
     }
     for (const listener of this.stateListeners) {
       try {

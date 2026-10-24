@@ -10,12 +10,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import {
-  createTools,
-  describeToolCall,
-  needsApproval,
-  runCommand
-} from './tools'
+import { createTools, describeToolCall, runCommand } from './tools'
 
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pet-agent-tools-')))
 fs.mkdirSync(path.join(root, 'src'))
@@ -47,21 +42,11 @@ async function run(toolName: string, params: unknown): Promise<string> {
 }
 
 async function main(): Promise<void> {
-  await check('工具清单齐全且审批分类正确', () => {
+  await check('工具清单齐全', () => {
     assert.deepEqual(
       tools.map((tool) => tool.name).sort(),
-      ['bash', 'cleanup_candidates', 'disk_usage', 'edit_file', 'list_files', 'read_file', 'search_text', 'todo', 'web_fetch', 'web_search', 'write_file'].sort()
+      ['ask_user', 'bash', 'cleanup_candidates', 'delete_path', 'disk_usage', 'edit_file', 'list_files', 'read_file', 'search_text', 'todo', 'web_fetch', 'web_search', 'write_file'].sort()
     )
-    assert.equal(needsApproval('read_file'), false)
-    assert.equal(needsApproval('search_text'), false)
-    assert.equal(needsApproval('web_search'), false)
-    assert.equal(needsApproval('web_fetch'), false)
-    assert.equal(needsApproval('todo'), false)
-    assert.equal(needsApproval('write_file'), true)
-    assert.equal(needsApproval('edit_file'), true)
-    assert.equal(needsApproval('bash'), true)
-    assert.equal(needsApproval('disk_usage'), false)
-    assert.equal(needsApproval('cleanup_candidates'), false)
   })
 
   await check('list_files 列目录并跳过隐藏目录', async () => {
@@ -211,6 +196,66 @@ async function main(): Promise<void> {
     assert.ok(fetch)
     await fetch.execute('test', { url: 'https://example.com' }, undefined, undefined)
     assert.deepEqual(calls[1], { path: '/internal/fetch', body: { url: 'https://example.com' } })
+  })
+
+  await check('ask_user：经注入回调返回选择 / 未回答', async () => {
+    const calls: Array<{ question: string; options: string[] }> = []
+    let answer: string | null = 'B'
+    const askTools = new Map(
+      createTools({
+        workspace: root,
+        onTodo: () => undefined,
+        askUser: async (question, options) => {
+          calls.push({ question, options })
+          return answer
+        }
+      }).map((tool) => [tool.name, tool])
+    )
+    const ask = askTools.get('ask_user')
+    assert.ok(ask)
+    const first = await ask.execute(
+      'test',
+      { question: '选哪个', options: ['A', 'B'] },
+      undefined,
+      undefined
+    )
+    assert.match(JSON.stringify(first.content), /用户的选择：B/)
+    assert.deepEqual(calls, [{ question: '选哪个', options: ['A', 'B'] }])
+
+    answer = null
+    const second = await ask.execute(
+      'test',
+      { question: '还选吗', options: ['A', 'B'] },
+      undefined,
+      undefined
+    )
+    assert.match(JSON.stringify(second.content), /没有回答/)
+  })
+
+  await check('delete_path：经注入 trash 移到回收站，拒绝工作区根', async () => {
+    const trashed: string[] = []
+    const delTools = new Map(
+      createTools({
+        workspace: root,
+        onTodo: () => undefined,
+        trashPath: async (abs) => {
+          trashed.push(abs)
+          fs.rmSync(abs, { recursive: true, force: true })
+        }
+      }).map((tool) => [tool.name, tool])
+    )
+    const del = delTools.get('delete_path')
+    assert.ok(del)
+    const target = path.join(root, 'notes.md')
+    const result = await del.execute('test', { path: 'notes.md' }, undefined, undefined)
+    assert.match(JSON.stringify(result.content), /已移到回收站/)
+    assert.deepEqual(trashed, [target])
+    assert.equal(fs.existsSync(target), false)
+
+    await assert.rejects(
+      async () => del.execute('test', { path: '.' }, undefined, undefined),
+      /工作区根目录|包含当前工作区/
+    )
   })
 
   await check('确认卡：递归扫描提示可能很慢', () => {

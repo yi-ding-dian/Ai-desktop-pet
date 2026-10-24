@@ -287,7 +287,7 @@ export const IPC_WORK = {
 export const IPC_AGENT = {
   /** 开始任务（invoke（AgentStartPayload）→ {ok, error?}；立即返回，执行在后台） */
   START: 'agent:start',
-  /** 中止当前任务（无 payload） */
+  /** 中止任务（id；缺省仍兼容旧渲染侧 = 当前任务） */
   CANCEL: 'agent:cancel',
   /** 继续追问（invoke（AgentFollowUpPayload）→ {ok, error?}；沿用同一个 Agent 与上下文） */
   FOLLOW_UP: 'agent:follow-up',
@@ -299,6 +299,14 @@ export const IPC_AGENT = {
   PICK_WORKSPACE: 'agent:pick-workspace',
   /** 回应确认卡（payload: AgentApprovePayload） */
   APPROVE: 'agent:approve',
+  /** 回答提问卡（payload: AgentQuestionAnswerPayload） */
+  ANSWER_QUESTION: 'agent:answer-question',
+  /** 切换执行模式（payload: AgentSetModePayload） */
+  SET_MODE: 'agent:set-mode',
+  /** 计划任务「按此执行」（payload: AgentExecutePlanPayload） */
+  EXECUTE_PLAN: 'agent:execute-plan',
+  /** 主 → 工作窗：通知点击后切到指定任务（payload: id） */
+  FOCUS_TASK: 'agent:focus-task',
   /** 主 → 工作窗：状态推送（payload: AgentState，节流 ~120ms） */
   STATE: 'agent:state',
   /** 拉取任务列表（invoke → AgentTaskSummary[]） */

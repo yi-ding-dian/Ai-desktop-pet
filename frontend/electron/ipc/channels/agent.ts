@@ -3,10 +3,17 @@ export type {
   AgentApprovalRequest,
   AgentApprovePayload,
   AgentAttachment,
+  AgentAttention,
+  AgentExecutePlanPayload,
   AgentFollowUpPayload,
+  AgentQuestionAnswerPayload,
+  AgentQuestionRequest,
+  AgentSetModePayload,
   AgentStartPayload,
   AgentState,
   AgentStep,
   AgentTaskSummary,
-  AgentTodoItem
+  AgentTodoItem,
+  AgentWaitingKind,
+  ExecutionMode
 } from '../../agent/types'

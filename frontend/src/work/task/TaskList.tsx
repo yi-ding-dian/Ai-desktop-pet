@@ -6,6 +6,7 @@ import {
   type ReactElement
 } from 'react'
 import type { AgentTaskSummary } from '../../../electron/ipc/channels'
+import { MODE_LABELS } from './TaskModeSelector'
 
 export interface TaskGroup {
   label: string
@@ -116,7 +117,7 @@ export default function TaskList({
                       className={`task-item${
                         !compose && activeId === item.id ? ' task-item-active' : ''
                       }${item.hasUpdate ? ' task-item-unread' : ''}`}
-                      title={`${item.task}\n${item.workspace}`}
+                      title={`${item.task}\n${MODE_LABELS[item.mode]} · ${item.workspace}`}
                       onClick={() => onSelect(item.id)}
                       onContextMenu={(event) => {
                         event.preventDefault()
@@ -126,6 +127,15 @@ export default function TaskList({
                     >
                       <span className={`task-item-dot task-item-dot-${item.status}`} />
                       <span className="task-item-text">{item.task}</span>
+                      {item.waitingFor ? (
+                        <span
+                          className={`task-item-badge task-item-badge-${item.waitingFor}`}
+                        >
+                          {item.waitingFor === 'question' ? '待回答' : '待确认'}
+                        </span>
+                      ) : item.queuePosition !== undefined ? (
+                        <span className="task-item-badge">排队 {item.queuePosition}</span>
+                      ) : null}
                       <span className="task-item-time">
                         {relativeTime(item.updatedAt || item.createdAt, now)}
                       </span>

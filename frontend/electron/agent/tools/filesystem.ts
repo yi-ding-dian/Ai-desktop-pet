@@ -5,10 +5,15 @@ import {
   readFileSync,
   statSync
 } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { join } from 'node:path'
 import { Type } from 'typebox'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { resolveInsideWorkspace } from '../workspace'
+import {
+  isInsideRoot,
+  resolveInsideWorkspace,
+  resolveMutationTarget,
+  resolveReadablePath
+} from '../workspace'
 import {
   READ_LIMIT_BYTES,
   SKIP_DIRS,
@@ -76,35 +81,23 @@ export function createListFiles(root: string): AgentTool {
   return listFiles
 }
 
-export function createReadFile(root: string, ctx: ToolContext): AgentTool {
-  /** 读路径：工作区内，或用户亲手附上的文件（只读）；其它一律拒绝 */
-  const resolveReadable = (rawPath: string): string => {
-    const trimmed = (rawPath ?? '').trim()
-    const extra = ctx.extraReadPaths ?? []
-    if (isAbsolute(trimmed)) {
-      const normalized = trimmed.replace(/\\/g, '/').toLowerCase()
-      if (extra.some((item) => item.replace(/\\/g, '/').toLowerCase() === normalized)) {
-        return trimmed
-      }
-    }
-    return resolveInsideWorkspace(root, trimmed)
-  }
-
+export function createReadFile(root: string, _ctx: ToolContext): AgentTool {
   const readFile: AgentTool = {
     name: 'read_file',
     label: '读取文件',
-    description: '读取工作区内的文本文件，返回带行号的内容。可用 offset/limit 按行区间读取。',
+    description:
+      '读取文本文件，返回带行号的内容。相对路径按工作区解析，也支持工作区外的绝对路径（只读）。可用 offset/limit 按行区间读取。',
     parameters: Type.Object({
-      path: Type.String({ description: '相对工作区的文件路径' }),
+      path: Type.String({ description: '相对工作区的路径，或任意绝对路径' }),
       offset: Type.Optional(Type.Number({ description: '起始行（1 起）' })),
       limit: Type.Optional(Type.Number({ description: '最多读取多少行，默认 400，上限 2000' }))
     }),
     execute: async (_id, params) => {
       const p = params as { path: string; offset?: number; limit?: number }
-      const abs = resolveReadable(p.path)
-      if (!existsSync(abs)) throw new Error('文件不存在：' + toRel(root, abs))
+      const abs = resolveReadablePath(root, p.path)
+      if (!existsSync(abs)) throw new Error('文件不存在：' + displayOf(root, abs))
       const stat = statSync(abs)
-      if (!stat.isFile()) throw new Error('不是文件：' + toRel(root, abs))
+      if (!stat.isFile()) throw new Error('不是文件：' + displayOf(root, abs))
       if (stat.size > READ_LIMIT_BYTES) {
         throw new Error(`文件过大（${formatBytes(stat.size)}），上限 ${formatBytes(READ_LIMIT_BYTES)}；请改用 search_text 定位`)
       }
@@ -183,21 +176,24 @@ export function createWriteFile(root: string): AgentTool {
   const writeFile: AgentTool = {
     name: 'write_file',
     label: '写入文件',
-    description: '在工作区内新建或整体覆盖一个文本文件。覆盖前会请用户确认。',
+    description:
+      '新建或整体覆盖一个文本文件。相对路径按工作区解析，也支持工作区外绝对路径；是否需要确认由当前执行模式决定。',
     parameters: Type.Object({
-      path: Type.String({ description: '相对工作区的文件路径' }),
+      path: Type.String({ description: '相对工作区的路径，或工作区外绝对路径' }),
       content: Type.String({ description: '完整文件内容' })
     }),
     execute: async (_id, params) => {
       const p = params as { path: string; content: string }
-      const abs = resolveInsideWorkspace(root, p.path)
+      const target = resolveMutationTarget(root, p.path)
       const size = Buffer.byteLength(p.content ?? '', 'utf8')
       if (size > WRITE_LIMIT_BYTES) {
         throw new Error(`内容过大（${formatBytes(size)}），上限 ${formatBytes(WRITE_LIMIT_BYTES)}`)
       }
-      const existed = existsSync(abs)
-      atomicWrite(abs, p.content ?? '')
-      return ok(`${existed ? '已覆盖' : '已创建'} ${toRel(root, abs)}（${formatBytes(size)}）`)
+      const existed = existsSync(target.abs)
+      atomicWrite(target.abs, p.content ?? '')
+      return ok(
+        `${existed ? '已覆盖' : '已创建'} ${displayOf(root, target.abs)}（${formatBytes(size)}）`
+      )
     }
   }
   return writeFile
@@ -208,9 +204,9 @@ export function createEditFile(root: string): AgentTool {
     name: 'edit_file',
     label: '修改文件',
     description:
-      '把文件中的 old_string 精确替换成 new_string。old_string 必须在文件中唯一命中（除非 replace_all=true）。',
+      '把文件中的 old_string 精确替换成 new_string。old_string 必须在文件中唯一命中（除非 replace_all=true）。相对路径按工作区解析，也支持工作区外绝对路径。',
     parameters: Type.Object({
-      path: Type.String({ description: '相对工作区的文件路径' }),
+      path: Type.String({ description: '相对工作区的路径，或工作区外绝对路径' }),
       old_string: Type.String({ description: '要替换的原文本（需唯一命中）' }),
       new_string: Type.String({ description: '替换后的文本' }),
       replace_all: Type.Optional(Type.Boolean({ description: '是否替换全部命中，默认 false' }))
@@ -222,8 +218,9 @@ export function createEditFile(root: string): AgentTool {
         new_string: string
         replace_all?: boolean
       }
-      const abs = resolveInsideWorkspace(root, p.path)
-      if (!existsSync(abs)) throw new Error('文件不存在：' + toRel(root, abs))
+      const target = resolveMutationTarget(root, p.path)
+      const abs = target.abs
+      if (!existsSync(abs)) throw new Error('文件不存在：' + displayOf(root, abs))
       if (!p.old_string) throw new Error('old_string 不能为空')
       const original = readFileSync(abs, 'utf8')
       const count = original.split(p.old_string).length - 1
@@ -239,8 +236,13 @@ export function createEditFile(root: string): AgentTool {
         throw new Error(`修改后文件过大（${formatBytes(size)}），上限 ${formatBytes(WRITE_LIMIT_BYTES)}`)
       }
       atomicWrite(abs, next)
-      return ok(`已修改 ${toRel(root, abs)}（替换 ${p.replace_all ? count : 1} 处）`)
+      return ok(`已修改 ${displayOf(root, abs)}（替换 ${p.replace_all ? count : 1} 处）`)
     }
   }
   return editFile
+}
+
+/** 展示路径：工作区内用相对路径，工作区外用绝对路径 */
+function displayOf(root: string, abs: string): string {
+  return isInsideRoot(root, abs) ? toRel(root, abs) : abs
 }

@@ -38,8 +38,6 @@ export const SKIP_DIRS = new Set([
   '.cache'
 ])
 
-const APPROVAL_TOOLS = new Set(['write_file', 'edit_file', 'bash'])
-
 /** 内部端点统一回执（联网搜索 / 抓取；蛇形结果由后端转成驼峰） */
 export interface InternalResult {
   ok: boolean
@@ -59,10 +57,10 @@ export interface ToolContext {
   onTodo: (items: Array<{ text: string; status: 'pending' | 'active' | 'done' }>) => void
   /** 调后端内部端点（主进程注入；离线自测不提供） */
   callInternal?: (path: string, body: Record<string, unknown>) => Promise<InternalResult>
-}
-
-export function needsApproval(toolName: string): boolean {
-  return APPROVAL_TOOLS.has(toolName)
+  /** 向用户提问（ask_user；主进程注入，返回 null 表示没答/被取消） */
+  askUser?: (question: string, options: string[]) => Promise<string | null>
+  /** 移入系统回收站（delete_path；主进程注入，离线测试用桩） */
+  trashPath?: (abs: string) => Promise<void>
 }
 
 export function formatBytes(bytes: number): string {

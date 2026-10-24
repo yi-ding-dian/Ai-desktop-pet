@@ -1,7 +1,8 @@
-/** 新任务页：任务输入、附件、工作区选择与开始按钮。 */
+/** 新任务页：任务输入、附件、工作区、执行模式与开始按钮。 */
 import type { DragEvent as ReactDragEvent, ReactElement } from 'react'
-import type { PickedFile } from '../../../electron/ipc/channels'
+import type { ExecutionMode, PickedFile } from '../../../electron/ipc/channels'
 import AttachmentStrip from '../message/AttachmentStrip'
+import TaskModeSelector, { MODE_HINTS } from './TaskModeSelector'
 
 function PaperclipIcon(): ReactElement {
   return (
@@ -14,6 +15,8 @@ function PaperclipIcon(): ReactElement {
 export interface TaskHeroProps {
   task: string
   workspace: string
+  mode: ExecutionMode
+  onModeChange: (mode: ExecutionMode) => void
   attachments: PickedFile[]
   previews: Record<string, string>
   error: string | null
@@ -30,6 +33,8 @@ export interface TaskHeroProps {
 export default function TaskHero({
   task,
   workspace,
+  mode,
+  onModeChange,
   attachments,
   previews,
   error,
@@ -85,6 +90,7 @@ export default function TaskHero({
                 {workspace || '未选择'}
               </span>
             </button>
+            <TaskModeSelector mode={mode} onChange={onModeChange} compact />
           </div>
           <button type="button" className="task-btn task-btn-primary" onClick={onStart}>
             开始
@@ -93,7 +99,7 @@ export default function TaskHero({
       </div>
       {error ? <div className="task-error">{error}</div> : null}
       <div className="task-hero-hint">
-        写文件、执行命令前会先问你 · 只读操作直接放行 · Enter 开始，Shift+Enter 换行
+        {MODE_HINTS[mode]} · Enter 开始，Shift+Enter 换行
       </div>
     </div>
   )

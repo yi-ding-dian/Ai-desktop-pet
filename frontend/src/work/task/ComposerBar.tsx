@@ -33,6 +33,7 @@ export interface ComposerBarProps {
   value: string
   busy: boolean
   resumable?: boolean
+  status?: string
   attachments: PickedFile[]
   previews: Record<string, string>
   notice: string | null
@@ -51,6 +52,7 @@ export default function ComposerBar({
   value,
   busy,
   resumable,
+  status,
   attachments,
   previews,
   notice,
@@ -74,13 +76,19 @@ export default function ComposerBar({
           autoGrow
           maxRows={8}
           rows={1}
-          disabled={!resumable}
+          disabled={!resumable || status === 'waiting' || status === 'queued'}
           placeholder={
-            !resumable
-              ? '这个任务的上下文已释放，点「新任务」重新开始'
-              : busy
-                ? '任务进行中，可以插话…（Enter 发送）'
-                : '接着说点什么…（Enter 发送，Shift+Enter 换行）'
+            status === 'queued'
+              ? '任务在排队，开始后可以继续插话'
+              : !resumable
+                ? '这个任务的上下文已释放，点「新任务」重新开始'
+                : status === 'planned'
+                  ? '计划已生成：可继续讨论，或点「按此执行」'
+                  : status === 'waiting'
+                    ? '请先处理上方的确认/提问'
+                    : busy
+                      ? '任务进行中，可以插话…（Enter 发送）'
+                      : '接着说点什么…（Enter 发送，Shift+Enter 换行）'
           }
           aria-label="任务输入"
           onValueChange={onValueChange}

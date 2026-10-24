@@ -7,7 +7,14 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
-import type { AgentSourceItem, AgentStatus, AgentStep, AgentTodoItem, AgentUsage } from './types'
+import type {
+  AgentSourceItem,
+  AgentStatus,
+  AgentStep,
+  AgentTodoItem,
+  AgentUsage,
+  ExecutionMode
+} from './types'
 
 /** 单文件保留的任务条数上限（超出的按 updatedAt 丢弃最旧） */
 const MAX_SESSIONS = 30
@@ -24,6 +31,8 @@ export interface PersistedSession {
   createdAt: number
   updatedAt: number
   status: AgentStatus
+  /** 执行模式（旧记录没有 → 读取时回退 standard） */
+  mode?: ExecutionMode
   steps: AgentStep[]
   todos: AgentTodoItem[]
   /** 任务累计用量（旧记录可能没有） */

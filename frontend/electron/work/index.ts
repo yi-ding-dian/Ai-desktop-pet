@@ -14,6 +14,7 @@
 import { app, BrowserWindow, ipcMain, screen, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
 import {
+  IPC_AGENT,
   IPC_WORK,
   type WorkHistoryPayload,
   type WorkHistoryRequestPayload,
@@ -130,6 +131,17 @@ function sendToWork(channel: string, payload?: unknown): void {
  */
 export function pushToWorkWindow(channel: string, payload?: unknown): void {
   sendToWork(channel, payload)
+}
+
+/** 通知点击后切到指定任务；工作窗未就绪时先缓存，ready 后补发。 */
+let pendingFocusTaskId: string | null = null
+export function focusTaskInWorkWindow(id: string): void {
+  pendingFocusTaskId = id
+  openWork()
+  if (workReady) {
+    sendToWork(IPC_AGENT.FOCUS_TASK, id)
+    pendingFocusTaskId = null
+  }
 }
 
 /** 工作窗是否正在使用（可见、未最小化、未折叠）——宠物依附/自主行为抑制的依据；边缘动作也据此禁用 */
@@ -566,6 +578,10 @@ export function initWork(pet: BrowserWindow): void {
     workBrowser?.sendState()
     // 折叠态也要补发：页面重载时角标 UI 才不会丢
     sendToWork(IPC_WORK.FOLDED, folded)
+    if (pendingFocusTaskId !== null) {
+      sendToWork(IPC_AGENT.FOCUS_TASK, pendingFocusTaskId)
+      pendingFocusTaskId = null
+    }
     console.log(`[work] 工作窗就绪，回放缓冲事件 ${buffered.length} 条`)
   })
 

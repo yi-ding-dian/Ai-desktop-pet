@@ -24,6 +24,7 @@ import type {
   AgentState,
   AgentStep,
   AgentTaskSummary,
+  ExecutionMode,
   PickedFile
 } from '../../../electron/ipc/channels'
 import { getPetBridge } from '../../shared/pet-bridge'
@@ -42,6 +43,7 @@ import ComposerBar from './ComposerBar'
 import HoverCard, { type HoverCardState } from './HoverCard'
 import TaskHero from './TaskHero'
 import TaskList, { groupTasks } from './TaskList'
+import TaskModeSelector from './TaskModeSelector'
 
 /** 上次使用的工作区（仅本机偏好，不参与安全校验——主进程会重新 resolve） */
 const WORKSPACE_KEY = 'pet.task.workspace'
@@ -61,16 +63,38 @@ function agentBridge(): ReturnType<typeof getPetBridge>['agent'] | undefined {
 
 const STATUS_TEXT: Record<AgentState['status'], string> = {
   idle: '待命',
+  queued: '排队中',
   preparing: '准备中',
   running: '执行中',
   waiting: '等你确认',
+  planned: '待执行',
   done: '已完成',
   failed: '出错了',
   cancelled: '已中止'
 }
 
-export default function TaskPanel(): ReactElement {
+const MODE_KEY = 'pet.task.mode'
+
+export interface TaskPanelProps {
+  /** 通知点击后要切到的任务 id */
+  focusTaskId?: string | null
+  onFocusHandled?: () => void
+}
+
+export default function TaskPanel({
+  focusTaskId = null,
+  onFocusHandled
+}: TaskPanelProps = {}): ReactElement {
   const [state, setState] = useState<AgentState | null>(null)
+  /** 新任务页选中的执行模式（记住上次选择） */
+  const [composeMode, setComposeMode] = useState<ExecutionMode>(() => {
+    try {
+      const saved = localStorage.getItem(MODE_KEY)
+      return saved === 'auto' || saved === 'plan' || saved === 'standard' ? saved : 'standard'
+    } catch {
+      return 'standard'
+    }
+  })
   const [tasks, setTasks] = useState<AgentTaskSummary[]>([])
   const [workspace, setWorkspace] = useState<string>(() => {
     try {
@@ -156,7 +180,10 @@ export default function TaskPanel(): ReactElement {
 
   const ticking = Boolean(
     state &&
-      (state.status === 'running' || state.status === 'waiting' || state.status === 'preparing')
+      (state.status === 'running' ||
+        state.status === 'waiting' ||
+        state.status === 'preparing' ||
+        state.status === 'queued')
   )
   useEffect(() => {
     if (!ticking) return
@@ -444,7 +471,12 @@ export default function TaskPanel(): ReactElement {
       return
     }
     setError(null)
-    const result = await api.start({ task: trimmed, workspace, attachments: toAgentAttachments() })
+    const result = await api.start({
+      task: trimmed,
+      workspace,
+      attachments: toAgentAttachments(),
+      mode: composeMode
+    })
     if (!result.ok) {
       setError(result.error ?? '启动失败')
       return
@@ -452,7 +484,16 @@ export default function TaskPanel(): ReactElement {
     setTask('')
     clearAttachments()
     setCompose(false)
-  }, [task, workspace, toAgentAttachments, clearAttachments])
+  }, [task, workspace, composeMode, toAgentAttachments, clearAttachments])
+
+  const chooseComposeMode = useCallback((mode: ExecutionMode): void => {
+    setComposeMode(mode)
+    try {
+      localStorage.setItem(MODE_KEY, mode)
+    } catch {
+      /* 隐私模式下写不进去，不影响本次使用 */
+    }
+  }, [])
 
   const send = useCallback(async (): Promise<void> => {
     const api = agentBridge()
@@ -503,11 +544,50 @@ export default function TaskPanel(): ReactElement {
     [state?.approval]
   )
 
+  const changeMode = useCallback(
+    async (mode: ExecutionMode): Promise<void> => {
+      const api = agentBridge()
+      const id = state?.id
+      if (!api || !id) return
+      const result = await api.setMode({ id, mode })
+      if (!result.ok) setError(result.error ?? '切换模式失败')
+    },
+    [state?.id]
+  )
+
+  const answerQuestion = useCallback(async (id: string, answer: string): Promise<void> => {
+    const api = agentBridge()
+    if (!api) return
+    const result = await api.answerQuestion({ id, answer })
+    if (!result.ok) setError(result.error ?? '提交失败')
+  }, [])
+
+  const executePlan = useCallback(
+    async (mode: 'standard' | 'auto'): Promise<void> => {
+      const api = agentBridge()
+      const id = state?.id
+      if (!api || !id) return
+      setError(null)
+      const result = await api.executePlan({ id, mode })
+      if (!result.ok) setError(result.error ?? '执行失败')
+    },
+    [state?.id]
+  )
+
+  // 通知点击：切到指定任务
+  useEffect(() => {
+    if (!focusTaskId) return
+    void selectTask(focusTaskId).then(() => onFocusHandled?.())
+  }, [focusTaskId, onFocusHandled, selectTask])
+
   const groups = useMemo(() => groupTasks(tasks), [tasks])
   const approval = state?.approval
   const remaining = approval ? Math.max(0, Math.ceil((approval.expiresAt - now) / 1000)) : 0
   const busy =
-    state?.status === 'preparing' || state?.status === 'running' || state?.status === 'waiting'
+    state?.status === 'queued' ||
+    state?.status === 'preparing' ||
+    state?.status === 'running' ||
+    state?.status === 'waiting'
   const showHero = compose || !state || state.status === 'idle'
   const flow = (state?.steps ?? []).filter((step) => step.kind !== 'todo').slice(-200)
 
@@ -540,6 +620,8 @@ export default function TaskPanel(): ReactElement {
           <TaskHero
             task={task}
             workspace={workspace}
+            mode={composeMode}
+            onModeChange={chooseComposeMode}
             attachments={attachments}
             previews={previews}
             error={error}
@@ -557,15 +639,20 @@ export default function TaskPanel(): ReactElement {
               <div className="task-head-main">
                 <span className={`task-status task-status-${state?.status ?? 'idle'}`}>
                   <i className="task-dot" aria-hidden="true" />
-                  <span>{STATUS_TEXT[state?.status ?? 'idle']}</span>
+                  <span>
+                    {state?.status === 'waiting' && state.question
+                      ? '等你回答'
+                      : STATUS_TEXT[state?.status ?? 'idle']}
+                  </span>
                 </span>
+                {state && state.id && state.status !== 'idle' ? (
+                  <TaskModeSelector mode={state.mode} onChange={(mode) => void changeMode(mode)} compact />
+                ) : null}
               </div>
               <div className="task-head-actions">
-                {!busy ? (
-                  <button type="button" className="task-btn" onClick={() => setCompose(true)}>
-                    新任务
-                  </button>
-                ) : null}
+                <button type="button" className="task-btn" onClick={() => setCompose(true)}>
+                  新任务
+                </button>
               </div>
             </header>
 
@@ -592,6 +679,12 @@ export default function TaskPanel(): ReactElement {
                 error={state?.error}
                 approval={approval}
                 remaining={remaining}
+                question={state?.question}
+                status={state?.status}
+                mode={state?.mode}
+                canExecutePlan={Boolean(state?.resumable)}
+                onAnswer={(id, answer) => void answerQuestion(id, answer)}
+                onExecutePlan={(mode) => void executePlan(mode)}
                 onToggle={toggleExpanded}
                 onCopy={handleCopyStep}
                 onCommandMenu={(command, x, y) =>
@@ -611,6 +704,7 @@ export default function TaskPanel(): ReactElement {
               value={reply}
               busy={busy}
               resumable={state?.resumable}
+              status={state?.status}
               attachments={attachments}
               previews={previews}
               notice={fileNotice}
@@ -621,7 +715,10 @@ export default function TaskPanel(): ReactElement {
               onPaste={handlePasteFiles}
               onPickFiles={() => void pickFiles()}
               onSend={() => void send()}
-              onStop={() => agentBridge()?.cancel()}
+              onStop={() => {
+                const id = state?.id
+                if (id) void agentBridge()?.cancel(id)
+              }}
             />
           </>
         )}

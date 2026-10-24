@@ -2,7 +2,10 @@
 import type { MoveResult, Point, Rect, WindowGeometry } from '../../window'
 import type {
   AgentApprovePayload,
+  AgentExecutePlanPayload,
   AgentFollowUpPayload,
+  AgentQuestionAnswerPayload,
+  AgentSetModePayload,
   AgentStartPayload,
   AgentState,
   AgentTaskSummary
@@ -325,8 +328,8 @@ export interface PetBridgeApi {
   agent: {
     /** 开始任务（校验失败时 ok=false 并给出原因） */
     start(payload: AgentStartPayload): Promise<{ ok: boolean; error?: string }>
-    /** 中止当前任务 */
-    cancel(): void
+    /** 中止指定任务（id 必填；后台任务也能停） */
+    cancel(id: string): Promise<{ ok: boolean; error?: string }>
     /** 继续追问（同一任务上下文；运行中作为插话） */
     followUp(payload: AgentFollowUpPayload): Promise<{ ok: boolean; error?: string }>
     /** 图片附件缩略图（data URL；非图片/过大返回 null） */
@@ -337,6 +340,14 @@ export interface PetBridgeApi {
     pickWorkspace(): Promise<string | null>
     /** 回应确认卡（用户点允许/拒绝） */
     approve(payload: AgentApprovePayload): void
+    /** 回答提问卡 */
+    answerQuestion(payload: AgentQuestionAnswerPayload): Promise<{ ok: boolean; error?: string }>
+    /** 切换执行模式 */
+    setMode(payload: AgentSetModePayload): Promise<{ ok: boolean; error?: string }>
+    /** 计划任务「按此执行」 */
+    executePlan(payload: AgentExecutePlanPayload): Promise<{ ok: boolean; error?: string }>
+    /** 订阅「切到某个任务」（通知点击）；返回取消订阅函数 */
+    onFocusTask(cb: (id: string) => void): () => void
     /** 订阅任务状态；返回取消订阅函数 */
     onState(cb: (state: AgentState) => void): () => void
     /** 任务列表（左侧栏） */

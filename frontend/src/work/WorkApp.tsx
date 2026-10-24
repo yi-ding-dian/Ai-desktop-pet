@@ -95,10 +95,26 @@ export default function WorkApp(): ReactElement {
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false)
   /** 任务标签是否在前（2026-10-23）：与对话/网页标签互斥，对话模式行为完全不变 */
   const [taskOpen, setTaskOpen] = useState(false)
+  /** 通知点击要聚焦的任务（传给 TaskPanel 选中后清空） */
+  const [focusTaskId, setFocusTaskId] = useState<string | null>(null)
   /** 窗口最大化状态（2026-10-23：标题栏最大化/复原按钮） */
   const [maximized, setMaximized] = useState(false)
   /** 折叠态（最小化 = 屏幕右缘中间的小角标，2026-10-20）：由主进程通知，点角标展开 */
   const [folded, setFolded] = useState(false)
+
+  // 通知点击：切到任务标签并聚焦指定任务
+  useEffect(() => {
+    let off: (() => void) | undefined
+    try {
+      off = getPetBridge().agent.onFocusTask((id) => {
+        setTaskOpen(true)
+        setFocusTaskId(id)
+      })
+    } catch {
+      /* 旧 preload：没有该通道，静默降级 */
+    }
+    return () => off?.()
+  }, [])
 
   // 最大化状态：挂载时校准 + 订阅主进程变化
   useEffect(() => {
@@ -563,7 +579,10 @@ export default function WorkApp(): ReactElement {
 
       {taskOpen ? (
         <div className="work-task-layer">
-          <TaskPanel />
+          <TaskPanel
+            focusTaskId={focusTaskId}
+            onFocusHandled={() => setFocusTaskId(null)}
+          />
         </div>
       ) : null}
 
