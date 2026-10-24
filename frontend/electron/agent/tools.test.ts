@@ -57,6 +57,27 @@ async function main(): Promise<void> {
     assert.doesNotMatch(text, /node_modules/)
   })
 
+  await check('list_files 支持 pattern 过滤（** / 文件名）', async () => {
+    const ts = await run('list_files', { path: '.', depth: 3, pattern: '**/*.ts' })
+    assert.match(ts, /src\/a\.ts/)
+    assert.doesNotMatch(ts, /notes\.md/)
+    const md = await run('list_files', { path: '.', depth: 3, pattern: '*.md' })
+    assert.match(md, /notes\.md/)
+    assert.doesNotMatch(md, /src\/a\.ts/)
+  })
+
+  await check('search_text 支持 include 与区分大小写', async () => {
+    const scoped = await run('search_text', { query: 'LINE', include: '*.ts' })
+    assert.match(scoped, /src[\\/]a\.ts:1/)
+    assert.doesNotMatch(scoped, /notes\.md/)
+    const caseSensitive = await run('search_text', {
+      query: 'LINE',
+      include: '*.ts',
+      case_sensitive: true
+    })
+    assert.match(caseSensitive, /没有找到/)
+  })
+
   await check('read_file 返回带行号内容，支持 offset/limit', async () => {
     const text = await run('read_file', { path: 'src/a.ts', offset: 2, limit: 1 })
     assert.match(text, /2\| line2/)

@@ -14,6 +14,7 @@ import {
   resolveMutationTarget,
   resolveReadablePath
 } from '../workspace'
+import { matchGlob } from './glob'
 import {
   READ_LIMIT_BYTES,
   SKIP_DIRS,
@@ -32,16 +33,20 @@ export function createListFiles(root: string): AgentTool {
     name: 'list_files',
     label: '列出目录',
     description:
-      '列出工作区内的目录结构（默认跳过 .git/node_modules/dist 等）。path 相对工作区，depth 1–3。',
+      '列出工作区内的目录结构（默认跳过 .git/node_modules/dist 等）。path 相对工作区，depth 1–3。传 pattern 时按文件名/相对路径过滤（支持 **、*、?，如 **/*.ts、*.md），返回扁平匹配列表。',
     parameters: Type.Object({
       path: Type.Optional(Type.String({ description: '相对工作区的目录，默认工作区根' })),
-      depth: Type.Optional(Type.Number({ description: '递归层数 1–3，默认 2' }))
+      depth: Type.Optional(Type.Number({ description: '递归层数 1–3，默认 2' })),
+      pattern: Type.Optional(
+        Type.String({ description: '文件名/相对路径过滤，如 **/*.ts、*.md（可选）' })
+      )
     }),
     execute: async (_id, params) => {
-      const p = params as { path?: string; depth?: number }
+      const p = params as { path?: string; depth?: number; pattern?: string }
       const abs = resolveInsideWorkspace(root, p.path && p.path.trim() ? p.path : '.')
       if (!existsSync(abs) || !statSync(abs).isDirectory()) throw new Error('不是目录：' + toRel(root, abs))
       const depth = Math.min(Math.max(Math.trunc(p.depth ?? 2), 1), 3)
+      const pattern = (p.pattern ?? '').trim()
       const lines: string[] = []
       const walk = (dir: string, level: number): void => {
         if (lines.length >= 300) return
@@ -59,9 +64,11 @@ export function createListFiles(root: string): AgentTool {
           const indent = '  '.repeat(level)
           if (entry.isDirectory()) {
             if (SKIP_DIRS.has(entry.name)) continue
-            lines.push(`${indent}${entry.name}/`)
+            if (!pattern) lines.push(`${indent}${entry.name}/`)
             if (level + 1 < depth) walk(itemAbs, level + 1)
           } else if (entry.isFile()) {
+            const rel = toRel(root, itemAbs)
+            if (pattern && !matchGlob(pattern, rel)) continue
             const size = (() => {
               try {
                 return statSync(itemAbs).size
@@ -69,11 +76,15 @@ export function createListFiles(root: string): AgentTool {
                 return 0
               }
             })()
-            lines.push(`${indent}${entry.name}  (${formatBytes(size)})`)
+            lines.push(pattern ? `${rel.replace(/\\/g, '/')}  (${formatBytes(size)})` : `${indent}${entry.name}  (${formatBytes(size)})`)
           }
         }
       }
       walk(abs, 0)
+      if (pattern) {
+        const body = lines.length ? lines.join('\n') : `没有匹配「${pattern}」的文件`
+        return ok(`匹配「${pattern}」的文件（${lines.length}）\n${body}`)
+      }
       const body = lines.length ? lines.join('\n') : '（空目录）'
       return ok(`${toRel(root, abs)}/\n${body}`)
     }
@@ -124,23 +135,37 @@ export function createSearchText(root: string): AgentTool {
   const searchText: AgentTool = {
     name: 'search_text',
     label: '搜索文本',
-    description: '在工作区内按内容搜索（不区分大小写），返回 文件:行号:内容。适合定位函数、报错、文档段落。',
+    description:
+      '在工作区内按内容搜索（默认不区分大小写），返回 文件:行号:内容。适合定位函数、报错、文档段落。可用 include 只搜某类文件（如 *.ts、src/**/*.md）；不支持正则。',
     parameters: Type.Object({
       query: Type.String({ description: '要搜索的文本（不支持正则）' }),
       path: Type.Optional(Type.String({ description: '限定目录，默认工作区根' })),
+      include: Type.Optional(Type.String({ description: '只搜匹配的文件，如 *.ts（可选）' })),
+      case_sensitive: Type.Optional(
+        Type.Boolean({ description: '是否区分大小写，默认 false' })
+      ),
       max_results: Type.Optional(Type.Number({ description: '最多返回条数，默认 50，上限 100' }))
     }),
     execute: async (_id, params) => {
-      const p = params as { query: string; path?: string; max_results?: number }
+      const p = params as {
+        query: string
+        path?: string
+        include?: string
+        case_sensitive?: boolean
+        max_results?: number
+      }
       const needle = (p.query ?? '').trim()
       if (!needle) throw new Error('搜索内容不能为空')
       const abs = resolveInsideWorkspace(root, p.path && p.path.trim() ? p.path : '.')
       const limit = Math.min(Math.max(Math.trunc(p.max_results ?? 50), 1), 100)
+      const include = (p.include ?? '').trim()
+      const caseSensitive = p.case_sensitive === true
       const lower = needle.toLowerCase()
       const hits: string[] = []
       let scanned = 0
       for (const file of walkFiles(root, abs, 8)) {
         if (hits.length >= limit) break
+        if (include && !matchGlob(include, toRel(root, file))) continue
         scanned += 1
         if (scanned > 5000) break
         let stat
@@ -159,7 +184,10 @@ export function createSearchText(root: string): AgentTool {
         if (isProbablyBinary(buf)) continue
         const lines = buf.toString('utf8').split(/\r?\n/)
         for (let i = 0; i < lines.length; i += 1) {
-          if (!lines[i].toLowerCase().includes(lower)) continue
+          const hit = caseSensitive
+            ? lines[i].includes(needle)
+            : lines[i].toLowerCase().includes(lower)
+          if (!hit) continue
           hits.push(`${toRel(root, file)}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
           if (hits.length >= limit) break
         }
