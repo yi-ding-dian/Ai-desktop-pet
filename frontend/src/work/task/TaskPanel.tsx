@@ -79,11 +79,14 @@ export interface TaskPanelProps {
   /** 通知点击后要切到的任务 id */
   focusTaskId?: string | null
   onFocusHandled?: () => void
+  /** 正文链接点击（与对话模式一致：内嵌浏览器打开） */
+  onLinkClick?: (event: ReactMouseEvent<HTMLDivElement>) => void
 }
 
 export default function TaskPanel({
   focusTaskId = null,
-  onFocusHandled
+  onFocusHandled,
+  onLinkClick
 }: TaskPanelProps = {}): ReactElement {
   const [state, setState] = useState<AgentState | null>(null)
   /** 新任务页选中的执行模式（记住上次选择） */
@@ -685,6 +688,7 @@ export default function TaskPanel({
                 canExecutePlan={Boolean(state?.resumable)}
                 onAnswer={(id, answer) => void answerQuestion(id, answer)}
                 onExecutePlan={(mode) => void executePlan(mode)}
+                onLinkClick={onLinkClick}
                 onToggle={toggleExpanded}
                 onCopy={handleCopyStep}
                 onCommandMenu={(command, x, y) =>

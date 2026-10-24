@@ -97,10 +97,61 @@ export default function WorkApp(): ReactElement {
   const [taskOpen, setTaskOpen] = useState(false)
   /** 通知点击要聚焦的任务（传给 TaskPanel 选中后清空） */
   const [focusTaskId, setFocusTaskId] = useState<string | null>(null)
+  /** 正文缩放（Ctrl+滚轮；只看内容层，标题栏/标签栏不缩放） */
+  const [zoom, setZoom] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('pet.work.zoom'))
+      return Number.isFinite(saved) && saved >= 0.7 && saved <= 1.6 ? saved : 1
+    } catch {
+      return 1
+    }
+  })
   /** 窗口最大化状态（2026-10-23：标题栏最大化/复原按钮） */
   const [maximized, setMaximized] = useState(false)
   /** 折叠态（最小化 = 屏幕右缘中间的小角标，2026-10-20）：由主进程通知，点角标展开 */
   const [folded, setFolded] = useState(false)
+
+  // 正文缩放：Ctrl+滚轮（0.7–1.6，步进 0.1），Ctrl+0 复位；持久化到本机
+  useEffect(() => {
+    const apply = (next: number): void => {
+      const clamped = Math.min(1.6, Math.max(0.7, Math.round(next * 10) / 10))
+      setZoom(clamped)
+      try {
+        localStorage.setItem('pet.work.zoom', String(clamped))
+      } catch {
+        /* 隐私模式：仅本次生效 */
+      }
+    }
+    const onWheel = (event: WheelEvent): void => {
+      if (!event.ctrlKey) return
+      event.preventDefault()
+      setZoom((prev) => {
+        const next = Math.min(
+          1.6,
+          Math.max(0.7, Math.round((prev + (event.deltaY < 0 ? 0.1 : -0.1)) * 10) / 10)
+        )
+        try {
+          localStorage.setItem('pet.work.zoom', String(next))
+        } catch {
+          /* 同上 */
+        }
+        return next
+      })
+    }
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.ctrlKey && event.key === '0') {
+        event.preventDefault()
+        apply(1)
+      }
+    }
+    // passive:false：必须能 preventDefault，避免 Chromium 自己缩放整页
+    window.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('wheel', onWheel)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [])
 
   // 通知点击：切到任务标签并聚焦指定任务
   useEffect(() => {
@@ -578,15 +629,22 @@ export default function WorkApp(): ReactElement {
       ) : null}
 
       {taskOpen ? (
-        <div className="work-task-layer">
+        <div
+          className={`work-task-layer${browsing ? ' work-chat-hidden' : ''}`}
+          style={{ zoom }}
+        >
           <TaskPanel
             focusTaskId={focusTaskId}
             onFocusHandled={() => setFocusTaskId(null)}
+            onLinkClick={handleMarkdownClick}
           />
         </div>
       ) : null}
 
-      <div className={`work-chat-layer${browsing || taskOpen ? ' work-chat-hidden' : ''}`}>
+      <div
+        className={`work-chat-layer${browsing || taskOpen ? ' work-chat-hidden' : ''}`}
+        style={{ zoom }}
+      >
         <div className="work-body">
           <div className="work-scroll pui-scroll" ref={scrollRef} onScroll={handleScroll}>
             <MessageList

@@ -1,5 +1,11 @@
 /** 任务消息流：用户回合 / 思考 / 工具调用 / 回合统计 / 回答 / 待办 / 审批。 */
-import { useLayoutEffect, useRef, useState, type ReactElement } from 'react'
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactElement
+} from 'react'
 import { renderMarkdownWithCitations } from '../../board/markdown'
 import type { AgentState, AgentStep, AgentTodoItem } from '../../../electron/ipc/channels'
 import { formatTime, formatTokens, handleMarkdownClick } from '../format'
@@ -322,6 +328,8 @@ export interface AgentFlowProps {
   canExecutePlan?: boolean
   onAnswer?: (id: string, answer: string) => void
   onExecutePlan?: (mode: 'standard' | 'auto') => void
+  /** 链接点击：与对话模式一致，交由工作窗内嵌浏览器打开 */
+  onLinkClick?: (event: ReactMouseEvent<HTMLDivElement>) => void
   onToggle: (step: AgentStep) => void
   onCopy: (id: string, text: string) => void
   onCommandMenu: (command: string, x: number, y: number) => void
@@ -348,11 +356,14 @@ export default function AgentFlow({
   canExecutePlan = false,
   onAnswer,
   onExecutePlan,
+  onLinkClick,
   onToggle,
   onCopy,
   onCommandMenu,
   onApprove
 }: AgentFlowProps): ReactElement {
+  // 链接优先交给工作窗内嵌浏览器（与对话模式一致）；bridge 不可用时退回系统浏览器
+  const handleLinkClick = onLinkClick ?? handleMarkdownClick
   // summary 与已有 text 步骤重复时不再二次渲染；统计仍跟在每轮回答之后
   const summaryText = (summary ?? '').trim()
   const summaryDuplicated =
@@ -420,7 +431,7 @@ export default function AgentFlow({
               {step.detail ? (
                 <div
                   className="md-body work-markdown task-md"
-                  onClick={handleMarkdownClick}
+                  onClick={handleLinkClick}
                   dangerouslySetInnerHTML={{
                     __html: renderMarkdownWithCitations(step.detail)
                   }}
@@ -490,7 +501,7 @@ export default function AgentFlow({
         <div className="task-msg task-msg-assistant">
           <div
             className="md-body work-markdown task-md"
-            onClick={handleMarkdownClick}
+            onClick={handleLinkClick}
             dangerouslySetInnerHTML={{
               __html: renderMarkdownWithCitations(summary)
             }}
