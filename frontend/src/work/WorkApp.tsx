@@ -37,7 +37,7 @@ import {
 import { renderMarkdownWithCitations } from '../board/markdown'
 import Composer from './Composer'
 import MessageNavigator from './MessageNavigator'
-import TaskPanel from './TaskPanel'
+import TaskPanel from './task/TaskPanel'
 import ThinkingBlock from './ThinkingBlock'
 import type { NavigatorAnchor } from './navigator'
 import {

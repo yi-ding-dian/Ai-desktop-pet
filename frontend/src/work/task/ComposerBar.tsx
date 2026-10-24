@@ -1,0 +1,126 @@
+/** 任务进行中的输入条：附件、追问、发送/中止。 */
+import type { DragEvent as ReactDragEvent, ReactElement } from 'react'
+import type { PickedFile } from '../../../electron/ipc/channels'
+import { Textarea } from '../../shared/ui/components/Textarea'
+import AttachmentStrip from '../message/AttachmentStrip'
+
+function SendIcon(): ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4 20-7Z" />
+    </svg>
+  )
+}
+
+function StopIcon(): ReactElement {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="2.5" />
+    </svg>
+  )
+}
+
+export interface ComposerBarProps {
+  value: string
+  busy: boolean
+  resumable?: boolean
+  attachments: PickedFile[]
+  previews: Record<string, string>
+  notice: string | null
+  error: string | null
+  onValueChange: (value: string) => void
+  onDrop: (event: ReactDragEvent<HTMLDivElement>) => void
+  onRemoveAttachment: (path: string) => void
+  /** 粘贴的是本机绝对路径时返回 true（并异步读取文件） */
+  onPaste: (text: string) => boolean
+  onPickFiles: () => void
+  onSend: () => void
+  onStop: () => void
+}
+
+export default function ComposerBar({
+  value,
+  busy,
+  resumable,
+  attachments,
+  previews,
+  notice,
+  error,
+  onValueChange,
+  onDrop,
+  onRemoveAttachment,
+  onPaste,
+  onPickFiles,
+  onSend,
+  onStop
+}: ComposerBarProps): ReactElement {
+  return (
+    <div className="task-composer" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
+      <AttachmentStrip files={attachments} previews={previews} onRemove={onRemoveAttachment} />
+      {error || notice ? <div className="task-notice">{error ?? notice}</div> : null}
+      <div className="work-input-shell">
+        <Textarea
+          className="work-input"
+          value={value}
+          autoGrow
+          maxRows={8}
+          rows={1}
+          disabled={!resumable}
+          placeholder={
+            !resumable
+              ? '这个任务的上下文已释放，点「新任务」重新开始'
+              : busy
+                ? '任务进行中，可以插话…（Enter 发送）'
+                : '接着说点什么…（Enter 发送，Shift+Enter 换行）'
+          }
+          aria-label="任务输入"
+          onValueChange={onValueChange}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault()
+              if (resumable && value.trim()) onSend()
+            }
+          }}
+          onPaste={(event) => {
+            const text = event.clipboardData.getData('text')
+            if (onPaste(text)) event.preventDefault()
+          }}
+        />
+        <div className="work-input-actions">
+          <button
+            type="button"
+            className="task-attach-btn"
+            title="添加文件 / 图片"
+            aria-label="添加文件"
+            onClick={onPickFiles}
+          >
+            +
+          </button>
+          {busy ? (
+            <button
+              type="button"
+              className="work-send work-send-stop"
+              title="中止任务"
+              aria-label="中止"
+              onClick={onStop}
+            >
+              <StopIcon />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="work-send"
+              title="发送（Enter）"
+              aria-label="发送"
+              disabled={!value.trim() || !resumable}
+              onClick={onSend}
+            >
+              <SendIcon />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
