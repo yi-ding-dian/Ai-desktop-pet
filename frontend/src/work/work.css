@@ -1800,6 +1800,31 @@ body,
   min-height: 0;
   overflow-y: auto;
   margin-top: 10px;
+  /* 左栏列表滚动条（2026-10-24 用户定）：
+     Win11 上 .pui-scroll 的 scrollbar-width/color 会走系统的悬浮滚动条——不占位，
+     直接盖住行右侧的时间；这里退回可定制的经典滚动条（占位 6px），
+     轨道透明、滑块只在悬停列表时显形。 */
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
+.task-list::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.task-list::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+}
+
+.task-list:hover::-webkit-scrollbar-thumb {
+  background: var(--ui-scrollbar);
+}
+
+.task-list::-webkit-scrollbar-track,
+.task-list::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .task-list-empty {
@@ -1820,6 +1845,9 @@ body,
 }
 
 .task-item {
+  /* 行是 div 时默认 content-box，width:100% 会多出左右内边距+边框的 20px，
+     把右侧时间挤出可视区并撑出横向滚动条——统一按 border-box 算。 */
+  box-sizing: border-box;
   width: 100%;
   display: flex;
   align-items: center;
