@@ -25,6 +25,7 @@ import { loadSessions, saveSessions, type PersistedSession, type PersistedState 
 import { buildPrompt, normalizeAttachments } from './attachments'
 import { AgentEventTranslator } from './events'
 import { fetchLlmKey } from './llm-key'
+import { callInternal } from './internal-api'
 import {
   APPROVAL_TIMEOUT_MS,
   MAX_LIVE_AGENTS,
@@ -305,7 +306,9 @@ export class AgentService {
         workspace,
         // 数组原地追加：后续追问附上的文件也能被 read_file 读到
         extraReadPaths: session.attachmentPaths,
-        onTodo: (items) => this.translator.applyTodo(session, items)
+        onTodo: (items) => this.translator.applyTodo(session, items),
+        // 联网搜索/抓取：开关与格式化都在后端（设置 → 搜索）
+        callInternal
       })
 
       const built = buildAgent({
@@ -559,6 +562,7 @@ export class AgentService {
             steps: session.state.steps,
             todos: session.state.todos,
             usage: session.state.usage,
+            sources: session.state.sources,
             summary: session.state.summary,
             error: session.state.error
           })

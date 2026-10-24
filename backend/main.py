@@ -181,6 +181,8 @@ def main() -> int:
         voice_factory=runtime.voice_factory,
         # 任务模式取 Key 的内部凭据：只下发给主进程，渲染层拿不到（2026-10-23）
         internal_token=(os.environ.get("PET_INTERNAL_TOKEN") or "").strip() or None,
+        # 任务模式的联网搜索 / 抓取复用同一份 SearchService（开关即「设置 → 搜索」）
+        search=search_service,
     )
 
     config = uvicorn.Config(

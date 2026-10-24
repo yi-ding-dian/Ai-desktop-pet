@@ -50,10 +50,12 @@ async function main(): Promise<void> {
   await check('工具清单齐全且审批分类正确', () => {
     assert.deepEqual(
       tools.map((tool) => tool.name).sort(),
-      ['bash', 'cleanup_candidates', 'disk_usage', 'edit_file', 'list_files', 'read_file', 'search_text', 'todo', 'write_file'].sort()
+      ['bash', 'cleanup_candidates', 'disk_usage', 'edit_file', 'list_files', 'read_file', 'search_text', 'todo', 'web_fetch', 'web_search', 'write_file'].sort()
     )
     assert.equal(needsApproval('read_file'), false)
     assert.equal(needsApproval('search_text'), false)
+    assert.equal(needsApproval('web_search'), false)
+    assert.equal(needsApproval('web_fetch'), false)
     assert.equal(needsApproval('todo'), false)
     assert.equal(needsApproval('write_file'), true)
     assert.equal(needsApproval('edit_file'), true)
@@ -171,6 +173,44 @@ async function main(): Promise<void> {
     assert.match(desc.preview ?? '', /危险操作/)
     const safe = describeToolCall('bash', { command: 'npm test' }, root)
     assert.equal(safe.dangerous, false)
+  })
+
+  await check('步骤标题：联网工具展示可读摘要', () => {
+    assert.match(describeToolCall('web_search', { query: '今日天气' }, root).title, /联网搜索「今日天气」/)
+    assert.match(describeToolCall('web_fetch', { url: 'https://example.com' }, root).title, /example\.com/)
+  })
+
+  await check('联网工具：经注入的内部端点调用并回传资料', async () => {
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = []
+    const webTools = new Map(
+      createTools({
+        workspace: root,
+        onTodo: () => undefined,
+        callInternal: async (path, body) => {
+          calls.push({ path, body })
+          return {
+            ok: true,
+            code: 'search_ok',
+            message: '已联网搜索：1 条结果',
+            modelContent: '[联网搜索结果] 示例'
+          }
+        }
+      }).map((tool) => [tool.name, tool])
+    )
+    const search = webTools.get('web_search')
+    assert.ok(search)
+    const result = await search.execute('test', { query: '天气' }, undefined, undefined)
+    const text = result.content
+      .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n')
+    assert.equal(text, '[联网搜索结果] 示例')
+    assert.deepEqual(calls, [{ path: '/internal/search', body: { query: '天气' } }])
+
+    const fetch = webTools.get('web_fetch')
+    assert.ok(fetch)
+    await fetch.execute('test', { url: 'https://example.com' }, undefined, undefined)
+    assert.deepEqual(calls[1], { path: '/internal/fetch', body: { url: 'https://example.com' } })
   })
 
   await check('确认卡：递归扫描提示可能很慢', () => {

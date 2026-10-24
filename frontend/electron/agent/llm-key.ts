@@ -1,15 +1,10 @@
 /** 向后端内部端点取聊天 Key（渲染层拿不到这条通道）。 */
-import { backendManager } from '../backend-process'
+import { internalEndpoint } from './internal-api'
 import type { LlmKeyPayload } from './session'
 
 export async function fetchLlmKey(): Promise<LlmKeyPayload> {
-  const token = backendManager.getInternalToken()
-  const snapshot = backendManager.getSnapshot()
-  if (!token || !snapshot.port) throw new Error('后端还没就绪，请稍后再试')
-
-  const res = await fetch(`http://127.0.0.1:${snapshot.port}/internal/llm-key`, {
-    headers: { 'X-Pet-Internal-Token': token }
-  })
+  const { url, token } = internalEndpoint('/internal/llm-key')
+  const res = await fetch(url, { headers: { 'X-Pet-Internal-Token': token } })
   if (!res.ok) throw new Error(`读取聊天配置失败（HTTP ${res.status}）`)
   const data = (await res.json()) as {
     configured: boolean

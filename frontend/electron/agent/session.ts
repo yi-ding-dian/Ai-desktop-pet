@@ -14,6 +14,8 @@ export const TASK_TIMEOUT_MS = 30 * 60 * 1000
 export const MAX_STEPS = 200
 /** 单条步骤正文上限（字符） */
 export const MAX_STEP_DETAIL = 12_000
+/** 单个任务保留的来源条数上限（跨多次搜索按 URL 去重后） */
+export const MAX_SOURCES = 60
 /** 状态推送节流（ms） */
 export const PUSH_THROTTLE_MS = 120
 /** 落盘防抖（ms） */
@@ -94,7 +96,8 @@ export function emptyState(): AgentState {
     steps: [],
     todos: [],
     usage: zeroUsage(),
-    resumable: false
+    resumable: false,
+    sources: []
   }
 }
 
@@ -122,7 +125,8 @@ export function createSession(id: string, task: string, workspace: string, now: 
       steps: [],
       todos: [],
       usage: zeroUsage(),
-      resumable: false
+      resumable: false,
+      sources: []
     },
     agent: null,
     createdAt: now,
@@ -157,6 +161,7 @@ export function restoreSession(record: {
   steps?: AgentStep[]
   todos?: AgentState['todos']
   usage?: AgentUsage
+  sources?: AgentState['sources']
   summary?: string
   error?: string
 }): Session {
@@ -176,6 +181,7 @@ export function restoreSession(record: {
       todos: Array.isArray(record.todos) ? record.todos : [],
       usage: record.usage ?? zeroUsage(),
       resumable: false,
+      sources: Array.isArray(record.sources) ? record.sources : [],
       summary: record.summary,
       error: interrupted ? '应用重启，任务已中断' : record.error
     },

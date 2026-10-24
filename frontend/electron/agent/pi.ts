@@ -7,7 +7,7 @@
 import { Agent, type AgentOptions, type AgentTool } from '@earendil-works/pi-agent-core'
 import { createModels } from '@earendil-works/pi-ai'
 import { deepseekProvider } from '@earendil-works/pi-ai/providers/deepseek'
-import { AGENT_SYSTEM_PROMPT } from './prompt'
+import { buildAgentSystemPrompt } from './prompt'
 
 export interface AgentBuildOptions {
   apiKey: string
@@ -53,7 +53,7 @@ export function buildAgent(options: AgentBuildOptions): BuiltAgent {
 
   const agent = new Agent({
     initialState: {
-      systemPrompt: AGENT_SYSTEM_PROMPT,
+      systemPrompt: buildAgentSystemPrompt(),
       model,
       tools: options.tools,
       // 开启推理：模型会返回 reasoning_content，面板里的「思考过程」才有内容（2026-10-24）

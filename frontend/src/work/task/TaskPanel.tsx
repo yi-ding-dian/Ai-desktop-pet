@@ -35,6 +35,8 @@ import {
 } from '../../modules/chat/file-support'
 import { copyText } from '../format'
 import { attachmentKind } from '../message/AttachmentStrip'
+import LinkPreviewCard from '../conversation/LinkPreviewCard'
+import { useLinkHover } from '../conversation/useLinkHover'
 import AgentFlow from './AgentFlow'
 import ComposerBar from './ComposerBar'
 import HoverCard, { type HoverCardState } from './HoverCard'
@@ -99,8 +101,10 @@ export default function TaskPanel(): ReactElement {
   })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const sidebarDragRef = useRef<{ startX: number; startWidth: number; width: number } | null>(null)
-  /** 悬浮预览卡片（网页链接 / 图片链接 / 本地路径） */
+  /** 悬浮预览卡片（本地路径；网页链接走 useLinkHover，与对话模式一致） */
   const [hoverCard, setHoverCard] = useState<HoverCardState | null>(null)
+  /** 引用/来源链接卡片：来源来自联网工具（AgentState.sources） */
+  const linkHover = useLinkHover(state?.sources, state?.summary)
   /** 右键菜单（任务 = 删除；选中文字 = 复制） */
   const [menu, setMenu] = useState<
     | { kind: 'task'; taskId: string; x: number; y: number }
@@ -356,14 +360,8 @@ export default function TaskPanel(): ReactElement {
     if (link) {
       const href = link.getAttribute('href') ?? ''
       if (href.startsWith('http://') || href.startsWith('https://')) {
-        const rect = link.getBoundingClientRect()
-        setHoverCard({
-          kind: 'link',
-          href,
-          isImage: /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(href),
-          x: rect.left,
-          y: rect.top
-        })
+        // 与对话模式同一套卡片（站点/日期/标题/摘要）
+        linkHover.onMouseOver(event)
         return
       }
     }
@@ -377,22 +375,34 @@ export default function TaskPanel(): ReactElement {
       }
     }
     setHoverCard(null)
-  }, [])
+  }, [linkHover])
 
-  const handleFlowClick = useCallback((event: ReactMouseEvent<HTMLDivElement>): void => {
-    const target = event.target as HTMLElement
-    if (target.closest('a')) return
-    const code = target.closest('code')
-    if (!code) return
-    const text = (code.textContent ?? '').trim()
-    if (!looksLikeAbsolutePath(text)) return
-    event.preventDefault()
-    try {
-      void getPetBridge().system.openPath(text)
-    } catch {
-      /* 旧 preload：静默降级 */
-    }
-  }, [])
+  /** 离开链接时收起卡片（与对话模式同一套判定：指针是否仍在同一个 a 内） */
+  const handleFlowOut = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>): void => {
+      linkHover.onMouseOut(event)
+    },
+    [linkHover]
+  )
+
+  const handleFlowClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>): void => {
+      linkHover.clear()
+      const target = event.target as HTMLElement
+      if (target.closest('a')) return
+      const code = target.closest('code')
+      if (!code) return
+      const text = (code.textContent ?? '').trim()
+      if (!looksLikeAbsolutePath(text)) return
+      event.preventDefault()
+      try {
+        void getPetBridge().system.openPath(text)
+      } catch {
+        /* 旧 preload：静默降级 */
+      }
+    },
+    [linkHover]
+  )
 
   const handleScroll = useCallback((): void => {
     const el = scrollRef.current
@@ -564,6 +574,7 @@ export default function TaskPanel(): ReactElement {
               ref={scrollRef}
               onScroll={handleScroll}
               onMouseOver={handleFlowHover}
+              onMouseOut={handleFlowOut}
               onMouseLeave={() => setHoverCard(null)}
               onClick={handleFlowClick}
             >
@@ -616,6 +627,13 @@ export default function TaskPanel(): ReactElement {
         )}
 
         <HoverCard card={hoverCard} />
+        {linkHover.preview !== null ? (
+          <LinkPreviewCard
+            key={linkHover.preview.url}
+            preview={linkHover.preview}
+            onMeasure={linkHover.onMeasure}
+          />
+        ) : null}
       </div>
 
       {menu ? (

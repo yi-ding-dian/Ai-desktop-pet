@@ -93,6 +93,12 @@ export function describeToolCall(
   if (toolName === 'search_text') {
     return { title: `搜索「${String(a.query ?? '')}」`, dangerous: false }
   }
+  if (toolName === 'web_search') {
+    return { title: `联网搜索「${String(a.query ?? '')}」`, dangerous: false }
+  }
+  if (toolName === 'web_fetch') {
+    return { title: `抓取网页 ${String(a.url ?? '')}`, dangerous: false }
+  }
   if (toolName === 'disk_usage') {
     const target = a.path ? String(a.path) : ''
     return { title: target ? `统计 ${target} 占用` : '查看磁盘容量', dangerous: false }

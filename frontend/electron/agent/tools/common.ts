@@ -11,6 +11,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { basename, dirname, join, relative } from 'node:path'
+import type { AgentSourceItem } from '../types'
 
 /** 单文件读取上限（字节） */
 export const READ_LIMIT_BYTES = 1024 * 1024
@@ -39,6 +40,16 @@ export const SKIP_DIRS = new Set([
 
 const APPROVAL_TOOLS = new Set(['write_file', 'edit_file', 'bash'])
 
+/** 内部端点统一回执（联网搜索 / 抓取；蛇形结果由后端转成驼峰） */
+export interface InternalResult {
+  ok: boolean
+  code: string
+  message: string
+  modelContent: string
+  /** 结构化来源（引用悬浮卡片用；搜索失败时为空） */
+  sources?: AgentSourceItem[]
+}
+
 export interface ToolContext {
   /** 工作区 realpath（已校验） */
   workspace: string
@@ -46,6 +57,8 @@ export interface ToolContext {
   extraReadPaths?: string[]
   /** 模型维护的待办清单回调 */
   onTodo: (items: Array<{ text: string; status: 'pending' | 'active' | 'done' }>) => void
+  /** 调后端内部端点（主进程注入；离线自测不提供） */
+  callInternal?: (path: string, body: Record<string, unknown>) => Promise<InternalResult>
 }
 
 export function needsApproval(toolName: string): boolean {

@@ -25,6 +25,7 @@ from backend.interfaces.ws.protocol import (
 from backend.shared.errors import ErrorCode, ProtocolError
 
 if TYPE_CHECKING:  # 避免与 dispatcher 运行时循环 import（类型注解专用）
+    from backend.application.search_service import SearchService
     from backend.application.voice import VoiceOut
     from backend.interfaces.ws.dispatcher import Dispatcher
 
@@ -205,6 +206,7 @@ def create_app(
     app_version: str,
     voice_factory: Callable[[], VoiceOut] | None = None,
     internal_token: str | None = None,
+    search: SearchService | None = None,
 ) -> FastAPI:
     """创建 FastAPI 应用（/ws 对话端点 + /internal/* 主进程专用端点）。
 
@@ -214,6 +216,9 @@ def create_app(
     ``internal_token``：主进程专用内部凭据（PET_INTERNAL_TOKEN），与下发给渲染层
     的 WS token **刻意分离**——渲染进程即使拿到 WS token 也读不到 LLM Key。
     为 None 时内部端点整体禁用（一律 403）。
+
+    ``search``：联网搜索用例（任务模式经内部端点复用）。None 时 search/fetch
+    端点返回 503——任务模式那里只当"暂时不可用"处理。
     """
     app = FastAPI(title="AI Desktop Pet Backend", version=app_version)
 
@@ -244,6 +249,71 @@ def create_app(
             {"configured": bool(key), "key": key or "", "baseUrl": base_url, "model": model},
             headers={"Cache-Control": "no-store"},
         )
+
+    def _search_payload(result: dict[str, Any]) -> JSONResponse:
+        """把 SearchService 的蛇形结果转成主进程用的驼峰契约（结构与 /internal/llm-key 一致）。
+
+        ``sources`` 原样带过去：任务面板的引用悬浮卡片与对话模式共用同一份
+        （站点 / 日期 / 标题 / 摘要），否则只能显示 URL。
+        """
+        sources: list[dict[str, Any]] = []
+        raw_sources = result.get("sources")
+        if isinstance(raw_sources, list):
+            for fallback_index, item in enumerate(raw_sources[:50], start=1):
+                if not isinstance(item, dict):
+                    continue
+                index = item.get("index")
+                sources.append(
+                    {
+                        "index": index if isinstance(index, int) else fallback_index,
+                        "title": str(item.get("title") or ""),
+                        "url": str(item.get("url") or ""),
+                        "snippet": str(item.get("snippet") or ""),
+                        "site_name": str(item.get("site_name") or ""),
+                        "date": str(item.get("date") or ""),
+                    }
+                )
+        return JSONResponse(
+            {
+                "ok": bool(result.get("ok")),
+                "code": str(result.get("code") or ""),
+                "message": str(result.get("message") or ""),
+                "modelContent": str(result.get("model_content") or ""),
+                "sources": sources,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post("/internal/search")
+    async def internal_search(
+        payload: dict[str, Any],
+        x_pet_internal_token: str | None = Header(default=None, alias="X-Pet-Internal-Token"),
+    ) -> JSONResponse:
+        """任务模式的联网搜索：复用 SearchService 的开关 / 条数 / 格式化。
+
+        开关仍是「设置 → 搜索」里的唯一口径（关闭时返回 search_disabled 说明）。
+        """
+        _require_internal(x_pet_internal_token)
+        if search is None:
+            raise HTTPException(status_code=503, detail="search unavailable")
+        query = payload.get("query")
+        result = await search.search_from_tool(
+            {"query": query if isinstance(query, str) else ""}
+        )
+        return _search_payload(result)
+
+    @app.post("/internal/fetch")
+    async def internal_fetch(
+        payload: dict[str, Any],
+        x_pet_internal_token: str | None = Header(default=None, alias="X-Pet-Internal-Token"),
+    ) -> JSONResponse:
+        """任务模式的网页抓取：同样经 SearchService（开关、正文截断、错误翻译都在后端）。"""
+        _require_internal(x_pet_internal_token)
+        if search is None:
+            raise HTTPException(status_code=503, detail="search unavailable")
+        url = payload.get("url")
+        result = await search.fetch_from_tool({"url": url if isinstance(url, str) else ""})
+        return _search_payload(result)
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:

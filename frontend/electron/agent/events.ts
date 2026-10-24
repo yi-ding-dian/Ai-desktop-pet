@@ -2,12 +2,13 @@
 import type { Agent, AgentEvent } from '@earendil-works/pi-agent-core'
 import { describeToolCall } from './tools'
 import {
+  MAX_SOURCES,
   MAX_STEPS,
   MAX_STEP_DETAIL,
   clipText,
   type Session
 } from './session'
-import type { AgentStep, AgentTodoItem } from './types'
+import type { AgentSourceItem, AgentStep, AgentTodoItem } from './types'
 
 export interface EventHandlers {
   touch: (session: Session) => void
@@ -162,6 +163,7 @@ export class AgentEventTranslator {
           step.endedAt = Date.now()
           const text = this.extractToolText(event)
           if (text) step.detail = clipText(text, 400)
+          this.mergeSources(session, event.result)
           this.handlers.touch(session)
         }
         break
@@ -174,6 +176,40 @@ export class AgentEventTranslator {
       default:
         break
     }
+  }
+
+  /**
+   * 收集联网工具的 details.sources（跨多次搜索按 URL 去重）。
+   *
+   * 任务面板的引用悬浮卡片与对话模式共用同一份字段（站点/日期/标题/摘要），
+   * 不把 URL 拼成文字再解析——搜索结果本来就有结构化数据。
+   */
+  private mergeSources(session: Session, result: unknown): void {
+    const details = (result as { details?: { sources?: unknown } } | undefined)?.details
+    const incoming = details?.sources
+    if (!Array.isArray(incoming) || incoming.length === 0) return
+
+    const sources: AgentSourceItem[] = session.state.sources ?? []
+    const seen = new Set(sources.map((item) => normalizeSourceUrl(item.url)))
+    for (const candidate of incoming) {
+      if (!candidate || typeof candidate !== 'object') continue
+      const item = candidate as Partial<AgentSourceItem>
+      const url = typeof item.url === 'string' ? item.url.trim() : ''
+      if (!url) continue
+      const key = normalizeSourceUrl(url)
+      if (seen.has(key)) continue
+      seen.add(key)
+      sources.push({
+        index: typeof item.index === 'number' ? item.index : sources.length + 1,
+        title: typeof item.title === 'string' ? item.title : '',
+        url,
+        snippet: typeof item.snippet === 'string' ? item.snippet : '',
+        site_name: typeof item.site_name === 'string' ? item.site_name : '',
+        date: typeof item.date === 'string' ? item.date : ''
+      })
+      if (sources.length >= MAX_SOURCES) break
+    }
+    session.state.sources = sources
   }
 
   private extractToolText(event: Extract<AgentEvent, { type: 'tool_execution_end' }>): string {
@@ -301,5 +337,16 @@ export class AgentEventTranslator {
       if (text) return clipText(text, MAX_STEP_DETAIL)
     }
     return ''
+  }
+}
+
+/** 来源 URL 归一化：忽略 hash 与末尾斜杠（与对话模式 normalizeUrl 口径一致） */
+function normalizeSourceUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return value
   }
 }

@@ -7,13 +7,15 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
-import type { AgentStatus, AgentStep, AgentTodoItem, AgentUsage } from './types'
+import type { AgentSourceItem, AgentStatus, AgentStep, AgentTodoItem, AgentUsage } from './types'
 
 /** 单文件保留的任务条数上限（超出的按 updatedAt 丢弃最旧） */
 const MAX_SESSIONS = 30
 /** 每条任务落盘的步骤上限与单条正文上限（控制文件体积） */
 const MAX_PERSISTED_STEPS = 120
 const MAX_PERSISTED_DETAIL = 1500
+/** 每条任务落盘的来源条数上限（摘要已截断到 300 字，够悬浮卡片用） */
+const MAX_PERSISTED_SOURCES = 40
 
 export interface PersistedSession {
   id: string
@@ -26,6 +28,8 @@ export interface PersistedSession {
   todos: AgentTodoItem[]
   /** 任务累计用量（旧记录可能没有） */
   usage?: AgentUsage
+  /** 联网来源（旧记录可能没有；回看时悬浮卡片用） */
+  sources?: AgentSourceItem[]
   summary?: string
   error?: string
 }
@@ -73,7 +77,8 @@ export function saveSessions(state: PersistedState): void {
         steps: session.steps.slice(-MAX_PERSISTED_STEPS).map((step) => ({
           ...step,
           detail: step.detail ? step.detail.slice(0, MAX_PERSISTED_DETAIL) : step.detail
-        }))
+        })),
+        sources: session.sources?.slice(0, MAX_PERSISTED_SOURCES)
       }))
     const body = JSON.stringify({ activeId: state.activeId, sessions })
     const tmp = `${file}.tmp`

@@ -65,6 +65,16 @@ export interface AgentTodoItem {
   status: AgentTodoStatus
 }
 
+/** 联网搜索/抓取的结构化来源（与对话模式的 sources 同构，悬浮卡片共用） */
+export interface AgentSourceItem {
+  index: number
+  title: string
+  url: string
+  snippet: string
+  site_name: string
+  date: string
+}
+
 /** 一次待确认操作（写文件 / 改文件 / 跑命令） */
 export interface AgentApprovalRequest {
   id: string
@@ -110,6 +120,8 @@ export interface AgentState {
   context?: { used: number; window: number }
   /** 当前任务还能不能继续追问（应用重启/被释放后为 false） */
   resumable: boolean
+  /** 联网搜索/抓取收集到的来源（按 URL 去重；引用悬浮卡片用） */
+  sources?: AgentSourceItem[]
   approval?: AgentApprovalRequest
   /** 任务结束时的模型总结 */
   summary?: string
