@@ -307,6 +307,8 @@ export const IPC_AGENT = {
   SELECT: 'agent:select',
   /** 删除任务（invoke（id）→ {ok, error?}；运行中的先中止） */
   DELETE: 'agent:delete',
+  /** 工作窗 → 主：任务面板是否正在显示（含工作窗可见性）；用于完成未读标记 */
+  PANEL_ACTIVE: 'agent:panel-active',
   /** 主 → 工作窗：任务列表变化（payload: AgentTaskSummary[]） */
   TASKS: 'agent:tasks'
 } as const

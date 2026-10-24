@@ -576,6 +576,10 @@ const api: PetBridgeApi = {
       return ipcRenderer.invoke(IPC_AGENT.PREVIEW, path)
     },
 
+    panelActive(active: boolean): void {
+      ipcRenderer.send(IPC_AGENT.PANEL_ACTIVE, active)
+    },
+
     getState(): Promise<AgentState> {
       return ipcRenderer.invoke(IPC_AGENT.GET_STATE)
     },

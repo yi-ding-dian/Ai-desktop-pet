@@ -343,6 +343,8 @@ export interface PetBridgeApi {
     getTasks(): Promise<AgentTaskSummary[]>
     /** 切换当前任务 */
     select(id: string): Promise<{ ok: boolean; error?: string }>
+    /** 任务面板是否正在显示（工作窗可见时）；用于完成未读标记 */
+    panelActive(active: boolean): void
     /** 删除任务（运行中的先中止） */
     deleteTask(id: string): Promise<{ ok: boolean; error?: string }>
     /** 订阅任务列表变化；返回取消订阅函数 */

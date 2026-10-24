@@ -169,6 +169,67 @@ function TodoList({ items }: { items: AgentTodoItem[] }): ReactElement {
   )
 }
 
+/** 单轮统计：耗时 / 调用次数 / token / 上下文占用（固定渲染在最终回答之后）。 */
+function RoundStats({ step }: { step: AgentStep }): ReactElement {
+  const stats = step.stats
+  const seconds = Math.max(0, Math.round(((step.endedAt ?? step.startedAt) - step.startedAt) / 1000))
+  const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
+  const ss = String(seconds % 60).padStart(2, '0')
+  // 模型生成速度 = 本轮输出 tokens / 本轮各次调用的生成时长（不含工具执行）
+  const generationMs = stats?.generationMs ?? 0
+  const generationSeconds = Math.max(0, Math.round(generationMs / 1000))
+  const gm = String(Math.floor(generationSeconds / 60)).padStart(2, '0')
+  const gs = String(generationSeconds % 60).padStart(2, '0')
+  const tokensPerSecond =
+    generationMs > 0 && stats
+      ? Math.round(stats.output / (generationMs / 1000))
+      : 0
+  return (
+    <div className="task-round-stats">
+      本轮耗时 {mm}:{ss}
+      {stats ? (
+        <>
+          <span className="task-stats-sep"> · </span>
+          调用 {stats.calls} 次
+          <span className="task-stats-sep"> · </span>
+          输入 {formatTokens(stats.input)} / 输出 {formatTokens(stats.output)} tokens
+          {generationMs > 0 ? (
+            <>
+              <span className="task-stats-sep"> · </span>
+              生成 {gm}:{gs}
+              {tokensPerSecond > 0 ? <>{` · ${tokensPerSecond}token/s`}</> : null}
+            </>
+          ) : null}
+          {stats.cacheRead > 0 ? (
+            <>
+              <span className="task-stats-sep"> · </span>
+              缓存命中 {formatTokens(stats.cacheRead)}
+            </>
+          ) : null}
+          {stats.contextWindow && stats.contextUsed ? (
+            <>
+              <span className="task-stats-sep"> · </span>
+              <span
+                className={`task-context${
+                  stats.contextUsed / stats.contextWindow >= 0.9
+                    ? ' task-context-danger'
+                    : stats.contextUsed / stats.contextWindow >= 0.8
+                      ? ' task-context-warn'
+                      : ''
+                }`}
+              >
+                上下文 {formatTokens(stats.contextUsed)} /{' '}
+                {formatTokens(stats.contextWindow)}（
+                {Math.round((stats.contextUsed / stats.contextWindow) * 100)}%）
+              </span>
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  )
+}
+
 export interface AgentFlowProps {
   task?: string
   workspace?: string
@@ -208,6 +269,14 @@ export default function AgentFlow({
   onCommandMenu,
   onApprove
 }: AgentFlowProps): ReactElement {
+  // summary 与已有 text 步骤重复时不再二次渲染；统计仍跟在每轮回答之后
+  const summaryText = (summary ?? '').trim()
+  const summaryDuplicated =
+    summaryText !== '' &&
+    flow.some(
+      (step) => step.kind === 'text' && (step.detail ?? '').trim() === summaryText
+    )
+
   return (
     <div className="task-flow">
       {task ? (
@@ -259,47 +328,7 @@ export default function AgentFlow({
           )
         }
         if (step.kind === 'stats') {
-          const stats = step.stats
-          const seconds = Math.max(0, Math.round(((step.endedAt ?? step.startedAt) - step.startedAt) / 1000))
-          const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
-          const ss = String(seconds % 60).padStart(2, '0')
-          return (
-            <div className="task-round-stats" key={step.id}>
-              本轮耗时 {mm}:{ss}
-              {stats ? (
-                <>
-                  <span className="task-stats-sep"> · </span>
-                  调用 {stats.calls} 次
-                  <span className="task-stats-sep"> · </span>
-                  输入 {formatTokens(stats.input)} / 输出 {formatTokens(stats.output)} tokens
-                  {stats.cacheRead > 0 ? (
-                    <>
-                      <span className="task-stats-sep"> · </span>
-                      缓存命中 {formatTokens(stats.cacheRead)}
-                    </>
-                  ) : null}
-                  {stats.contextWindow && stats.contextUsed ? (
-                    <>
-                      <span className="task-stats-sep"> · </span>
-                      <span
-                        className={`task-context${
-                          stats.contextUsed / stats.contextWindow >= 0.9
-                            ? ' task-context-danger'
-                            : stats.contextUsed / stats.contextWindow >= 0.8
-                              ? ' task-context-warn'
-                              : ''
-                        }`}
-                      >
-                        上下文 {formatTokens(stats.contextUsed)} /{' '}
-                        {formatTokens(stats.contextWindow)}（
-                        {Math.round((stats.contextUsed / stats.contextWindow) * 100)}%）
-                      </span>
-                    </>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          )
+          return <RoundStats key={step.id} step={step} />
         }
         if (step.kind === 'text') {
           return (
@@ -369,7 +398,7 @@ export default function AgentFlow({
         </div>
       ) : null}
 
-      {summary ? (
+      {summary && !summaryDuplicated ? (
         <div className="task-msg task-msg-assistant">
           <div
             className="md-body work-markdown task-md"

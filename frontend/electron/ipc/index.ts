@@ -606,6 +606,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC_AGENT.PREVIEW, (_event, filePath: string) => readImagePreview(filePath))
   ipcMain.handle(IPC_AGENT.GET_TASKS, () => agentService.listTasks())
   ipcMain.handle(IPC_AGENT.SELECT, (_event, id: string) => agentService.select(id))
+  ipcMain.on(IPC_AGENT.PANEL_ACTIVE, (_event, active: unknown) => {
+    agentService.setPanelActive(active === true)
+  })
   ipcMain.handle(IPC_AGENT.DELETE, (_event, id: string) => agentService.deleteTask(id))
   ipcMain.on(IPC_AGENT.APPROVE, (_event, payload: { id: string; allow: boolean }) => {
     agentService.respondApproval(payload.id, payload.allow)

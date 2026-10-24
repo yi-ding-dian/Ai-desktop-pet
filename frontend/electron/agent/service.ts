@@ -60,6 +60,8 @@ export class AgentService {
   private loaded = false
   /** 当前模型（面板副标题用） */
   private modelId = ''
+  /** 任务面板是否正在显示（且工作窗可见）——决定完成时是否标未读 */
+  private panelActive = false
   /** Agent 事件 → 步骤（思考/回复/工具/待办） */
   private readonly translator = new AgentEventTranslator({
     touch: (session) => this.touch(session),
@@ -96,7 +98,8 @@ export class AgentService {
         workspace: session.state.workspace,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
-        status: session.state.status
+        status: session.state.status,
+        hasUpdate: session.hasUpdate
       }))
   }
 
@@ -105,9 +108,20 @@ export class AgentService {
     this.ensureLoaded()
     if (!this.sessions.has(id)) return { ok: false, error: '任务不存在' }
     this.activeId = id
+    const session = this.sessions.get(id)
+    if (session?.hasUpdate) session.hasUpdate = false
     this.flush()
+    this.pushTasks()
     this.scheduleSave()
     return { ok: true }
+  }
+
+  /**
+   * 任务面板显隐（渲染侧上报）：只作为"完成时是否标未读"的判断依据。
+   * 未读标记只在用户**点开具体任务**（select）时清除——回到任务页不自动清。
+   */
+  setPanelActive(active: boolean): void {
+    this.panelActive = active
   }
 
   /** 删除一个任务（运行中的先中止）；删掉当前任务后自动切到最近的一条 */
@@ -252,6 +266,7 @@ export class AgentService {
     session.state.status = 'cancelled'
     session.state.endedAt = Date.now()
     session.state.error = reason === 'timeout' ? '任务超过 30 分钟上限，已自动中止' : undefined
+    this.markFinished(session)
     session.running = false
     if (this.runningId === session.state.id) this.runningId = null
     // 被 abort 的 Agent 不能续跑：清掉，继续聊需要重新开始任务
@@ -329,6 +344,7 @@ export class AgentService {
       session.state.status = 'failed'
       session.state.error = sanitizeError((err as Error)?.message ?? String(err))
       session.state.endedAt = Date.now()
+      this.markFinished(session)
       session.agent = null
       session.running = false
       if (this.runningId === session.state.id) this.runningId = null
@@ -353,6 +369,9 @@ export class AgentService {
       return
     }
     session.state.status = 'running'
+    // 每轮重新累计生成时长（首轮与继续追问共用）
+    session.roundGenMs = 0
+    session.turnStartedAt = 0
     this.push(true)
     this.clearTaskTimer(session)
     session.taskTimer = setTimeout(() => {
@@ -366,6 +385,7 @@ export class AgentService {
       session.state.summary = this.translator.extractSummary(agent)
       session.state.status = 'done'
       session.state.endedAt = Date.now()
+      this.markFinished(session)
       this.audit('done', { id: session.state.id, steps: session.state.steps.length })
       this.releaseExtraAgents()
       this.push(true)
@@ -376,6 +396,7 @@ export class AgentService {
       session.state.status = 'failed'
       session.state.error = sanitizeError((err as Error)?.message ?? String(err))
       session.state.endedAt = Date.now()
+      this.markFinished(session)
       this.audit('failed', { id: session.state.id, error: session.state.error })
       this.push(true)
       this.pushTasks()
@@ -406,6 +427,7 @@ export class AgentService {
         input: session.roundInput,
         output: session.roundOutput,
         cacheRead: session.roundCache,
+        generationMs: session.roundGenMs,
         contextUsed: session.state.context?.used,
         contextWindow: session.state.context?.window
       }
@@ -414,6 +436,8 @@ export class AgentService {
     session.roundInput = 0
     session.roundOutput = 0
     session.roundCache = 0
+    session.roundGenMs = 0
+    session.turnStartedAt = 0
   }
 
   // ---------------- 确认 ----------------
@@ -477,6 +501,12 @@ export class AgentService {
   private activeSession(): Session | null {
     if (!this.activeId) return null
     return this.sessions.get(this.activeId) ?? null
+  }
+
+  /** 进入结束态：用户没在看这个任务时标未读完成（点开/回到面板即清除） */
+  private markFinished(session: Session): void {
+    if (this.panelActive && this.activeId === session.state.id) return
+    session.hasUpdate = true
   }
 
   /** 任务状态变化：更新更新时间（落盘排序用）+ 只在当前任务上推送 */

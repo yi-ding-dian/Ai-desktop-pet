@@ -25,6 +25,7 @@ export class AgentEventTranslator {
         session.turn += 1
         session.state.usage.calls += 1
         session.roundCalls += 1
+        session.turnStartedAt = Date.now()
         if (!session.roundStartedAt) session.roundStartedAt = Date.now()
         this.pushStep(session, {
           id: `thinking-${session.turn}`,
@@ -56,6 +57,11 @@ export class AgentEventTranslator {
         const message = event.message as {
           role?: string
           usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+        }
+        // 生成时长 = 本次模型请求开始 → 响应结束（不含工具执行/等待）
+        if (message?.role === 'assistant' && session.turnStartedAt > 0) {
+          session.roundGenMs += Date.now() - session.turnStartedAt
+          session.turnStartedAt = 0
         }
         if (message?.role !== 'assistant' || !message.usage) break
         const input = message.usage.input ?? 0
@@ -93,6 +99,11 @@ export class AgentEventTranslator {
         break
       }
       case 'turn_end': {
+        // 兜底：没有 message_end（异常/无 usage）时也要把这次生成时长计入
+        if (session.turnStartedAt > 0) {
+          session.roundGenMs += Date.now() - session.turnStartedAt
+          session.turnStartedAt = 0
+        }
         this.closeStream(session, 'text', session.turn)
         this.closeThinking(session, session.turn)
         break

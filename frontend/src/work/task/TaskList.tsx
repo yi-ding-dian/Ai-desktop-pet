@@ -1,5 +1,10 @@
 /** 任务页左侧列表：按时间分组、可拖动宽度、可吸附折叠。 */
-import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
+import {
+  useEffect,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactElement
+} from 'react'
 import type { AgentTaskSummary } from '../../../electron/ipc/channels'
 
 export interface TaskGroup {
@@ -44,6 +49,16 @@ export interface TaskListProps {
 /** 折叠后的窄条宽度 */
 const COLLAPSED_WIDTH = 36
 
+/** 任务项右侧时间：刚刚 / n 分钟前 / 超过 1 小时显示 HH:MM */
+function relativeTime(ms: number, now: number): string {
+  const diff = Math.max(0, now - ms)
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`
+  const date = new Date(ms)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
 export default function TaskList({
   groups,
   collapsed,
@@ -56,6 +71,13 @@ export default function TaskList({
   onContextMenu,
   onResizeStart
 }: TaskListProps): ReactElement {
+  // 相对时间需要随时间推进刷新（"刚刚" → "n 分钟前" → "HH:MM"）
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   return (
     <aside
       className={`task-sidebar${collapsed ? ' task-sidebar-collapsed' : ''}`}
@@ -93,7 +115,7 @@ export default function TaskList({
                       key={item.id}
                       className={`task-item${
                         !compose && activeId === item.id ? ' task-item-active' : ''
-                      }`}
+                      }${item.hasUpdate ? ' task-item-unread' : ''}`}
                       title={`${item.task}\n${item.workspace}`}
                       onClick={() => onSelect(item.id)}
                       onContextMenu={(event) => {
@@ -104,6 +126,15 @@ export default function TaskList({
                     >
                       <span className={`task-item-dot task-item-dot-${item.status}`} />
                       <span className="task-item-text">{item.task}</span>
+                      <span className="task-item-time">
+                        {relativeTime(item.updatedAt || item.createdAt, now)}
+                      </span>
+                      {item.hasUpdate ? (
+                        <span
+                          className="task-item-unread-dot"
+                          aria-label="任务已完成，点击查看"
+                        />
+                      ) : null}
                     </button>
                   ))}
                 </div>

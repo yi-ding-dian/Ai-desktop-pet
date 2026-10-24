@@ -1120,12 +1120,22 @@ body,
 }
 
 .task-status-preparing,
-.task-status-running,
-.task-status-waiting,
+.task-status-running {
+  color: #2f9bff;
+  border-color: rgba(47, 155, 255, 0.35);
+  background: rgba(47, 155, 255, 0.12);
+}
+
+.task-status-waiting {
+  color: #e0a020;
+  border-color: rgba(224, 160, 32, 0.38);
+  background: rgba(224, 160, 32, 0.14);
+}
+
 .task-status-done {
-  color: var(--ui-accent);
-  border-color: var(--ui-accent-soft);
-  background: var(--ui-accent-soft);
+  color: var(--ui-success);
+  border-color: rgba(74, 222, 128, 0.32);
+  background: rgba(74, 222, 128, 0.12);
 }
 
 .task-status-preparing .task-dot,
@@ -1844,15 +1854,19 @@ body,
 }
 
 .task-item-dot-running,
-.task-item-dot-preparing,
+.task-item-dot-preparing {
+  background: #2f9bff;
+  animation: task-pulse 1.6s ease-in-out infinite;
+}
+
 .task-item-dot-waiting {
-  background: var(--ui-accent);
+  background: #e0a020;
   animation: task-pulse 1.6s ease-in-out infinite;
 }
 
 .task-item-dot-done {
-  background: var(--ui-accent);
-  opacity: 0.55;
+  background: var(--ui-success);
+  opacity: 0.9;
 }
 
 .task-item-dot-failed {
@@ -1860,10 +1874,32 @@ body,
 }
 
 .task-item-text {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 任务项右侧：相对时间 + 完成未读点（点开任务即清除） */
+.task-item-time {
+  flex: none;
+  font-size: 11px;
+  color: var(--ui-fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.task-item-unread .task-item-text {
+  color: var(--ui-fg);
+  font-weight: 600;
+}
+
+.task-item-unread-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-success);
 }
 
 /* ---------------------------------------------------------------- 右侧面板 */

@@ -137,6 +137,19 @@ export default function TaskPanel(): ReactElement {
     }
   }, [])
 
+  // 面板可见性上报：面板挂载 ≠ 用户在看（切到别的标签页/工作窗被隐藏）
+  useEffect(() => {
+    const api = agentBridge()
+    if (!api?.panelActive) return
+    const sync = (): void => api.panelActive(document.visibilityState === 'visible')
+    sync()
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      document.removeEventListener('visibilitychange', sync)
+      api.panelActive(false)
+    }
+  }, [])
+
   const ticking = Boolean(
     state &&
       (state.status === 'running' || state.status === 'waiting' || state.status === 'preparing')

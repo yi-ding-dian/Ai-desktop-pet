@@ -69,10 +69,16 @@ export interface Session {
   roundInput: number
   roundOutput: number
   roundCache: number
+  /** 本轮模型生成时长合计（ms；turn_start → message_end，不含工具执行） */
+  roundGenMs: number
+  /** 当前这一轮模型调用的起始时刻（0 = 未在生成中） */
+  turnStartedAt: number
   pending: PendingApproval | null
   approvalChain: Promise<unknown>
   taskTimer: NodeJS.Timeout | null
   running: boolean
+  /** 后台完成、用户尚未查看（点开/回到任务页即清除；不落盘） */
+  hasUpdate: boolean
 }
 
 export function zeroUsage(): AgentUsage {
@@ -130,10 +136,13 @@ export function createSession(id: string, task: string, workspace: string, now: 
     roundInput: 0,
     roundOutput: 0,
     roundCache: 0,
+    roundGenMs: 0,
+    turnStartedAt: 0,
     pending: null,
     approvalChain: Promise.resolve(),
     taskTimer: null,
-    running: true
+    running: true,
+    hasUpdate: false
   }
 }
 
@@ -182,9 +191,12 @@ export function restoreSession(record: {
     roundInput: 0,
     roundOutput: 0,
     roundCache: 0,
+    roundGenMs: 0,
+    turnStartedAt: 0,
     pending: null,
     approvalChain: Promise.resolve(),
     taskTimer: null,
-    running: false
+    running: false,
+    hasUpdate: false
   }
 }

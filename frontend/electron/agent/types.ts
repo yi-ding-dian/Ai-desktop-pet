@@ -40,6 +40,8 @@ export interface AgentStep {
     input: number
     output: number
     cacheRead: number
+    /** 本轮所有模型调用的生成时长合计（turn_start → message_end，不含工具执行） */
+    generationMs?: number
     contextUsed?: number
     contextWindow?: number
   }
@@ -123,6 +125,8 @@ export interface AgentTaskSummary {
   createdAt: number
   updatedAt: number
   status: AgentStatus
+  /** 后台完成、用户尚未查看（点开后清除；不跨应用重启保留） */
+  hasUpdate?: boolean
 }
 
 /** agent:start 的入参 */
