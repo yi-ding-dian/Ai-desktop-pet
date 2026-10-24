@@ -24,7 +24,8 @@ import websockets
 
 from backend.application.chat_pipeline import ChatPipeline
 from backend.application.session import SessionManager
-from backend.interfaces.ws.dispatcher import _ConnectionSink, build_dispatcher
+from backend.interfaces.ws.dispatcher import build_dispatcher
+from backend.interfaces.ws.handlers.sinks import _ConnectionSink
 from backend.interfaces.ws.protocol import EnvUpdateData
 from backend.interfaces.ws.server import create_app
 from backend.modules.behavior import rules

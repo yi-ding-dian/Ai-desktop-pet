@@ -38,6 +38,7 @@ packages = [
     "backend.application",
     "backend.interfaces",
     "backend.interfaces.ws",
+    "backend.interfaces.ws.handlers",
     "backend.modules",
     "backend.modules.behavior",
     "backend.modules.chat",

@@ -26,7 +26,7 @@ from backend.application.reminder_service import (
     ReminderService,
 )
 from backend.application.voice import VoiceOut
-from backend.interfaces.ws.dispatcher import _ReminderSink
+from backend.interfaces.ws.handlers.sinks import _ReminderSink
 from fakes import FakeTTSProvider
 from backend.modules.reminders import (
     ReminderError,
