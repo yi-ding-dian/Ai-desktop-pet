@@ -200,10 +200,11 @@ def test_conversation_title_auto_from_first_user_message(tmp_path) -> None:
     store.append_message("s1", "assistant", "好的")
     store.append_message("s1", "user", "再补一句")
     listed = store.list_conversations()
-    assert len(listed) == 1
-    assert listed[0]["id"] == "s1"
-    assert listed[0]["title"].startswith("帮我分析一下这个项目的登录模块")
-    assert listed[0]["message_count"] == 3
+    assert listed[0]["id"] == "pet-primary"
+    assert listed[0]["kind"] == "pet"
+    item = next(row for row in listed if row["id"] == "s1")
+    assert item["title"].startswith("帮我分析一下这个项目的登录模块")
+    assert item["message_count"] == 3
     conn.close()
 
 
@@ -214,8 +215,8 @@ def test_conversation_list_excludes_empty_and_orders_by_last_message(tmp_path) -
     store.append_message("b", "user", "新对话", created_at=20)
     store.append_message("b", "assistant", "回复", created_at=30)
     listed = store.list_conversations()
-    assert [item["id"] for item in listed] == ["b", "a"]
-    assert listed[0]["updated_at"] == 30
+    assert [item["id"] for item in listed] == ["pet-primary", "b", "a"]
+    assert listed[1]["updated_at"] == 30
     conn.close()
 
 
@@ -251,7 +252,8 @@ def test_legacy_empty_title_not_overwritten_by_later_message(tmp_path) -> None:
     store.append_message("legacy", "user", "很久以后的新问题")
     assert store.get_session("legacy")["title"] is None
     listed = store.list_conversations()
-    assert listed[0]["title"].startswith("最初的问题")
+    legacy = next(row for row in listed if row["id"] == "legacy")
+    assert legacy["title"].startswith("最初的问题")
 
 
 def test_first_user_message_still_sets_title(tmp_path) -> None:
@@ -260,3 +262,16 @@ def test_first_user_message_still_sets_title(tmp_path) -> None:
     assert store.get_session("s1")["title"] == "第一句"
     store.append_message("s1", "user", "第二句")
     assert store.get_session("s1")["title"] == "第一句"
+
+
+def test_pet_session_is_fixed_and_pinned(tmp_path) -> None:
+    """宠物会话固定 id/标题：列表置顶、无消息也返回、不自动改名、不可删。"""
+    conn, store = open_store(tmp_path)
+    store.append_message("pet-primary", "user", "你好呀")
+    assert store.get_session("pet-primary")["title"] == "宠物会话"
+    listed = store.list_conversations()
+    assert listed[0]["id"] == "pet-primary"
+    assert listed[0]["kind"] == "pet"
+    assert store.rename_session("pet-primary", "新名字") is False
+    assert store.delete_session("pet-primary") is False
+    conn.close()

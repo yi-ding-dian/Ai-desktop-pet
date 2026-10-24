@@ -21,6 +21,9 @@ MAX_HISTORY_LIMIT = 200
 MAX_CONVERSATION_LIMIT = 200
 #: 自动标题的最大字数（超出截断）
 MAX_TITLE_CHARS = 30
+#: 固定的宠物会话 id（单一会话，置顶、不可改名/删除，2026-10-24）
+PET_SESSION_ID = "pet-primary"
+PET_SESSION_TITLE = "宠物会话"
 
 
 def _now_ms() -> int:
@@ -104,11 +107,39 @@ class HistoryStore:
         for row in rows:
             item = dict(row)
             item["title"] = title_from_text(str(item.get("title") or "")) or "新对话"
+            item["kind"] = "pet" if item["id"] == PET_SESSION_ID else "chat"
             items.append(item)
+
+        # 宠物会话是固定入口：没有消息也要在列表里（置顶）
+        pet = next((item for item in items if item["kind"] == "pet"), None)
+        if pet is None:
+            self.ensure_pet_session()
+            meta = self.get_session(PET_SESSION_ID) or {}
+            created = int(meta.get("created_at") or _now_ms())
+            pet = {
+                "id": PET_SESSION_ID,
+                "title": PET_SESSION_TITLE,
+                "created_at": created,
+                "updated_at": self.last_message_at(PET_SESSION_ID) or created,
+                "message_count": self.message_count(PET_SESSION_ID),
+                "kind": "pet",
+            }
+        pet["title"] = PET_SESSION_TITLE
+        items = [pet] + [item for item in items if item["kind"] != "pet"]
         return items
 
+    def ensure_pet_session(self) -> None:
+        """确保固定的宠物会话存在，并把标题固定成「宠物会话」。"""
+        self.create_session(PET_SESSION_ID)
+        self._conn.execute(
+            "UPDATE sessions SET title = ? WHERE id = ? AND (title IS NULL OR title = '')",
+            (PET_SESSION_TITLE, PET_SESSION_ID),
+        )
+
     def rename_session(self, session_id: str, title: str) -> bool:
-        """改会话标题；返回是否命中。"""
+        """改会话标题；宠物会话固定标题，拒绝改名。"""
+        if session_id == PET_SESSION_ID:
+            return False
         text = title_from_text(title)
         if not text:
             return False
@@ -118,7 +149,9 @@ class HistoryStore:
         return cursor.rowcount > 0
 
     def delete_session(self, session_id: str) -> bool:
-        """删除会话及其全部消息；返回会话是否存在并被删除。"""
+        """删除会话及其全部消息；宠物会话不可删除。"""
+        if session_id == PET_SESSION_ID:
+            return False
         self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         cursor = self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         return cursor.rowcount > 0
@@ -155,18 +188,25 @@ class HistoryStore:
         # 只在**第一条**用户消息时自动生成标题：旧会话 title 为空时保持为空，
         # 由列表用首条消息兜底展示，不能被后续聊天内容覆盖（2026-10-24 验收修复）
         if role == "user":
-            prior = self._conn.execute(
-                "SELECT 1 FROM messages "
-                "WHERE session_id = ? AND role = 'user' AND id <> ? LIMIT 1",
-                (session_id, int(cursor.lastrowid)),
-            ).fetchone()
-            title = title_from_text(content)
-            if prior is None and title:
+            if session_id == PET_SESSION_ID:
                 self._conn.execute(
                     "UPDATE sessions SET title = ? "
                     "WHERE id = ? AND (title IS NULL OR title = '')",
-                    (title, session_id),
+                    (PET_SESSION_TITLE, session_id),
                 )
+            else:
+                prior = self._conn.execute(
+                    "SELECT 1 FROM messages "
+                    "WHERE session_id = ? AND role = 'user' AND id <> ? LIMIT 1",
+                    (session_id, int(cursor.lastrowid)),
+                ).fetchone()
+                title = title_from_text(content)
+                if prior is None and title:
+                    self._conn.execute(
+                        "UPDATE sessions SET title = ? "
+                        "WHERE id = ? AND (title IS NULL OR title = '')",
+                        (title, session_id),
+                    )
         return int(cursor.lastrowid)
 
     def delete_message(self, session_id: str, message_id: int) -> bool:

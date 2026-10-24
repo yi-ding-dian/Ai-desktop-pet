@@ -124,9 +124,11 @@ def test_conversations_e2e(tmp_path) -> None:
 
                 listed = (await request(ws, "list_conversations", {}, "conversations"))["items"]
                 ids = [item["id"] for item in listed]
-                assert ids == ["s2", "s1"]
-                assert listed[0]["title"] == "第二个对话的问题"
-                assert listed[0]["message_count"] == 4
+                assert ids[:3] == ["pet-primary", "s2", "s1"]
+                assert listed[0]["kind"] == "pet"
+                assert listed[0]["title"] == "宠物会话"
+                assert listed[1]["title"] == "第二个对话的问题"
+                assert listed[1]["message_count"] == 4
 
                 renamed = await request(
                     ws,
@@ -142,7 +144,14 @@ def test_conversations_e2e(tmp_path) -> None:
                 )
                 assert deleted["ok"] is True
                 assert history.session_exists("s1") is False
-                assert [item["id"] for item in history.list_conversations()] == ["s2"]
+                assert [item["id"] for item in history.list_conversations()] == [
+                    "pet-primary",
+                    "s2",
+                ]
+
+                # 宠物会话固定：不可改名、不可删除
+                assert history.rename_session("pet-primary", "x") is False
+                assert history.delete_session("pet-primary") is False
 
                 # 删除后继续用旧 id 发消息：按新会话重建，历史为空
                 await one_turn(ws, "重建", session_id="s1")

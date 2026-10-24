@@ -533,6 +533,7 @@ class ConversationSummaryData(EventData):
     created_at: int
     updated_at: int
     message_count: int
+    kind: str = "chat"
 
 
 class ConversationsData(EventData):

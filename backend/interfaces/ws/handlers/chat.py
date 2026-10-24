@@ -178,6 +178,7 @@ def register_chat_handlers(
                         created_at=int(row["created_at"]),
                         updated_at=int(row["updated_at"]),
                         message_count=int(row["message_count"]),
+                        kind=str(row.get("kind") or "chat"),
                     )
                 )
         await ctx.send_event(
