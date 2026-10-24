@@ -42,6 +42,7 @@ packages = [
     "backend.modules.behavior",
     "backend.modules.chat",
     "backend.modules.disk",
+    "backend.modules.disk.report",
     "backend.modules.files",
     "backend.modules.llm",
     "backend.modules.llm.prompts",
