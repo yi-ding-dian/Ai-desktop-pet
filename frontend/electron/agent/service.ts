@@ -9,128 +9,44 @@
  *  - 中止、超时、审计、错误脱敏；任务记录落盘，重启后可回看。
  *
  * 并发约定：同一时间只允许一个任务运行（runningId）；其它任务可停在结束态并随意切换。
+ *
+ * 目录分工：session（会话模型与常量）/ attachments / events（事件翻译）/
+ * llm-key / store（落盘）。
  */
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
-import { extname } from 'node:path'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
-import type { Agent, AgentEvent } from '@earendil-works/pi-agent-core'
 import type { ImageContent } from '@earendil-works/pi-ai'
-import { backendManager } from '../backend-process'
 import { buildAgent } from './pi'
 import { createTools, describeToolCall, needsApproval, type ApprovalDescription } from './tools'
 import { resolveWorkspace } from './workspace'
 import { loadSessions, saveSessions, type PersistedSession, type PersistedState } from './store'
+import { buildPrompt, normalizeAttachments } from './attachments'
+import { AgentEventTranslator } from './events'
+import { fetchLlmKey } from './llm-key'
+import {
+  APPROVAL_TIMEOUT_MS,
+  MAX_LIVE_AGENTS,
+  PUSH_THROTTLE_MS,
+  SAVE_DEBOUNCE_MS,
+  TASK_TIMEOUT_MS,
+  createSession,
+  emptyState,
+  restoreSession,
+  sanitizeError,
+  type Session,
+  type StateListener,
+  type TasksListener
+} from './session'
 import type {
   AgentApprovalRequest,
   AgentAttachment,
   AgentFollowUpPayload,
   AgentStartPayload,
   AgentState,
-  AgentStep,
-  AgentTaskSummary,
-  AgentTodoItem,
-  AgentUsage
+  AgentTaskSummary
 } from './types'
-
-/** 确认卡等待上限（ms）：到点按拒绝处理 */
-const APPROVAL_TIMEOUT_MS = 120_000
-/** 单任务单轮总时长上限（ms） */
-const TASK_TIMEOUT_MS = 30 * 60 * 1000
-/** 步骤数量上限（超出丢最旧的已结束步骤） */
-const MAX_STEPS = 200
-/** 单条步骤正文上限（字符） */
-const MAX_STEP_DETAIL = 12_000
-/** 状态推送节流（ms） */
-const PUSH_THROTTLE_MS = 120
-/** 落盘防抖（ms） */
-const SAVE_DEBOUNCE_MS = 1500
-/** 单轮最多附件数（与对话模式一致） */
-const MAX_ATTACHMENTS = 3
-/** 图片附件上限（字节）与文本附件内联上限（字符） */
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024
-const MAX_INLINE_TEXT = 20_000
-const IMAGE_MIME: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-  gif: 'image/gif'
-}
-
-/** 最多保留多少个「可续聊」的 Agent（超出按最久未用释放，只影响续聊，不影响回看） */
-const MAX_LIVE_AGENTS = 5
-
-interface LlmKeyPayload {
-  key: string
-  baseUrl: string
-  model: string
-}
-
-type StateListener = (state: AgentState) => void
-type TasksListener = (tasks: AgentTaskSummary[]) => void
-
-interface PendingApproval {
-  id: string
-  timer: NodeJS.Timeout
-  resolve: (allow: boolean) => void
-}
-
-/** 一个任务的运行期状态（Agent 重启后为 null，仅可回看） */
-interface Session {
-  state: AgentState
-  agent: Agent | null
-  createdAt: number
-  updatedAt: number
-  /** 用户追问轮次（round step 用） */
-  round: number
-  /** 模型调用轮次（turn_start 递增） */
-  turn: number
-  /** 只有工具调用、没有正文的轮次：usage 暂存到工具行 */
-  turnTokens: Map<number, { input: number; output: number }>
-  /** 用户附上的文件原路径（read_file 只读放行） */
-  attachmentPaths: string[]
-  /** 本轮统计起点（一次用户消息 → 模型跑完为止） */
-  roundStartedAt: number
-  roundCalls: number
-  roundInput: number
-  roundOutput: number
-  roundCache: number
-  pending: PendingApproval | null
-  approvalChain: Promise<unknown>
-  taskTimer: NodeJS.Timeout | null
-  running: boolean
-}
-
-function zeroUsage(): AgentUsage {
-  return { calls: 0, input: 0, output: 0, cacheRead: 0 }
-}
-
-function emptyState(): AgentState {
-  return {
-    id: '',
-    status: 'idle',
-    task: '',
-    workspace: '',
-    steps: [],
-    todos: [],
-    usage: zeroUsage(),
-    resumable: false
-  }
-}
-
-/** 错误文案脱敏：去掉可能的 Key 片段 */
-function sanitizeError(text: string): string {
-  return text
-    .replace(/sk-[A-Za-z0-9_-]{6,}/g, 'sk-***')
-    .replace(/Bearer\s+[A-Za-z0-9._-]{6,}/gi, 'Bearer ***')
-    .slice(0, 1000)
-}
-
-function clipText(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max)}…`
-}
 
 export class AgentService {
   private sessions = new Map<string, Session>()
@@ -144,6 +60,11 @@ export class AgentService {
   private loaded = false
   /** 当前模型（面板副标题用） */
   private modelId = ''
+  /** Agent 事件 → 步骤（思考/回复/工具/待办） */
+  private readonly translator = new AgentEventTranslator({
+    touch: (session) => this.touch(session),
+    audit: (event, data) => this.audit(event, data)
+  })
 
   // ---------------- 对外 API ----------------
 
@@ -230,38 +151,10 @@ export class AgentService {
       return { ok: false, error: (err as Error).message }
     }
 
-    const attachments = this.normalizeAttachments(payload?.attachments)
+    const attachments = normalizeAttachments(payload?.attachments)
     const id = randomUUID()
     const now = Date.now()
-    const session: Session = {
-      state: {
-        id,
-        status: 'preparing',
-        task,
-        workspace,
-        startedAt: now,
-        steps: [],
-        todos: [],
-        usage: zeroUsage(),
-        resumable: false
-      },
-      agent: null,
-      createdAt: now,
-      updatedAt: now,
-      round: 0,
-      turn: 0,
-      turnTokens: new Map(),
-      attachmentPaths: [],
-      roundStartedAt: 0,
-      roundCalls: 0,
-      roundInput: 0,
-      roundOutput: 0,
-      roundCache: 0,
-      pending: null,
-      approvalChain: Promise.resolve(),
-      taskTimer: null,
-      running: true
-    }
+    const session: Session = createSession(id, task, workspace, now)
     session.attachmentPaths.push(...attachments.map((item) => item.path))
     session.roundStartedAt = now
     session.roundCalls = 0
@@ -295,16 +188,16 @@ export class AgentService {
     if (!trimmed) return { ok: false, error: '内容不能为空' }
     if (trimmed.length > 2000) return { ok: false, error: '内容过长（上限 2000 字）' }
 
-    const attachments = this.normalizeAttachments(
+    const attachments = normalizeAttachments(
       typeof payload === 'string' ? [] : payload?.attachments
     )
     for (const item of attachments) {
       if (!session.attachmentPaths.includes(item.path)) session.attachmentPaths.push(item.path)
     }
-    const prompt = this.buildPrompt(trimmed, attachments)
+    const prompt = buildPrompt(trimmed, attachments)
 
     session.round += 1
-    this.pushStep(session, {
+    this.translator.pushStep(session, {
       id: `round-${session.round}`,
       kind: 'round',
       title: trimmed,
@@ -383,75 +276,6 @@ export class AgentService {
     }
   }
 
-  /** 过滤附件：存在、是文件、最多 3 个 */
-  private normalizeAttachments(list: AgentAttachment[] | undefined): AgentAttachment[] {
-    if (!Array.isArray(list)) return []
-    const result: AgentAttachment[] = []
-    for (const item of list.slice(0, MAX_ATTACHMENTS)) {
-      if (!item || typeof item.path !== 'string') continue
-      try {
-        if (!existsSync(item.path) || !statSync(item.path).isFile()) continue
-      } catch {
-        continue
-      }
-      result.push({
-        path: item.path,
-        name: item.name || item.path.split(/[\\/]/).pop() || item.path,
-        kind: item.kind === 'image' ? 'image' : item.kind === 'text' ? 'text' : 'other'
-      })
-    }
-    return result
-  }
-
-  /**
-   * 把附件拼进这一轮消息：
-   *  - 图片 → 作为 image content 直接给模型看（不复制文件）
-   *  - 文本/代码 → 读取内容内联（单文件 2 万字上限）
-   *  - 其它 → 只给路径（模型读不了）
-   */
-  private buildPrompt(
-    text: string,
-    attachments: AgentAttachment[]
-  ): { text: string; images: ImageContent[] } {
-    const parts: string[] = [text]
-    const images: ImageContent[] = []
-    for (const item of attachments) {
-      const ext = extname(item.path).slice(1).toLowerCase()
-      try {
-        const stat = statSync(item.path)
-        if (IMAGE_MIME[ext]) {
-          if (stat.size > MAX_IMAGE_BYTES) {
-            parts.push(`（图片 ${item.name} 超过 8MB，未随消息发送）`)
-            continue
-          }
-          images.push({
-            type: 'image',
-            data: readFileSync(item.path).toString('base64'),
-            mimeType: IMAGE_MIME[ext]
-          })
-          parts.push(`（用户附带图片：${item.name}，已随本条消息提供）`)
-          continue
-        }
-        if (stat.size > MAX_INLINE_TEXT * 4) {
-          parts.push(`（附件 ${item.path} 太大，未内联；需要时用 read_file 分段读取）`)
-          continue
-        }
-        const buf = readFileSync(item.path)
-        if (buf.subarray(0, 8192).includes(0)) {
-          parts.push(`（附件 ${item.path} 是二进制文件，读不了内容）`)
-          continue
-        }
-        const content = buf.toString('utf8')
-        parts.push(
-          `<附件 名称="${item.name}" 路径="${item.path}">\n${clipText(content, MAX_INLINE_TEXT)}\n</附件>`
-        )
-      } catch (err) {
-        parts.push(`（附件 ${item.path} 读取失败：${(err as Error).message}）`)
-      }
-    }
-    return { text: parts.join('\n\n'), images }
-  }
-
   // ---------------- 执行 ----------------
 
   private async runTask(
@@ -461,12 +285,12 @@ export class AgentService {
     attachments: AgentAttachment[]
   ): Promise<void> {
     try {
-      const key = await this.fetchLlmKey()
+      const key = await fetchLlmKey()
       const tools = createTools({
         workspace,
         // 数组原地追加：后续追问附上的文件也能被 read_file 读到
         extraReadPaths: session.attachmentPaths,
-        onTodo: (items) => this.applyTodo(session, items)
+        onTodo: (items) => this.translator.applyTodo(session, items)
       })
 
       const built = buildAgent({
@@ -489,7 +313,7 @@ export class AgentService {
       session.agent = built.agent
       this.modelId = built.modelId
       session.state.context = { used: 0, window: built.contextWindow }
-      session.agent.subscribe((event) => this.onAgentEvent(session, event))
+      session.agent.subscribe((event) => this.translator.onAgentEvent(session, event))
       this.audit('start', {
         id: session.state.id,
         task,
@@ -497,7 +321,7 @@ export class AgentService {
         model: this.modelId,
         attachments: attachments.length
       })
-      const prompt = this.buildPrompt(task, attachments)
+      const prompt = buildPrompt(task, attachments)
       await this.executeTurn(session, prompt.text, prompt.images)
     } catch (err) {
       // 走到这里只可能是准备阶段失败（取 Key / 建 Agent）
@@ -539,7 +363,7 @@ export class AgentService {
       await agent.prompt(text, images && images.length > 0 ? images : undefined)
       // 中止可能发生在 await 期间：状态被 cancel() 改成 cancelled 时不覆盖
       if ((session.state.status as AgentState['status']) === 'cancelled') return
-      session.state.summary = this.extractSummary(agent)
+      session.state.summary = this.translator.extractSummary(agent)
       session.state.status = 'done'
       session.state.endedAt = Date.now()
       this.audit('done', { id: session.state.id, steps: session.state.steps.length })
@@ -570,7 +394,7 @@ export class AgentService {
     const endedAt = Date.now()
     const startedAt = session.roundStartedAt || endedAt
     session.roundStartedAt = 0
-    this.pushStep(session, {
+    this.translator.pushStep(session, {
       id: `stats-${session.turn}-${endedAt}`,
       kind: 'stats',
       title: '本轮统计',
@@ -590,305 +414,6 @@ export class AgentService {
     session.roundInput = 0
     session.roundOutput = 0
     session.roundCache = 0
-  }
-
-  /** 向后端内部端点要聊天 Key（渲染层拿不到这条通道） */
-  private async fetchLlmKey(): Promise<LlmKeyPayload> {
-    const token = backendManager.getInternalToken()
-    const snapshot = backendManager.getSnapshot()
-    if (!token || !snapshot.port) throw new Error('后端还没就绪，请稍后再试')
-
-    const res = await fetch(`http://127.0.0.1:${snapshot.port}/internal/llm-key`, {
-      headers: { 'X-Pet-Internal-Token': token }
-    })
-    if (!res.ok) throw new Error(`读取聊天配置失败（HTTP ${res.status}）`)
-    const data = (await res.json()) as {
-      configured: boolean
-      key: string
-      baseUrl: string
-      model: string
-    }
-    if (!data.configured || !data.key) {
-      throw new Error('还没有配置聊天模型，请先到「设置 → LLM」里配置 Key')
-    }
-    return { key: data.key, baseUrl: data.baseUrl, model: data.model }
-  }
-
-  // ---------------- 事件 → 步骤 ----------------
-
-  private onAgentEvent(session: Session, event: AgentEvent): void {
-    if (session.state.status === 'cancelled') return
-    switch (event.type) {
-      case 'turn_start': {
-        // 每次请求模型立刻给一个可见占位：等待首字时不至于像卡死
-        session.turn += 1
-        session.state.usage.calls += 1
-        session.roundCalls += 1
-        if (!session.roundStartedAt) session.roundStartedAt = Date.now()
-        this.pushStep(session, {
-          id: `thinking-${session.turn}`,
-          kind: 'thinking',
-          turn: session.turn,
-          title: '思考过程',
-          detail: '',
-          status: 'running',
-          startedAt: Date.now()
-        })
-        break
-      }
-      case 'message_update': {
-        const inner = event.assistantMessageEvent
-        if (inner.type === 'text_delta') {
-          this.closeThinking(session, session.turn)
-          this.appendStream(session, 'text', inner.delta, session.turn)
-        } else if (inner.type === 'thinking_delta') {
-          this.appendStream(session, 'thinking', inner.delta, session.turn)
-        } else if (inner.type === 'text_end') {
-          this.closeStream(session, 'text', session.turn)
-        } else if (inner.type === 'thinking_end') {
-          this.closeThinking(session, session.turn)
-        }
-        break
-      }
-      case 'message_end': {
-        // 模型响应结束：累计 usage，并挂到本轮正文（没有正文就挂到本轮工具行）
-        const message = event.message as {
-          role?: string
-          usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
-        }
-        if (message?.role !== 'assistant' || !message.usage) break
-        const input = message.usage.input ?? 0
-        const output = message.usage.output ?? 0
-        const cacheRead = message.usage.cacheRead ?? 0
-        session.state.usage.input += input
-        session.state.usage.output += output
-        session.state.usage.cacheRead += cacheRead
-        session.roundInput += input
-        session.roundOutput += output
-        session.roundCache += cacheRead
-        // 当前上下文 = 本次请求的输入（含缓存部分）+ 本次输出
-        const windowSize = session.state.context?.window ?? 0
-        const cacheWrite = message.usage.cacheWrite ?? 0
-        session.state.context = {
-          used: input + cacheRead + cacheWrite + output,
-          window: windowSize
-        }
-        const turn = session.turn
-        const textStep = session.state.steps.find((step) => step.id === `text-${turn}`)
-        if (textStep) {
-          textStep.tokens = { input, output }
-        } else {
-          // 这一轮只有工具调用、没有正文：留给该轮的工具行
-          session.turnTokens.set(turn, { input, output })
-          const toolStep = session.state.steps.find(
-            (step) => step.kind === 'tool' && step.turn === turn
-          )
-          if (toolStep) {
-            toolStep.tokens = { input, output }
-            session.turnTokens.delete(turn)
-          }
-        }
-        this.touch(session)
-        break
-      }
-      case 'turn_end': {
-        this.closeStream(session, 'text', session.turn)
-        this.closeThinking(session, session.turn)
-        break
-      }
-      case 'tool_execution_start': {
-        const desc = describeToolCall(event.toolName, event.args, session.state.workspace)
-        this.audit('tool', {
-          id: session.state.id,
-          name: event.toolName,
-          args: JSON.stringify(event.args ?? {}).slice(0, 300)
-        })
-        const step: AgentStep = {
-          id: event.toolCallId,
-          kind: 'tool',
-          turn: session.turn,
-          title: desc.title,
-          detail: desc.command ?? desc.preview,
-          command: desc.command,
-          status: 'running',
-          startedAt: Date.now()
-        }
-        const tokens = session.turnTokens.get(session.turn)
-        const hasToolToken = session.state.steps.some(
-          (item) => item.kind === 'tool' && item.turn === session.turn && item.tokens
-        )
-        if (tokens && !hasToolToken) {
-          step.tokens = tokens
-          session.turnTokens.delete(session.turn)
-        }
-        this.pushStep(session, step)
-        break
-      }
-      case 'tool_execution_update': {
-        // 长命令的进度（如「已运行 42 秒…」）实时落到步骤详情，避免看起来卡死
-        const step = session.state.steps.find((item) => item.id === event.toolCallId)
-        if (!step) break
-        const content = (event.partialResult as { content?: unknown } | undefined)?.content
-        const text = Array.isArray(content)
-          ? content
-              .filter((block): block is { type: string; text: string } =>
-                Boolean(block) && (block as { type?: string }).type === 'text'
-              )
-              .map((block) => block.text)
-              .join(' ')
-          : ''
-        if (text) {
-          step.detail = clipText(text, 200)
-          this.touch(session)
-        }
-        break
-      }
-      case 'tool_execution_end': {
-        const step = session.state.steps.find((item) => item.id === event.toolCallId)
-        if (step) {
-          step.status = event.isError ? 'failed' : 'done'
-          step.endedAt = Date.now()
-          const text = this.extractToolText(event)
-          if (text) step.detail = clipText(text, 400)
-          this.touch(session)
-        }
-        break
-      }
-      case 'agent_end': {
-        this.closeStream(session, 'text', session.turn)
-        this.closeThinking(session, session.turn)
-        break
-      }
-      default:
-        break
-    }
-  }
-
-  private extractToolText(event: Extract<AgentEvent, { type: 'tool_execution_end' }>): string {
-    const content = event.result?.content
-    if (!Array.isArray(content)) return ''
-    return content
-      .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-      .map((block) => block.text)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-  }
-
-  private appendStream(
-    session: Session,
-    kind: 'text' | 'thinking',
-    delta: string,
-    turn: number
-  ): void {
-    const id = `${kind}-${turn}`
-    let step = session.state.steps.find((item) => item.id === id)
-    if (!step) {
-      step = {
-        id,
-        kind,
-        turn,
-        title: kind === 'text' ? '回复' : '思考过程',
-        detail: '',
-        status: 'running',
-        startedAt: Date.now()
-      }
-      session.state.steps.push(step)
-      this.trimSteps(session)
-    }
-    step.detail = clipText((step.detail ?? '') + delta, MAX_STEP_DETAIL)
-    this.touch(session)
-  }
-
-  private closeStream(session: Session, kind: 'text' | 'thinking', turn: number): void {
-    const step = session.state.steps.find((item) => item.id === `${kind}-${turn}`)
-    if (!step || step.status !== 'running') return
-    step.status = 'done'
-    step.endedAt = Date.now()
-    if (kind === 'text' && (step.detail ?? '').trim() === '') {
-      session.state.steps = session.state.steps.filter((item) => item !== step)
-    }
-    this.touch(session)
-  }
-
-  /** 思考占位：收到正文或本轮结束就收口；没有思考内容则移除（运行中保留，用来显示「正在思考…」） */
-  private closeThinking(session: Session, turn: number): void {
-    const step = session.state.steps.find((item) => item.id === `thinking-${turn}`)
-    if (!step || step.status !== 'running') return
-    step.status = 'done'
-    step.endedAt = Date.now()
-    if ((step.detail ?? '').trim() === '') {
-      session.state.steps = session.state.steps.filter((item) => item !== step)
-    }
-    this.touch(session)
-  }
-
-  private pushStep(session: Session, step: AgentStep): void {
-    session.state.steps.push(step)
-    this.trimSteps(session)
-    this.touch(session)
-  }
-
-  /** 步骤上限：只丢已结束的最旧步骤，正在跑的保留 */
-  private trimSteps(session: Session): void {
-    if (session.state.steps.length <= MAX_STEPS) return
-    const overflow = session.state.steps.length - MAX_STEPS
-    let removed = 0
-    session.state.steps = session.state.steps.filter((step) => {
-      if (removed >= overflow) return true
-      if (step.status === 'running') return true
-      removed += 1
-      return false
-    })
-  }
-
-  private applyTodo(
-    session: Session,
-    items: Array<{ text: string; status: 'pending' | 'active' | 'done' }>
-  ): void {
-    const todos: AgentTodoItem[] = items.map((item, index) => ({
-      id: `todo-${index}`,
-      text: item.text,
-      status: item.status
-    }))
-    session.state.todos = todos
-    const step = session.state.steps.find((item) => item.id === 'todo')
-    const line = todos
-      .map(
-        (item) =>
-          `${item.status === 'done' ? '☑' : item.status === 'active' ? '▸' : '☐'} ${item.text}`
-      )
-      .join('\n')
-    if (step) {
-      step.detail = line
-      step.status = 'done'
-    } else {
-      session.state.steps.push({
-        id: 'todo',
-        kind: 'todo',
-        title: '拆解任务',
-        detail: line,
-        status: 'done',
-        startedAt: Date.now(),
-        endedAt: Date.now()
-      })
-    }
-    this.touch(session)
-  }
-
-  private extractSummary(agent: Agent): string {
-    const messages = agent.state?.messages ?? []
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message = messages[i]
-      if (message.role !== 'assistant') continue
-      const text = (message.content ?? [])
-        .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-        .map((block) => block.text)
-        .join('\n')
-        .trim()
-      if (text) return clipText(text, MAX_STEP_DETAIL)
-    }
-    return ''
   }
 
   // ---------------- 确认 ----------------
@@ -979,38 +504,7 @@ export class AgentService {
     for (const record of persisted.sessions) {
       const interrupted =
         record.status === 'running' || record.status === 'preparing' || record.status === 'waiting'
-      this.sessions.set(record.id, {
-        state: {
-          id: record.id,
-          status: interrupted ? 'cancelled' : record.status,
-          task: record.task,
-          workspace: record.workspace,
-          startedAt: record.createdAt,
-          endedAt: record.updatedAt,
-          steps: Array.isArray(record.steps) ? record.steps : [],
-          todos: Array.isArray(record.todos) ? record.todos : [],
-          usage: record.usage ?? zeroUsage(),
-          resumable: false,
-          summary: record.summary,
-          error: interrupted ? '应用重启，任务已中断' : record.error
-        },
-        agent: null,
-        createdAt: record.createdAt,
-        updatedAt: record.updatedAt,
-        round: 0,
-        turn: 0,
-        turnTokens: new Map(),
-        attachmentPaths: [],
-        roundStartedAt: 0,
-        roundCalls: 0,
-        roundInput: 0,
-        roundOutput: 0,
-        roundCache: 0,
-        pending: null,
-        approvalChain: Promise.resolve(),
-        taskTimer: null,
-        running: false
-      })
+      this.sessions.set(record.id, restoreSession(record))
     }
     this.activeId =
       persisted.activeId && this.sessions.has(persisted.activeId)
