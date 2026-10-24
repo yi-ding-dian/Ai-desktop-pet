@@ -103,9 +103,10 @@ class UserMessageData(EventData):
 
 
 class DeleteMessageData(EventData):
-    """删除单条消息（工作模式，2026-10-18）：按 messages 表行 id 删当前会话的一条。"""
+    """删除单条消息（工作模式，2026-10-18）：按 messages 表行 id 删指定/当前会话的一条。"""
 
     id: int
+    session_id: str | None = None
 
 
 class PingData(EventData):
@@ -155,6 +156,23 @@ class LoadHistoryData(EventData):
 
     session_id: str | None = None
     limit: int = 20
+
+
+class ListConversationsData(EventData):
+    """列出对话（工作窗「对话」左栏，2026-10-24）：只返回有消息的会话。"""
+
+
+class RenameConversationData(EventData):
+    """改对话标题（工作窗左栏右键改名）。"""
+
+    id: str
+    title: str
+
+
+class DeleteConversationData(EventData):
+    """删除对话及全部消息（工作窗左栏右键删除）。"""
+
+    id: str
 
 
 class BehaviorDoneData(EventData):
@@ -489,6 +507,37 @@ class HistoryData(EventData):
     messages: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ConversationSummaryData(EventData):
+    """对话列表的一行（工作窗左栏）。"""
+
+    id: str
+    title: str
+    created_at: int
+    updated_at: int
+    message_count: int
+
+
+class ConversationsData(EventData):
+    """对话列表。"""
+
+    items: list[ConversationSummaryData] = Field(default_factory=list)
+
+
+class ConversationRenamedData(EventData):
+    """改名结果。"""
+
+    id: str
+    title: str = ""
+    ok: bool = True
+
+
+class ConversationDeletedData(EventData):
+    """删除结果。"""
+
+    id: str
+    ok: bool = True
+
+
 class ConfigData(EventData):
     """配置快照（key 以掩码返回；字段由 shared/config 决定）。"""
 
@@ -562,6 +611,9 @@ CLIENT_EVENT_MODELS: dict[str, type[EventData]] = {
     "note_assistant_message": NoteAssistantMessageData,
     "load_history": LoadHistoryData,
     "delete_message": DeleteMessageData,
+    "list_conversations": ListConversationsData,
+    "rename_conversation": RenameConversationData,
+    "delete_conversation": DeleteConversationData,
     "behavior_done": BehaviorDoneData,
     "env_update": EnvUpdateData,
     "get_reminders": GetRemindersData,
@@ -598,6 +650,9 @@ SERVER_EVENT_MODELS: dict[str, type[EventData]] = {
     "notice": NoticeData,
     "sources": SourcesData,
     "history": HistoryData,
+    "conversations": ConversationsData,
+    "conversation_renamed": ConversationRenamedData,
+    "conversation_deleted": ConversationDeletedData,
     "config": ConfigData,
     "profile": ProfileData,
     "llm_test_result": LlmTestResultData,

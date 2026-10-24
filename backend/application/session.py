@@ -171,6 +171,10 @@ class SessionManager:
         """全部已装载会话（记忆提取的空闲扫描用）。"""
         return list(self._sessions.values())
 
+    def remove(self, session_id: str) -> None:
+        """从进程内缓存移除会话（对话被删除时调用，防止下次发送又把它恢复出来）。"""
+        self._sessions.pop(session_id, None)
+
     def count(self) -> int:
         """会话数（测试/调试用）。"""
         return len(self._sessions)

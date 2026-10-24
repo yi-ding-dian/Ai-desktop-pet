@@ -10,16 +10,31 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import time
 from typing import Any
 
 #: load_history 单次返回条数上限（防止前端传超大 limit 拖库）
 MAX_HISTORY_LIMIT = 200
+#: 对话列表单次返回上限
+MAX_CONVERSATION_LIMIT = 200
+#: 自动标题的最大字数（超出截断）
+MAX_TITLE_CHARS = 30
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def title_from_text(text: str) -> str:
+    """从首条用户消息生成会话标题：跳过附件行，压成一行并截断。"""
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    content = next((line for line in lines if not line.startswith("📎")), lines[0] if lines else "")
+    content = re.sub(r"\s+", " ", content).strip()
+    if not content:
+        return ""
+    return content if len(content) <= MAX_TITLE_CHARS else f"{content[:MAX_TITLE_CHARS]}…"
 
 
 class HistoryStore:
@@ -59,6 +74,55 @@ class HistoryStore:
             (ended_at if ended_at is not None else _now_ms(), session_id),
         )
 
+    def list_conversations(self, limit: int = 100) -> list[dict[str, Any]]:
+        """对话列表：只含有消息的会话，按最后一条消息时间倒序。
+
+        - 标题优先取 ``sessions.title``；没有则用首条消息内容兜底；
+        - 空会话（设置窗/探测连接产生）一律不返回。
+        """
+        limit = max(1, min(int(limit), MAX_CONVERSATION_LIMIT))
+        rows = self._conn.execute(
+            """
+            SELECT s.id AS id,
+                   s.created_at AS created_at,
+                   COALESCE(
+                       NULLIF(s.title, ''),
+                       (SELECT content FROM messages WHERE session_id = s.id ORDER BY id LIMIT 1),
+                       '新对话'
+                   ) AS title,
+                   MAX(m.created_at) AS updated_at,
+                   COUNT(m.id) AS message_count
+            FROM sessions s
+            JOIN messages m ON m.session_id = s.id
+            GROUP BY s.id
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["title"] = title_from_text(str(item.get("title") or "")) or "新对话"
+            items.append(item)
+        return items
+
+    def rename_session(self, session_id: str, title: str) -> bool:
+        """改会话标题；返回是否命中。"""
+        text = title_from_text(title)
+        if not text:
+            return False
+        cursor = self._conn.execute(
+            "UPDATE sessions SET title = ? WHERE id = ?", (text, session_id)
+        )
+        return cursor.rowcount > 0
+
+    def delete_session(self, session_id: str) -> bool:
+        """删除会话及其全部消息；返回会话是否存在并被删除。"""
+        self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        cursor = self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        return cursor.rowcount > 0
+
     # ---------- messages ----------
 
     def append_message(
@@ -88,6 +152,21 @@ class HistoryStore:
             ),
         )
         assert cursor.lastrowid is not None
+        # 只在**第一条**用户消息时自动生成标题：旧会话 title 为空时保持为空，
+        # 由列表用首条消息兜底展示，不能被后续聊天内容覆盖（2026-10-24 验收修复）
+        if role == "user":
+            prior = self._conn.execute(
+                "SELECT 1 FROM messages "
+                "WHERE session_id = ? AND role = 'user' AND id <> ? LIMIT 1",
+                (session_id, int(cursor.lastrowid)),
+            ).fetchone()
+            title = title_from_text(content)
+            if prior is None and title:
+                self._conn.execute(
+                    "UPDATE sessions SET title = ? "
+                    "WHERE id = ? AND (title IS NULL OR title = '')",
+                    (title, session_id),
+                )
         return int(cursor.lastrowid)
 
     def delete_message(self, session_id: str, message_id: int) -> bool:

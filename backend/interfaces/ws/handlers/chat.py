@@ -13,11 +13,18 @@ from backend.interfaces.ws.handlers.sinks import _ConnectionSink, _ReminderSink
 from backend.interfaces.ws.handlers.types import HandlerRegistry
 from backend.interfaces.ws.protocol import (
     PROTOCOL_VERSION,
+    ConversationDeletedData,
+    ConversationRenamedData,
+    ConversationSummaryData,
+    ConversationsData,
+    DeleteConversationData,
     DeleteMessageData,
     HelloAckData,
     HelloData,
+    ListConversationsData,
     LoadHistoryData,
     NoteAssistantMessageData,
+    RenameConversationData,
     UserMessageData,
 )
 from backend.modules.files import FileRef
@@ -146,6 +153,59 @@ def register_chat_handlers(
         """
         await ctx.cancel_reply()
 
+    async def on_list_conversations(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """列出有消息的对话（工作窗「对话」左栏）。"""
+        _ = cast(ListConversationsData, msg.data)
+        items: list[ConversationSummaryData] = []
+        if history is not None:
+            for row in history.list_conversations():
+                items.append(
+                    ConversationSummaryData(
+                        id=str(row["id"]),
+                        title=str(row["title"]),
+                        created_at=int(row["created_at"]),
+                        updated_at=int(row["updated_at"]),
+                        message_count=int(row["message_count"]),
+                    )
+                )
+        await ctx.send_event(
+            "conversations", ConversationsData(items=items), reply_to=msg.envelope.id
+        )
+
+    async def on_rename_conversation(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """改对话标题（1–50 字）。"""
+        data = cast(RenameConversationData, msg.data)
+        title = (data.title or "").strip()
+        ok = False
+        if history is not None and 0 < len(title) <= 50:
+            ok = history.rename_session(data.id, title)
+        await ctx.send_event(
+            "conversation_renamed",
+            ConversationRenamedData(id=data.id, title=title, ok=ok),
+            reply_to=msg.envelope.id,
+        )
+
+    async def on_delete_conversation(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """删除对话及全部消息；正在回复的当前会话不允许删（避免流写回已删库）。"""
+        data = cast(DeleteConversationData, msg.data)
+        if data.id == ctx.session_id and ctx.is_replying():
+            await ctx.send_event(
+                "conversation_deleted",
+                ConversationDeletedData(id=data.id, ok=False),
+                reply_to=msg.envelope.id,
+            )
+            return
+        ok = history.delete_session(data.id) if history is not None else False
+        if ok:
+            sessions.remove(data.id)
+            if ctx.session_id == data.id:
+                ctx.session_id = ""
+        await ctx.send_event(
+            "conversation_deleted",
+            ConversationDeletedData(id=data.id, ok=ok),
+            reply_to=msg.envelope.id,
+        )
+
     async def on_delete_message(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """删除当前会话的单条消息（工作模式，2026-10-18）。
 
@@ -154,7 +214,10 @@ def register_chat_handlers(
         - 不联动删除“配对”的另一条（用户定稿：删单条，不删整轮）。
         """
         data = cast(DeleteMessageData, msg.data)
-        session = sessions.get(ctx.session_id or "")
+        session_id = (data.session_id or ctx.session_id or "").strip()
+        session = sessions.get(session_id) if session_id else None
+        if session is None and session_id:
+            session = sessions.start(session_id)  # 从库恢复（切换到旧对话后删消息）
         if session is None or history is None:
             await ctx.send_event("message_deleted", {"id": data.id, "ok": False})
             return
@@ -214,4 +277,7 @@ def register_chat_handlers(
     registry.register("interrupt", on_interrupt)
     registry.register("load_history", on_load_history)
     registry.register("delete_message", on_delete_message)
+    registry.register("list_conversations", on_list_conversations)
+    registry.register("rename_conversation", on_rename_conversation)
+    registry.register("delete_conversation", on_delete_conversation)
     registry.register("note_assistant_message", on_note_assistant_message)

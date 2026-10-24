@@ -189,3 +189,74 @@ def test_session_reload_history_after_delete(tmp_path) -> None:
     assert store.delete_message("s1", user_id) is True
     session.reload_history()
     assert [m.content for m in session.recent_messages()] == ["回答"]
+
+
+# ---------------------------------------------------------------- 对话列表（2026-10-24）
+
+
+def test_conversation_title_auto_from_first_user_message(tmp_path) -> None:
+    conn, store = open_store(tmp_path)
+    store.append_message("s1", "user", "帮我分析一下这个项目的登录模块\n第二行不要")
+    store.append_message("s1", "assistant", "好的")
+    store.append_message("s1", "user", "再补一句")
+    listed = store.list_conversations()
+    assert len(listed) == 1
+    assert listed[0]["id"] == "s1"
+    assert listed[0]["title"].startswith("帮我分析一下这个项目的登录模块")
+    assert listed[0]["message_count"] == 3
+    conn.close()
+
+
+def test_conversation_list_excludes_empty_and_orders_by_last_message(tmp_path) -> None:
+    conn, store = open_store(tmp_path)
+    store.create_session("empty")
+    store.append_message("a", "user", "旧对话", created_at=10)
+    store.append_message("b", "user", "新对话", created_at=20)
+    store.append_message("b", "assistant", "回复", created_at=30)
+    listed = store.list_conversations()
+    assert [item["id"] for item in listed] == ["b", "a"]
+    assert listed[0]["updated_at"] == 30
+    conn.close()
+
+
+def test_conversation_rename_and_delete(tmp_path) -> None:
+    conn, store = open_store(tmp_path)
+    store.append_message("s1", "user", "第一条")
+    assert store.rename_session("s1", "自定义标题") is True
+    assert store.get_session("s1")["title"] == "自定义标题"
+    assert store.rename_session("missing", "x") is False
+
+    assert store.delete_session("s1") is True
+    assert store.session_exists("s1") is False
+    assert store.recent_messages("s1") == []
+    assert store.delete_session("s1") is False
+    conn.close()
+
+
+def test_session_manager_remove(tmp_path) -> None:
+    conn, store = open_store(tmp_path)
+    sessions = SessionManager(store)
+    sessions.start("s1")
+    assert sessions.get("s1") is not None
+    sessions.remove("s1")
+    assert sessions.get("s1") is None
+    conn.close()
+
+
+def test_legacy_empty_title_not_overwritten_by_later_message(tmp_path) -> None:
+    """旧会话 title 为空时，后续消息不能把它覆盖成新内容（列表继续用首条兜底）。"""
+    conn, store = open_store(tmp_path)
+    store.append_message("legacy", "user", "最初的问题")
+    conn.execute("UPDATE sessions SET title = NULL WHERE id = 'legacy'")
+    store.append_message("legacy", "user", "很久以后的新问题")
+    assert store.get_session("legacy")["title"] is None
+    listed = store.list_conversations()
+    assert listed[0]["title"].startswith("最初的问题")
+
+
+def test_first_user_message_still_sets_title(tmp_path) -> None:
+    conn, store = open_store(tmp_path)
+    store.append_message("s1", "user", "第一句")
+    assert store.get_session("s1")["title"] == "第一句"
+    store.append_message("s1", "user", "第二句")
+    assert store.get_session("s1")["title"] == "第一句"

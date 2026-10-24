@@ -170,6 +170,10 @@ class ConnectionContext:
         self._reply_task = task
         return task
 
+    def is_replying(self) -> bool:
+        """当前连接是否有未完成的回复（删除当前对话前的保护判定）。"""
+        return self._reply_task is not None and not self._reply_task.done()
+
     async def cancel_reply(self) -> bool:
         """取消当前回复任务并等待其收尾；返回是否确有任务被取消。"""
         task = self._reply_task
