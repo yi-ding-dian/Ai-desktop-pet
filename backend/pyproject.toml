@@ -36,6 +36,7 @@ package-dir = { backend = "." }
 packages = [
     "backend",
     "backend.application",
+    "backend.application.chat_pipeline",
     "backend.interfaces",
     "backend.interfaces.ws",
     "backend.interfaces.ws.handlers",
