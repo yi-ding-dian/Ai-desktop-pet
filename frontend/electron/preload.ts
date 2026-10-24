@@ -726,8 +726,12 @@ const api: PetBridgeApi = {
       return ipcRenderer.invoke(IPC_WORK.DELETE_CONVERSATION, payload)
     },
 
-    interrupt(): void {
-      ipcRenderer.send(IPC_WORK.INTERRUPT)
+    interrupt(sessionId?: string): void {
+      ipcRenderer.send(IPC_WORK.INTERRUPT, { sessionId })
+    },
+
+    focusConversation(sessionId: string): void {
+      ipcRenderer.send(IPC_WORK.FOCUS_CONVERSATION, { sessionId })
     },
 
     deleteMessage(payload: { dbId: number; sessionId?: string }): void {
@@ -867,11 +871,28 @@ const api: PetBridgeApi = {
       ipcRenderer.send(IPC_WORK.CONVERSATION_DELETED, payload)
     },
 
-    onInterrupt(cb: () => void): () => void {
-      const listener = (): void => cb()
+    onInterrupt(cb: (sessionId?: string) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload?: { sessionId?: unknown }
+      ): void =>
+        cb(typeof payload?.sessionId === 'string' ? payload.sessionId : undefined)
       ipcRenderer.on(IPC_WORK.INTERRUPT, listener)
       return () => {
         ipcRenderer.removeListener(IPC_WORK.INTERRUPT, listener)
+      }
+    },
+
+    onFocusConversation(cb: (sessionId: string) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload?: { sessionId?: unknown }
+      ): void => {
+        if (typeof payload?.sessionId === 'string') cb(payload.sessionId)
+      }
+      ipcRenderer.on(IPC_WORK.FOCUS_CONVERSATION_REQUEST, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_WORK.FOCUS_CONVERSATION_REQUEST, listener)
       }
     },
 

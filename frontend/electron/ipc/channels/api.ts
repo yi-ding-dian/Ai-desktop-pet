@@ -402,8 +402,10 @@ export interface PetBridgeApi {
     deleteConversation(
       payload: WorkDeleteConversationRequestPayload
     ): Promise<WorkConversationDeletedPayload>
-    /** 工作窗：打断当前回复 */
-    interrupt(): void
+    /** 工作窗：打断当前对话（sessionId 缺省 = 当前前台） */
+    interrupt(sessionId?: string): void
+    /** 工作窗：切换前台对话（宠物气泡/语音只跟它走） */
+    focusConversation(sessionId: string): void
     /** 工作窗：删除单条消息（按后端 DB 行 id；删除结果经 onEvent 的 message_deleted 回传） */
     deleteMessage(payload: { dbId: number; sessionId?: string }): void
     /** 工作窗：在内嵌浏览器打开链接（已有同 URL 标签则切换过去） */
@@ -449,7 +451,9 @@ export interface PetBridgeApi {
     /** 宠物面：回执删除对话 */
     reportConversationDeleted(payload: WorkConversationDeletedPayload): void
     /** 宠物面：订阅打断请求；返回取消订阅函数 */
-    onInterrupt(cb: () => void): () => void
+    onInterrupt(cb: (sessionId?: string) => void): () => void
+    /** 宠物面：订阅前台对话切换；返回取消订阅函数 */
+    onFocusConversation(cb: (sessionId: string) => void): () => void
     /** 宠物面：订阅删除单条消息请求；返回取消订阅函数 */
     onDeleteMessage(cb: (payload: { dbId: number; sessionId?: string }) => void): () => void
     /** 宠物面：订阅工作窗存在性；返回取消订阅函数 */

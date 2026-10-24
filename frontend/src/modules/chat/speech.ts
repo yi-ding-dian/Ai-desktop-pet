@@ -17,6 +17,7 @@
 import { getPetBridge } from '../../shared/pet-bridge'
 import type { BubbleSpeechMeta, PetBridgeApi } from '../../../electron/ipc/channels'
 import type { WsClient } from '../../shared/ws-client'
+import { isForegroundSession } from '../work/active-conversation'
 
 /** 文本快照节流窗口（ms）：窗口内多次 token 合并为一次全文下发 */
 const TEXT_THROTTLE_MS = 100
@@ -183,11 +184,13 @@ export function setupSpeechBubble(client: WsClient, options: SpeechBubbleOptions
   }
 
   const offs = [
-    client.on('reply_start', () => {
+    client.on('reply_start', ({ session_id }) => {
+      if (!isForegroundSession(session_id)) return
       if (options.shouldSuppress()) return
       begin()
     }),
-    client.on('token', ({ text }) => {
+    client.on('token', ({ text, session_id }) => {
+      if (!isForegroundSession(session_id)) return
       if (!speechActive) return
       speechLatest += text
       if (flushTimer === null) {

@@ -653,9 +653,23 @@ export function initWork(pet: BrowserWindow): void {
     pending.resolve(payload)
   })
 
-  ipcMain.on(IPC_WORK.INTERRUPT, (event) => {
+  ipcMain.on(IPC_WORK.INTERRUPT, (event, raw: unknown) => {
     if (!isWorkSender(event.sender)) return
-    sendToPet(IPC_WORK.INTERRUPT)
+    const value = raw as { sessionId?: unknown } | null
+    const sessionId =
+      typeof value?.sessionId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value.sessionId)
+        ? value.sessionId
+        : undefined
+    sendToPet(IPC_WORK.INTERRUPT, { sessionId })
+  })
+
+  ipcMain.on(IPC_WORK.FOCUS_CONVERSATION, (event, raw: unknown) => {
+    if (!isWorkSender(event.sender)) return
+    const value = raw as { sessionId?: unknown } | null
+    if (typeof value?.sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(value.sessionId)) {
+      return
+    }
+    sendToPet(IPC_WORK.FOCUS_CONVERSATION_REQUEST, { sessionId: value.sessionId })
   })
 
   ipcMain.on(IPC_WORK.DELETE_MESSAGE, (event, raw: unknown) => {

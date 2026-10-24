@@ -27,6 +27,7 @@ import type { PetState } from '../../shared/protocol'
 import { subscribeVoiceSpeaking, stopVoiceNow } from '../voice'
 // 统一发送入口（P5 §7.5）：关键词（开始教学/下课）+ WS 发送 + 教学模式镜像/气泡都在此
 import { sendUserMessage } from '../teaching'
+import { isForegroundSession } from '../work/active-conversation'
 import { notifyUserMessage } from './name-onboarding'
 import { clearChatNotice, showChatNotice, subscribeChatNotice, type ChatNotice } from './notice'
 import { speakLocalNotice } from './speech'
@@ -255,16 +256,21 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
       if (import.meta.env.DEV) console.log(`[chat] ${msg}`)
     }
     const offs = [
-      client.on('reply_start', ({ message_id }) => {
+      client.on('reply_start', ({ message_id, session_id }) => {
+        if (!isForegroundSession(session_id)) return
         devLog(`reply_start ${message_id}`)
         setStreaming(true)
       }),
-      client.on('reply_end', ({ message_id, full_text, interrupted }) => {
+      client.on('reply_end', ({ message_id, full_text, interrupted, session_id }) => {
+        if (!isForegroundSession(session_id)) return
         devLog(`reply_end full_text(${full_text.length}字) interrupted=${Boolean(interrupted)}`)
         setStreaming(false)
       }),
       // 宠物状态机（speaking/thinking 决定"停止"按钮是否显示）
-      client.on('state', ({ state }) => setPetState(state))
+      client.on('state', ({ state, session_id }) => {
+        if (!isForegroundSession(session_id)) return
+        setPetState(state)
+      })
     ]
     return () => offs.forEach((off) => off())
   }, [client])

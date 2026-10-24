@@ -57,6 +57,7 @@ export interface ConversationSidebarProps {
   /** 当前是未落库的草稿新对话（列表中还没有） */
   draft: boolean
   unread: Set<string>
+  streaming: Set<string>
   onNew: () => void
   onSelect: (id: string) => void
   onRename: (id: string, title: string) => void
@@ -68,6 +69,7 @@ export default function ConversationSidebar({
   activeId,
   draft,
   unread,
+  streaming,
   onNew,
   onSelect,
   onRename,
@@ -172,7 +174,7 @@ export default function ConversationSidebar({
       <div className="task-list pui-scroll">
         {draft ? (
           <button type="button" className="task-item task-item-active">
-            <span className="task-item-dot task-item-dot-running" />
+            <span className="task-item-dot task-item-dot-done" />
             <span className="task-item-text">新对话</span>
             <span className="task-item-time">草稿</span>
           </button>
@@ -200,7 +202,11 @@ export default function ConversationSidebar({
                     if (event.key === 'Enter' || event.key === ' ') onSelect(item.id)
                   }}
                 >
-                  <span className="task-item-dot task-item-dot-done" />
+                  <span
+                    className={`task-item-dot ${
+                      streaming.has(item.id) ? 'task-item-dot-running' : 'task-item-dot-done'
+                    }`}
+                  />
                   {editingId === item.id ? (
                     <input
                       className="conv-rename-input"

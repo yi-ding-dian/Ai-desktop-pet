@@ -72,9 +72,15 @@ export interface UserMessageData {
 export interface PingData {}
 
 /** 打断：取消当前流式回复 */
-export interface InterruptData {}
+export interface InterruptData {
+  session_id?: string
+}
 
 /** 宠物交互事件（tap_head / drag_end / idle_touch） */
+export interface ConversationFocusData {
+  session_id?: string
+}
+
 export interface PetEventData {
   kind: string
   payload: Record<string, unknown>
@@ -297,6 +303,7 @@ export type PetState = 'idle' | 'walking' | 'sleeping' | 'thinking' | 'speaking'
 /** 宠物状态机（驱动动画节奏与行为互斥） */
 export interface StateData {
   state: PetState
+  session_id?: string
 }
 
 /** 行为指令（Phase 3） */
@@ -309,6 +316,7 @@ export interface BehaviorData {
 /** 一轮回复开始 */
 export interface ReplyStartData {
   message_id: string
+  session_id?: string
 }
 
 /**
@@ -320,12 +328,14 @@ export interface MessageSavedData {
   client_id: string
   db_id: number
   role: string
+  session_id?: string
 }
 
 /** 单条消息删除结果（工作模式）；ok=false = 不属于当前会话/已不存在 */
 export interface MessageDeletedData {
   id: number
   ok: boolean
+  session_id?: string
 }
 
 /** 联网搜索来源（工作窗引用悬浮卡片） */
@@ -342,6 +352,7 @@ export interface SourceItemData {
 export interface SourcesData {
   message_id: string
   items: SourceItemData[]
+  session_id?: string
 }
 
 /**
@@ -351,12 +362,14 @@ export interface SourcesData {
 export interface ReasoningData {
   message_id: string
   text: string
+  session_id?: string
 }
 
 /** 流式增量文本 */
 export interface TokenData {
   message_id: string
   text: string
+  session_id?: string
 }
 
 /** 分句完成（供 TTS 流水线，Phase 2 推送） */
@@ -364,6 +377,7 @@ export interface SentenceData {
   message_id: string
   index: number
   text: string
+  session_id?: string
 }
 
 /** v1 固定情绪集合（§3.3 约定；后端白名单外的标签会被剥离，不会推到前端） */
@@ -385,6 +399,7 @@ export interface EmotionData {
   message_id: string
   emotion: string
   intensity: number
+  session_id?: string
 }
 
 /** 一轮回复结束 */
@@ -392,6 +407,7 @@ export interface ReplyEndData {
   message_id: string
   full_text: string
   interrupted?: boolean | null
+  session_id?: string
 }
 
 /**
@@ -454,6 +470,7 @@ export interface NoticeData {
   code: string
   message: string
   level?: 'info' | 'warn' | 'error'
+  session_id?: string
 }
 
 /** 历史回填 */
@@ -505,6 +522,7 @@ export interface ErrorData {
   code: string
   message: string
   fatal?: boolean | null
+  session_id?: string
 }
 
 /** 心跳应答 */
@@ -599,6 +617,7 @@ export interface ClientEventMap {
   user_message: UserMessageData
   ping: PingData
   interrupt: InterruptData
+  conversation_focus: ConversationFocusData
   pet_event: PetEventData
   get_config: GetConfigData
   set_config: SetConfigData

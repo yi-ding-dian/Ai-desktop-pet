@@ -115,15 +115,18 @@ export default function WorkApp(): ReactElement {
   const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set())
   const activeConversationRef = useRef('')
   const stateRef = useRef(state)
-  /** 切走时仍在流式的对话快照（后台继续收事件） */
-  const backgroundRef = useRef<{ id: string; state: WorkState } | null>(null)
-  /** 当前全局正在回复的对话（后端同一时刻只允许一条） */
-  const [streamingConversationId, setStreamingConversationId] = useState<string | null>(null)
-  const streamingConversationRef = useRef<string | null>(null)
+  /** 切走时仍在流式的对话快照（后台继续收事件；支持多个对话同时回复） */
+  const backgroundStatesRef = useRef<Map<string, WorkState>>(new Map())
+  /** 正在回复的对话集合（每会话独立） */
+  const [streamingIds, setStreamingIds] = useState<Set<string>>(() => new Set())
+  const streamingIdsRef = useRef<Set<string>>(new Set())
 
-  const markStreamingConversation = useCallback((id: string | null): void => {
-    streamingConversationRef.current = id
-    setStreamingConversationId(id)
+  const markStreaming = useCallback((id: string, active: boolean): void => {
+    const next = new Set(streamingIdsRef.current)
+    if (active) next.add(id)
+    else next.delete(id)
+    streamingIdsRef.current = next
+    setStreamingIds(next)
   }, [])
 
   useEffect(() => {
@@ -323,40 +326,53 @@ export default function WorkApp(): ReactElement {
       next.delete(id)
       return next
     })
+    // 告诉主进程/后端谁在前台（宠物气泡/语音/表情只跟它走）
+    workBridge()?.focusConversation?.(id)
+  }, [])
+
+  /** 把当前对话的界面状态存进后台快照（有内容就存，避免快速切换丢用户消息） */
+  const stashActiveState = useCallback((): void => {
+    const id = activeConversationRef.current
+    if (!id) return
+    const current = stateRef.current
+    if (current.messages.length === 0 && !current.streamingId) return
+    const cache = backgroundStatesRef.current
+    cache.delete(id)
+    cache.set(id, current)
+    // 只保留最近 8 个快照，避免长时间使用后无限增长
+    while (cache.size > 8) {
+      const oldest = cache.keys().next().value
+      if (oldest === undefined) break
+      cache.delete(oldest)
+    }
   }, [])
 
   /** 切换对话：优先用后台流式快照，否则重置并拉历史 */
   const switchConversation = useCallback(
     async (id: string): Promise<void> => {
       if (!id || id === activeConversationRef.current) return
-      const current = stateRef.current
-      if (current.streamingId && activeConversationRef.current) {
-        backgroundRef.current = { id: activeConversationRef.current, state: current }
-      }
+      stashActiveState()
       activateConversation(id)
-      const background = backgroundRef.current
-      if (background?.id === id) {
-        dispatch({ type: 'restore', state: background.state })
-        backgroundRef.current = null
+      const background = backgroundStatesRef.current.get(id)
+      if (background) {
+        dispatch({ type: 'restore', state: background })
+        backgroundStatesRef.current.delete(id)
         return
       }
       dispatch({ type: 'reset' })
       await requestHistory(id)
     },
-    [activateConversation, requestHistory]
+    [activateConversation, requestHistory, stashActiveState]
   )
 
   /** 新建对话（草稿，发第一条消息时后端落库） */
   const newConversation = useCallback((): void => {
-    const current = stateRef.current
-    if (current.streamingId && activeConversationRef.current) {
-      backgroundRef.current = { id: activeConversationRef.current, state: current }
-    }
+    stashActiveState()
     const id = globalThis.crypto?.randomUUID?.() ?? `c_${Date.now().toString(36)}`
     activateConversation(id)
     dispatch({ type: 'reset' })
     nearBottom.current = true
-  }, [activateConversation])
+  }, [activateConversation, stashActiveState])
 
   const renameConversation = useCallback(
     async (id: string, title: string): Promise<void> => {
@@ -420,22 +436,18 @@ export default function WorkApp(): ReactElement {
     if (!api) return
     const offEvent = api.onEvent((event: WorkMirrorEvent) => {
       const target = event.sessionId ?? activeConversationRef.current
-      if (event.kind === 'reply_start') markStreamingConversation(target)
-      if (
-        (event.kind === 'reply_end' || (event.kind === 'state' && event.state === 'idle')) &&
-        streamingConversationRef.current === target
-      ) {
-        markStreamingConversation(null)
+      if (event.kind === 'reply_start') markStreaming(target, true)
+      if (event.kind === 'reply_end' || (event.kind === 'state' && event.state === 'idle')) {
+        markStreaming(target, false)
       }
       if (target !== activeConversationRef.current) {
         // 后台对话：写进独立快照，完成时标未读；不影响当前窗口
-        if (backgroundRef.current?.id !== target) {
-          backgroundRef.current = { id: target, state: EMPTY_WORK_STATE }
-        }
-        backgroundRef.current.state = workReducer(backgroundRef.current.state, {
-          type: 'mirror',
-          event
-        })
+        const previous =
+          backgroundStatesRef.current.get(target) ?? EMPTY_WORK_STATE
+        backgroundStatesRef.current.set(
+          target,
+          workReducer(previous, { type: 'mirror', event })
+        )
         if (event.kind === 'reply_end') {
           setUnreadIds((prev) => new Set(prev).add(target))
           void refreshConversations()
@@ -485,7 +497,7 @@ export default function WorkApp(): ReactElement {
     }
   }, [
     activateConversation,
-    markStreamingConversation,
+    markStreaming,
     refreshConversations,
     requestConversations,
     requestHistory
@@ -571,13 +583,13 @@ export default function WorkApp(): ReactElement {
         })
         return false
       }
-      if (streamingConversationRef.current !== null) {
+      if (streamingIdsRef.current.has(activeConversationRef.current)) {
         dispatch({
           type: 'mirror',
           event: {
             kind: 'notice',
-            code: 'busy_other_conversation',
-            message: '另一个对话正在回复中，等它结束后再发～',
+            code: 'busy_conversation',
+            message: '这个对话正在回复中，等它结束后再发～',
             level: 'warn'
           }
         })
@@ -624,7 +636,7 @@ export default function WorkApp(): ReactElement {
   )
 
   const handleInterrupt = useCallback((): void => {
-    workBridge()?.interrupt()
+    workBridge()?.interrupt(activeConversationRef.current || undefined)
   }, [])
 
   const handleJump = useCallback((id: string): void => {
@@ -882,6 +894,7 @@ export default function WorkApp(): ReactElement {
             activeId={activeConversationId}
             draft={draftConversation}
             unread={unreadIds}
+            streaming={streamingIds}
             onNew={newConversation}
             onSelect={(id) => void switchConversation(id)}
             onRename={(id, title) => void renameConversation(id, title)}
@@ -895,8 +908,8 @@ export default function WorkApp(): ReactElement {
                 </span>
                 {streaming ? (
                   <span className="conv-streaming">回复中…</span>
-                ) : streamingConversationId && streamingConversationId !== activeConversationId ? (
-                  <span className="conv-streaming">另一对话回复中…</span>
+                ) : streamingIds.size > 0 ? (
+                  <span className="conv-streaming">{streamingIds.size} 个对话回复中…</span>
                 ) : null}
               </div>
               <div className="task-head-actions">

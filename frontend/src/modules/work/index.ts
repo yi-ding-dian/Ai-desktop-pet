@@ -30,6 +30,10 @@ import { notifyUserMessage } from '../chat/name-onboarding'
 import { interruptPetBehavior } from '../pet/behavior'
 import { stopVoiceNow } from '../voice'
 import { setWorkActiveLocal } from './state'
+import {
+  isForegroundSession,
+  setActiveConversationId
+} from './active-conversation'
 
 /** 合批窗口（ms）：token/reasoning 高频事件按此合并后走一次 IPC */
 const FLUSH_MS = 25
@@ -155,6 +159,7 @@ export function setupWorkPetSide(client: WsClient): () => void {
       search: payload.options?.search !== false
     }
     const question = trimmed || '帮我看看这个文件'
+    if (payload.sessionId) setActiveConversationId(payload.sessionId)
     const ok = sendUserMessage(client, question, attachments, options, payload.sessionId)
     if (ok) lastSentSessionId = payload.sessionId
     // 与宠物胶囊一致：记录"用户已发言"（启动称呼引导据此判断是否还问名字）
@@ -265,10 +270,19 @@ export function setupWorkPetSide(client: WsClient): () => void {
     }
   )
 
-  const offInterrupt = bridge.work?.onInterrupt?.(() => {
-    const sent = client.send('interrupt', {})
-    stopVoiceNow('工作模式停止')
-    if (import.meta.env.DEV) console.log(`[work] 打断已发（sent=${sent}）`)
+  const offInterrupt = bridge.work?.onInterrupt?.((sessionId?: string) => {
+    const sent = client.send('interrupt', {
+      ...(sessionId ? { session_id: sessionId } : {})
+    })
+    if (isForegroundSession(sessionId)) stopVoiceNow('工作模式停止')
+    if (import.meta.env.DEV) console.log(`[work] 打断已发（session=${sessionId ?? '前台'} sent=${sent}）`)
+  })
+
+  const offFocusConversation = bridge.work?.onFocusConversation?.((sessionId: string) => {
+    setActiveConversationId(sessionId)
+    client.send('conversation_focus', { session_id: sessionId })
+    // 切换后旧对话的 TTS 不再继续占用前台声音
+    stopVoiceNow('切换对话')
   })
 
   const offDeleteMessage = bridge.work?.onDeleteMessage?.(({ dbId, sessionId }) => {
@@ -317,49 +331,50 @@ export function setupWorkPetSide(client: WsClient): () => void {
     })
   })
 
-  const offMessageSaved = client.on('message_saved', ({ client_id, db_id, role }) => {
+  const offMessageSaved = client.on('message_saved', ({ client_id, db_id, role, session_id }) => {
     emitNow({
       kind: 'message_saved',
       clientId: client_id,
       dbId: db_id,
       role,
-      sessionId: lastSentSessionId
+      sessionId: session_id ?? lastSentSessionId
     })
   })
 
-  const offMessageDeleted = client.on('message_deleted', ({ id, ok }) => {
+  const offMessageDeleted = client.on('message_deleted', ({ id, ok, session_id }) => {
     emitNow({
       kind: 'message_deleted',
       dbId: id,
       ok,
-      sessionId: lastDeleteSessionId ?? lastSentSessionId
+      sessionId: (session_id as string | undefined) ?? lastDeleteSessionId ?? lastSentSessionId
     })
   })
 
-  const offSources = client.on('sources', ({ message_id, items }) => {
+  const offSources = client.on('sources', ({ message_id, items, session_id }) => {
     emitNow({
       kind: 'sources',
       messageId: message_id,
       items,
-      sessionId: messageSessions.get(message_id)
+      sessionId: session_id ?? messageSessions.get(message_id)
     })
   })
 
-  const offReplyStart = client.on('reply_start', ({ message_id }) => {
+  const offReplyStart = client.on('reply_start', ({ message_id, session_id }) => {
     currentStream.set(message_id, {
       text: '',
       reasoning: '',
       startedAt: lastUserSentAt || Date.now()
     })
-    if (lastSentSessionId) messageSessions.set(message_id, lastSentSessionId)
+    const sid = session_id ?? lastSentSessionId
+    if (sid) messageSessions.set(message_id, sid)
     emitNow({
       kind: 'reply_start',
       messageId: message_id,
-      sessionId: messageSessions.get(message_id)
+      sessionId: sid
     })
   })
 
-  const offReasoning = client.on('reasoning', ({ message_id, text }) => {
+  const offReasoning = client.on('reasoning', ({ message_id, text, session_id }) => {
     const stream = currentStream.get(message_id)
     if (stream !== undefined) stream.reasoning += text
     else currentStream.set(message_id, { text: '', reasoning: text, startedAt: lastUserSentAt || Date.now() })
@@ -367,11 +382,11 @@ export function setupWorkPetSide(client: WsClient): () => void {
       kind: 'reasoning',
       messageId: message_id,
       text,
-      sessionId: messageSessions.get(message_id)
+      sessionId: session_id ?? messageSessions.get(message_id)
     })
   })
 
-  const offToken = client.on('token', ({ message_id, text }) => {
+  const offToken = client.on('token', ({ message_id, text, session_id }) => {
     const stream = currentStream.get(message_id)
     if (stream !== undefined) stream.text += text
     else currentStream.set(message_id, { text, reasoning: '', startedAt: lastUserSentAt || Date.now() })
@@ -379,11 +394,11 @@ export function setupWorkPetSide(client: WsClient): () => void {
       kind: 'token',
       messageId: message_id,
       text,
-      sessionId: messageSessions.get(message_id)
+      sessionId: session_id ?? messageSessions.get(message_id)
     })
   })
 
-  const offReplyEnd = client.on('reply_end', ({ message_id, full_text, interrupted }) => {
+  const offReplyEnd = client.on('reply_end', ({ message_id, full_text, interrupted, session_id }) => {
     flush()
     currentStream.delete(message_id)
     emitNow({
@@ -391,16 +406,16 @@ export function setupWorkPetSide(client: WsClient): () => void {
       messageId: message_id,
       fullText: full_text ?? '',
       interrupted: Boolean(interrupted),
-      sessionId: messageSessions.get(message_id)
+      sessionId: session_id ?? messageSessions.get(message_id)
     })
     messageSessions.delete(message_id)
   })
 
-  const offState = client.on('state', ({ state }) => {
-    emitNow({ kind: 'state', state, sessionId: lastSentSessionId })
+  const offState = client.on('state', ({ state, session_id }) => {
+    emitNow({ kind: 'state', state, sessionId: session_id ?? lastSentSessionId })
   })
 
-  const offEmotion = client.on('emotion', ({ message_id, emotion, intensity }) => {
+  const offEmotion = client.on('emotion', ({ message_id, emotion, intensity, session_id }) => {
     // tap_head 的 emotion 没有 message_id：不是对话消息，不镜像
     if (!message_id) return
     emitNow({
@@ -408,17 +423,17 @@ export function setupWorkPetSide(client: WsClient): () => void {
       messageId: message_id,
       emotion,
       intensity,
-      sessionId: messageSessions.get(message_id)
+      sessionId: session_id ?? messageSessions.get(message_id)
     })
   })
 
-  const offNotice = client.on('notice', ({ code, message, level }) => {
-    emitNow({ kind: 'notice', code, message, level, sessionId: lastSentSessionId })
+  const offNotice = client.on('notice', ({ code, message, level, session_id }) => {
+    emitNow({ kind: 'notice', code, message, level, sessionId: session_id ?? lastSentSessionId })
   })
 
   // 对话/连接错误也镜像到工作窗：用户可能正看着工作窗，不能只让宠物气泡提示
-  const offError = client.on('error', ({ code, message }) => {
-    emitNow({ kind: 'notice', code, message, level: 'error' })
+  const offError = client.on('error', ({ code, message, session_id }) => {
+    emitNow({ kind: 'notice', code, message, level: 'error', sessionId: session_id ?? lastSentSessionId })
   })
 
   // 补一次当前存在性：宠物窗重载时可能错过主进程在 did-finish-load 时发来的 presence
@@ -528,6 +543,7 @@ export function setupWorkPetSide(client: WsClient): () => void {
     offRenameConversationRequest?.()
     offDeleteConversationRequest?.()
     offInterrupt?.()
+    offFocusConversation?.()
     offDeleteMessage?.()
     offPresence?.()
     offSent()

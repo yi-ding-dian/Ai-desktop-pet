@@ -237,8 +237,12 @@ export const IPC_WORK = {
   SEND_REQUEST: 'work:send-request',
   /** 宠物窗 → 主：发送结果（回给 invoke） */
   SEND_RESULT: 'work:send-result',
-  /** 工作窗 → 主 → 宠物窗：打断 */
+  /** 工作窗 → 主 → 宠物窗：打断（payload: {sessionId}；缺省前台会话） */
   INTERRUPT: 'work:interrupt',
+  /** 工作窗 → 主 → 宠物窗：切换前台对话（决定宠物气泡/语音跟谁） */
+  FOCUS_CONVERSATION: 'work:focus-conversation',
+  /** 主 → 宠物窗：切换前台对话 */
+  FOCUS_CONVERSATION_REQUEST: 'work:focus-conversation-request',
   /** 工作窗 → 主：删除单条消息（payload: {dbId}） */
   DELETE_MESSAGE: 'work:delete-message',
   /** 主 → 宠物窗：删除单条消息（宠物面发 WS delete_message） */
