@@ -16,7 +16,6 @@ from loguru import logger
 
 from backend.application.chat_pipeline.emitter import emit_parts, send_notice
 from backend.application.chat_pipeline.prompts import (
-    SEARCH_HINT,
     TEACHING_HINT,
     PromptBuilder,
     insert_system_hints,
@@ -240,12 +239,12 @@ class ChatPipeline:
                 memory_block = await self._prompts.build_memory_block(user_text)
                 history = session.recent_messages()  # 当前用户消息尚未 append
                 candidate = self._prompts.compose_messages(
-                    memory_block, history, content, images=images
+                    memory_block, history, content, images=images, search=search
                 )
                 budget = self._prompts.context_budget()
                 if estimate_messages_tokens(candidate) > budget:
                     without_history = self._prompts.compose_messages(
-                        memory_block, [], content, images=images
+                        memory_block, [], content, images=images, search=search
                     )
                     required = estimate_messages_tokens(without_history)
                     if required > budget:
@@ -297,7 +296,9 @@ class ChatPipeline:
                 messages = (
                     llm_messages
                     if llm_messages is not None
-                    else await self._prompts.build_messages(session, user_text=user_text)
+                    else await self._prompts.build_messages(
+                        session, user_text=user_text, search=search
+                    )
                 )
                 use_tools = self._tools is not None and not tools_unsupported()
                 # 提醒意图（动作 + 明确时间）强制 tool_choice
@@ -320,10 +321,10 @@ class ChatPipeline:
                         }
                         logger.info("意图明确，强制调用工具：{}", forced_tool)
 
-                # 工作模式/教学模式：临时提示（不落库、不进历史）
+                # 教学模式：临时提示（不落库、不进历史）。
+                # 智能搜索不再额外加提示：工具清单本身已按本轮开关生成，
+                # 每轮多一段“已开启搜索”的说明只是重复（2026-10-24 清理）。
                 extra_system: list[str] = []
-                if options is not None and options.search and self._tools is not None:
-                    extra_system.append(SEARCH_HINT)
                 if teaching:
                     extra_system.append(TEACHING_HINT)
                 messages = insert_system_hints(messages, extra_system)

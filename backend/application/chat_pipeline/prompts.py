@@ -23,11 +23,15 @@ if TYPE_CHECKING:  # 仅类型注解；运行时经 Protocol/鸭子类型协作�
 #: 受“智能搜索”开关控制的工具名（其余工具不受影响）
 SEARCH_TOOL_NAMES = frozenset({"web_search", "web_fetch"})
 
-#: 工作模式「智能搜索」开启时的临时 system 提示（不落库、不进历史）
-SEARCH_HINT = (
-    "本轮已开启联网搜索：涉及时事、数据、价格、版本等可能变化的事实时，"
-    "优先调用 web_search 核实，不要凭记忆直接断言。"
-)
+
+def tool_gist(description: str) -> str:
+    """工具描述压成一行（取第一句，超长再截断）：system 里的清单只留“何时用”。"""
+    text = " ".join((description or "").split())
+    for index, char in enumerate(text):
+        if char in "。！？":
+            return text[: index + 1]
+    return text if len(text) <= 80 else f"{text[:80]}…"
+
 
 #: 教学模式（黑板）的临时 system 提示：讲课/讲文档场景的结构化输出要求
 TEACHING_HINT = (
@@ -87,8 +91,23 @@ class PromptBuilder:
         self._tools = tools
         self._config = config
 
+    def tool_lines(self, *, search: bool = True) -> list[str]:
+        """按**实际注册表**生成 system 里的工具清单（- 名字：何时用）。
+
+        - 未装配注册表（单测/旧装配）返回空列表，不编造工具；
+        - ``search=False``（本轮关闭智能搜索）时剔除联网工具，清单与真实可用工具一致。
+        """
+        if self._tools is None:
+            return []
+        lines: list[str] = []
+        for spec in self._tools.all():
+            if not search and spec.name in SEARCH_TOOL_NAMES:
+                continue
+            lines.append(f"- {spec.name}：{tool_gist(spec.description)}")
+        return lines
+
     async def build_messages(
-        self, session: Session, *, user_text: str
+        self, session: Session, *, user_text: str, search: bool = True
     ) -> list[ChatMessage]:
         """组装本轮请求 messages（§4.1/§4.2）：
 
@@ -98,7 +117,12 @@ class PromptBuilder:
         """
         pet_name = self._pet_name() if self._pet_name is not None else None
         messages = [
-            ChatMessage(role="system", content=build_system_prompt(pet_name=pet_name))
+            ChatMessage(
+                role="system",
+                content=build_system_prompt(
+                    pet_name=pet_name, tool_lines=self.tool_lines(search=search)
+                ),
+            )
         ]
         memory_block = await self.build_memory_block(user_text)
         if memory_block is not None:
@@ -169,11 +193,17 @@ class PromptBuilder:
         current_content: str,
         *,
         images: Sequence[str] = (),
+        search: bool = True,
     ) -> list[ChatMessage]:
         """文件轮的消息组装：system(人格) + [system(记忆)] + 历史 + 本轮（文本 + 图片）。"""
         pet_name = self._pet_name() if self._pet_name is not None else None
         messages = [
-            ChatMessage(role="system", content=build_system_prompt(pet_name=pet_name))
+            ChatMessage(
+                role="system",
+                content=build_system_prompt(
+                    pet_name=pet_name, tool_lines=self.tool_lines(search=search)
+                ),
+            )
         ]
         if memory_block is not None:
             messages.append(ChatMessage(role="system", content=memory_block))

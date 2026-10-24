@@ -8,8 +8,9 @@
 - ``disk.py``        ← disk_report / clean_disk（只读 + 确认后清理）
 - ``system.py``      ← inspect_system（只读巡检）
 
-新增内置工具时：在对应子模块追加 ``registry.register(ToolSpec(...))``，并同步
-``prompts/capabilities.md`` 的能力清单（模型据此知道何时调用）。
+新增内置工具时只需在对应子模块 ``registry.register(ToolSpec(...))``：
+``description`` 写清“何时调用”（system 里的工具清单按注册表自动生成，不再手工
+维护 ``prompts/capabilities.md``）；跨工具策略/安全边界才写进 capabilities.md。
 
 可选注入（不传时注册表与旧版一致，避免模块间硬依赖）：
 

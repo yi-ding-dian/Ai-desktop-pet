@@ -145,14 +145,15 @@ def test_search_false_removes_only_web_tools() -> None:
     names = [item["function"]["name"] for item in provider.seen_opts[0]["tools"]]
     assert "web_search" not in names and "web_fetch" not in names
     assert "open_settings" in names and "open_work" in names
-    # 关闭搜索时不附加“优先联网”提示
-    system_texts = [
+    # system 里的工具清单同样不含联网工具（清单按注册表 + 本轮开关生成）
+    system_text = "\n".join(
         m.content for m in provider.seen_messages[0] if m.role == "system"
-    ]
-    assert not any("本轮已开启联网搜索" in text for text in system_texts)
+    )
+    assert "- web_search：" not in system_text
+    assert "- web_fetch：" not in system_text
 
 
-def test_search_true_adds_hint_and_keeps_web_tools() -> None:
+def test_search_true_keeps_web_tools_and_lists_them() -> None:
     provider = FakeLLMProvider(pieces=["好"])
     run(
         provider,
@@ -163,10 +164,12 @@ def test_search_true_adds_hint_and_keeps_web_tools() -> None:
 
     names = [item["function"]["name"] for item in provider.seen_opts[0]["tools"]]
     assert "web_search" in names and "web_fetch" in names
-    system_texts = [
+    # 工具清单由注册表生成：搜索开着时联网工具在 system 里可见
+    system_text = "\n".join(
         m.content for m in provider.seen_messages[0] if m.role == "system"
-    ]
-    assert any("本轮已开启联网搜索" in text for text in system_texts)
+    )
+    assert "- web_search：" in system_text
+    assert "- web_fetch：" in system_text
 
 
 def test_teaching_adds_teaching_hint() -> None:

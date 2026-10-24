@@ -30,11 +30,15 @@ def test_emotion_values_cover_v1_whitelist_exactly() -> None:
     assert found == set(EMOTION_VALUES)
 
 
-def test_persona_notes_future_character_package_override() -> None:
-    """persona.md 必须注明将来由角色包覆盖（设计文档 §4.6）。"""
+def test_persona_assets_stay_token_lean() -> None:
+    """persona.md 只保留真正进模型的设定。
+
+    “将来由角色包覆盖”的说明放在模块 docstring 里（仍可查），不再以 HTML 注释
+    混进 system prompt 白烧 token（2026-10-24）。
+    """
     persona = load_persona()
-    assert "角色包" in persona
-    assert "§4.6" in persona
+    assert "<!--" not in persona
+    assert "角色包" not in persona
 
 
 def test_persona_override_takes_effect() -> None:
@@ -79,36 +83,44 @@ def test_pet_name_composes_with_persona_override() -> None:
     assert "<emo:happy>" in prompt
 
 
-# ---------------------------------------------------------------- 能力清单（§4.7 工具机制）
+# ---------------------------------------------------------------- 工具清单与使用规则（§4.7）
 
 
-def test_capabilities_injected_into_system_prompt() -> None:
-    """能力清单恒定注入：模型据此知道可调用 open_settings（而非只给操作步骤）。"""
-    prompt = build_system_prompt()
+def test_tool_lines_injected_into_system_prompt() -> None:
+    """工具清单按注册表动态注入：模型据此知道可调用 open_settings（而非只给操作步骤）。"""
+    prompt = build_system_prompt(tool_lines=["- open_settings：打开小兔的设置面板"])
+    assert "可用工具：" in prompt
     assert "open_settings" in prompt
     assert "设置面板" in prompt
     assert "工具" in prompt
 
 
-def test_capabilities_injected_with_persona_override_and_name() -> None:
-    """叠加不破坏既有结构：人格/名字在前，能力清单收尾。"""
-    prompt = build_system_prompt(persona_text="你是测试角色小白。", pet_name="毛毛")
+def test_tool_lines_injected_with_persona_override_and_name() -> None:
+    """叠加不破坏既有结构：人格/名字在前，工具清单在后。"""
+    prompt = build_system_prompt(
+        persona_text="你是测试角色小白。",
+        pet_name="毛毛",
+        tool_lines=["- open_settings：打开小兔的设置面板"],
+    )
     assert prompt.startswith("你是测试角色小白。")
     assert prompt.index("你的名字叫「毛毛」") < prompt.index("open_settings")
 
 
-def test_capabilities_file_loaded() -> None:
-    """能力清单来自 capabilities.md（非兜底）：含工具名与口语回应要求。"""
+def test_capabilities_file_holds_rules_not_tool_list() -> None:
+    """capabilities.md 只放跨工具规则；工具清单由注册表动态生成（避免漂移）。"""
     text = load_capabilities()
-    assert "open_settings" in text
     assert "好嘞" in text  # "调用前后用一句自然口语回应"的示例
+    assert "使用要求" in text
+    # 不再静态列举工具（“可用工具：”段 + “- 工具名：”行都由注册表生成）
+    assert "可用工具：" not in text
+    assert "- open_settings：" not in text
 
 
 def test_capabilities_fallback_when_file_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """capabilities.md 缺失时用模块内兜底常量（服务不因资产缺失而技能清单为空）。"""
+    """capabilities.md 缺失时用模块内兜底规则（服务不因资产缺失而失去策略）。"""
     monkeypatch.setattr(prompts, "_PROMPTS_DIR", tmp_path)
     text = load_capabilities()
     assert text == prompts._FALLBACK_CAPABILITIES
-    assert "open_settings" in text
+    assert "使用要求" in text
