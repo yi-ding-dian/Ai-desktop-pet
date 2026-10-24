@@ -157,3 +157,65 @@ def test_conversations_e2e(tmp_path) -> None:
             conn.close()
 
     asyncio.run(scenario())
+
+
+def test_two_conversations_reply_concurrently(tmp_path) -> None:
+    """两个会话同时发消息：两条回复各自完成，事件都带 session_id。"""
+
+    async def scenario() -> None:
+        conn = connect_db(tmp_path / "pet.db")
+        history = HistoryStore(conn)
+        sessions = SessionManager(store=history)
+        pipeline = ChatPipeline(provider=EchoLLMProvider(delay=0.2))
+        dispatcher = build_dispatcher(
+            pipeline=pipeline,
+            sessions=sessions,
+            token=TOKEN,
+            app_version="test",
+            history=history,
+        )
+        app = create_app(dispatcher=dispatcher, app_version="test")
+        config = uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=0,
+            log_config=None,
+            log_level="warning",
+            access_log=False,
+            lifespan="off",
+        )
+        server = uvicorn.Server(config)
+        task = asyncio.create_task(server.serve())
+        while not server.started:
+            if task.done():
+                await task
+            await asyncio.sleep(0.01)
+        port = int(server.servers[0].sockets[0].getsockname()[1])
+        try:
+            async with websockets.connect(f"ws://127.0.0.1:{port}/ws") as ws:
+                await hello(ws)
+                await ws.send(
+                    make_msg("user_message", {"text": "甲会话", "session_id": "a"})
+                )
+                await ws.send(
+                    make_msg("user_message", {"text": "乙会话", "session_id": "b"})
+                )
+                ends: dict[str, dict] = {}
+                while len(ends) < 2:
+                    evt = await recv(ws)
+                    if evt["type"] != "reply_end":
+                        continue
+                    data = evt["data"]
+                    assert data.get("session_id") in {"a", "b"}
+                    ends[data["session_id"]] = data
+                assert ends["a"]["message_id"] != ends["b"]["message_id"]
+                assert ends["a"]["full_text"]
+                assert ends["b"]["full_text"]
+                assert history.recent_messages("a")[0]["content"] == "甲会话"
+                assert history.recent_messages("b")[0]["content"] == "乙会话"
+        finally:
+            server.should_exit = True
+            await task
+            conn.close()
+
+    asyncio.run(scenario())

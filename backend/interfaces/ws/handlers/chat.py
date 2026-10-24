@@ -14,6 +14,7 @@ from backend.interfaces.ws.handlers.types import HandlerRegistry
 from backend.interfaces.ws.protocol import (
     PROTOCOL_VERSION,
     ConversationDeletedData,
+    ConversationFocusData,
     ConversationRenamedData,
     ConversationSummaryData,
     ConversationsData,
@@ -21,6 +22,7 @@ from backend.interfaces.ws.protocol import (
     DeleteMessageData,
     HelloAckData,
     HelloData,
+    InterruptData,
     ListConversationsData,
     LoadHistoryData,
     NoteAssistantMessageData,
@@ -125,9 +127,11 @@ def register_chat_handlers(
             engine.note_conversation()  # 被聊 → mood ↑（软状态）
         session = sessions.start(data.session_id or ctx.session_id)
         ctx.session_id = session.id
+        ctx.foreground_session_id = session.id
         await ctx.spawn_reply(
+            session.id,
             pipeline.run_turn(
-                ctx,
+                ctx.session_sink(session.id),
                 session=session,
                 user_text=text,
                 voice=ctx.voice,
@@ -145,13 +149,21 @@ def register_chat_handlers(
         )
 
     async def on_interrupt(ctx: ConnectionContext, msg: ClientMessage) -> None:
-        """打断（§7.2）：取消当前回复任务。
+        """打断（§7.2）：取消指定会话（缺省前台）的回复任务。
 
         LLM 流与 TTS 合成同属该任务的取消链——流水线收到取消后先清空 TTS
         队列、停止推帧（已合成的帧不再推），再推 reply_end{interrupted} 与
         state:idle。因此本处只需取消回复任务本身。
         """
-        await ctx.cancel_reply()
+        data = cast(InterruptData, msg.data)
+        target = data.session_id or ctx.foreground_session_id
+        await ctx.cancel_reply(target)
+
+    async def on_conversation_focus(ctx: ConnectionContext, msg: ClientMessage) -> None:
+        """工作窗切换对话：更新前台会话（决定宠物语音/表情跟谁走）。"""
+        data = cast(ConversationFocusData, msg.data)
+        if data.session_id:
+            ctx.foreground_session_id = data.session_id
 
     async def on_list_conversations(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """列出有消息的对话（工作窗「对话」左栏）。"""
@@ -188,7 +200,7 @@ def register_chat_handlers(
     async def on_delete_conversation(ctx: ConnectionContext, msg: ClientMessage) -> None:
         """删除对话及全部消息；正在回复的当前会话不允许删（避免流写回已删库）。"""
         data = cast(DeleteConversationData, msg.data)
-        if data.id == ctx.session_id and ctx.is_replying():
+        if ctx.is_replying(data.id):
             await ctx.send_event(
                 "conversation_deleted",
                 ConversationDeletedData(id=data.id, ok=False),
@@ -219,12 +231,17 @@ def register_chat_handlers(
         if session is None and session_id:
             session = sessions.start(session_id)  # 从库恢复（切换到旧对话后删消息）
         if session is None or history is None:
-            await ctx.send_event("message_deleted", {"id": data.id, "ok": False})
+            await ctx.send_event(
+                "message_deleted",
+                {"id": data.id, "ok": False, "session_id": session_id},
+            )
             return
         ok = history.delete_message(session.id, data.id)
         if ok:
             session.reload_history()
-        await ctx.send_event("message_deleted", {"id": data.id, "ok": ok})
+        await ctx.send_event(
+            "message_deleted", {"id": data.id, "ok": ok, "session_id": session.id}
+        )
         logger.info("删除消息 session={} id={} ok={}", session.id, data.id, ok)
 
     async def on_load_history(ctx: ConnectionContext, msg: ClientMessage) -> None:
@@ -275,6 +292,7 @@ def register_chat_handlers(
     registry.register("hello", on_hello)
     registry.register("user_message", on_user_message)
     registry.register("interrupt", on_interrupt)
+    registry.register("conversation_focus", on_conversation_focus)
     registry.register("load_history", on_load_history)
     registry.register("delete_message", on_delete_message)
     registry.register("list_conversations", on_list_conversations)

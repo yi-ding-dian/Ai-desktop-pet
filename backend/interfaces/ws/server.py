@@ -52,7 +52,10 @@ class ConnectionContext:
         self.session_id: str | None = None
         self.close_request: tuple[int, str] | None = None
         self._send_lock = asyncio.Lock()
-        self._reply_task: asyncio.Task[None] | None = None
+        #: 每个会话一条回复任务（2026-10-24：多对话并发）
+        self._reply_tasks: dict[str, asyncio.Task[None]] = {}
+        #: 前台会话：宠物气泡/语音/表情只跟它走（工作窗切换时更新）
+        self.foreground_session_id: str | None = None
 
     # ---------- ReplySink：对话流水线出站端口 ----------
 
@@ -163,31 +166,52 @@ class ConnectionContext:
         """请求消息循环关闭连接（发送完剩余事件后生效）。"""
         self.close_request = (code, reason)
 
-    async def spawn_reply(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
-        """启动一轮对话后台任务；若上一轮仍在流式中，先取消并等待其收尾。"""
-        await self.cancel_reply()
+    def session_sink(self, session_id: str) -> "SessionReplySink":
+        """给某个会话包一层出站端口：事件带 session_id，非前台抑制语音/表情。"""
+        return SessionReplySink(self, session_id)
+
+    async def spawn_reply(
+        self, session_id: str, coro: Coroutine[Any, Any, None]
+    ) -> asyncio.Task[None]:
+        """启动该会话的回复任务；同一会话上一轮仍在跑时先取消它（不影响其它会话）。"""
+        await self.cancel_reply(session_id)
         task = asyncio.create_task(self._guard_reply(coro))
-        self._reply_task = task
+        self._reply_tasks[session_id] = task
+
+        def _cleanup(done: asyncio.Task[None]) -> None:
+            if self._reply_tasks.get(session_id) is done:
+                self._reply_tasks.pop(session_id, None)
+
+        task.add_done_callback(_cleanup)
         return task
 
-    def is_replying(self) -> bool:
-        """当前连接是否有未完成的回复（删除当前对话前的保护判定）。"""
-        return self._reply_task is not None and not self._reply_task.done()
+    def is_replying(self, session_id: str | None = None) -> bool:
+        """是否有未完成的回复；传 session_id 时只查该会话。"""
+        if session_id is not None:
+            task = self._reply_tasks.get(session_id)
+            return task is not None and not task.done()
+        return any(not task.done() for task in self._reply_tasks.values())
 
-    async def cancel_reply(self) -> bool:
-        """取消当前回复任务并等待其收尾；返回是否确有任务被取消。"""
-        task = self._reply_task
-        self._reply_task = None
-        if task is None or task.done():
-            return False
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logger.exception("回复任务收尾时异常")
-        return True
+    async def cancel_reply(self, session_id: str | None = None) -> bool:
+        """取消指定会话（缺省全部）的回复并等待收尾；返回是否确有任务被取消。"""
+        if session_id is not None:
+            tasks = [self._reply_tasks.pop(session_id, None)]
+        else:
+            tasks = list(self._reply_tasks.values())
+            self._reply_tasks.clear()
+        cancelled = False
+        for task in tasks:
+            if task is None or task.done():
+                continue
+            cancelled = True
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("回复任务收尾时异常")
+        return cancelled
 
     async def shutdown(self) -> None:
         """连接结束时清理：取消未完成的回复任务。"""
@@ -202,6 +226,108 @@ class ConnectionContext:
         except Exception:
             logger.exception("对话流水线执行异常")
             await self.send_error(ErrorCode.INTERNAL, "对话处理失败")
+
+
+class SessionReplySink:
+    """按会话包一层：所有回合事件带 session_id；非前台会话不驱动宠物语音/表情。
+
+    - token / reply_start / reply_end / sources / message_saved / notice / error
+      / tool_call 原样加 session_id 后发送；
+    - state / sentence / emotion / 二进制音频只在会话是前台时发送，
+      避免两个对话同时说话、表情打架。
+    """
+
+    def __init__(self, ctx: ConnectionContext, session_id: str) -> None:
+        self._ctx = ctx
+        self._sid = session_id
+
+    def _foreground(self) -> bool:
+        focus = self._ctx.foreground_session_id
+        return focus is None or focus == self._sid
+
+    async def state(self, state: str) -> None:
+        if self._foreground():
+            await self._ctx.send_event("state", {"state": state, "session_id": self._sid})
+
+    async def reply_start(self, message_id: str) -> None:
+        await self._ctx.send_event(
+            "reply_start", {"message_id": message_id, "session_id": self._sid}
+        )
+
+    async def message_saved(self, client_id: str, db_id: int, role: str) -> None:
+        await self._ctx.send_event(
+            "message_saved",
+            {"client_id": client_id, "db_id": db_id, "role": role, "session_id": self._sid},
+        )
+
+    async def reasoning(self, message_id: str, text: str) -> None:
+        await self._ctx.send_event(
+            "reasoning", {"message_id": message_id, "text": text, "session_id": self._sid}
+        )
+
+    async def token(self, message_id: str, text: str) -> None:
+        await self._ctx.send_event(
+            "token", {"message_id": message_id, "text": text, "session_id": self._sid}
+        )
+
+    async def sentence(self, message_id: str, index: int, text: str) -> None:
+        if self._foreground():
+            await self._ctx.send_event(
+                "sentence",
+                {"message_id": message_id, "index": index, "text": text, "session_id": self._sid},
+            )
+
+    async def emotion(self, message_id: str, emotion: str, intensity: float) -> None:
+        if self._foreground():
+            await self._ctx.send_event(
+                "emotion",
+                {
+                    "message_id": message_id,
+                    "emotion": emotion,
+                    "intensity": intensity,
+                    "session_id": self._sid,
+                },
+            )
+
+    async def reply_end(
+        self, message_id: str, full_text: str, *, interrupted: bool = False
+    ) -> None:
+        data: dict[str, Any] = {
+            "message_id": message_id,
+            "full_text": full_text,
+            "session_id": self._sid,
+        }
+        if interrupted:
+            data["interrupted"] = True
+        await self._ctx.send_event("reply_end", data)
+
+    async def tool_call(self, tool_id: str, name: str, args: dict) -> None:
+        # 后台对话不触发前端工具（避免替用户打开设置/工作台等）
+        if not self._foreground():
+            return
+        await self._ctx.send_event(
+            "tool_call", {"id": tool_id, "name": name, "args": args, "session_id": self._sid}
+        )
+
+    async def notice(self, code: str, message: str, level: str = "info") -> None:
+        await self._ctx.send_event(
+            "notice",
+            {"code": code, "message": message, "level": level, "session_id": self._sid},
+        )
+
+    async def sources(self, message_id: str, items: list[dict]) -> None:
+        await self._ctx.send_event(
+            "sources", {"message_id": message_id, "items": items, "session_id": self._sid}
+        )
+
+    async def error(self, code: Any, message: str) -> None:
+        await self._ctx.send_event(
+            "error", {"code": str(code), "message": message, "session_id": self._sid}
+        )
+
+    async def send_binary(self, frame: bytes) -> None:
+        if self._foreground():
+            await self._ctx.send_binary(frame)
 
 
 def create_app(

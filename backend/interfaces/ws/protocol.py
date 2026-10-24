@@ -114,7 +114,15 @@ class PingData(EventData):
 
 
 class InterruptData(EventData):
-    """打断：取消当前流式回复。"""
+    """打断：取消指定会话的流式回复（缺省 = 当前前台会话）。"""
+
+    session_id: str | None = None
+
+
+class ConversationFocusData(EventData):
+    """工作窗切换对话：前台会话（决定宠物气泡/语音/表情跟谁走）。"""
+
+    session_id: str | None = None
 
 
 class PetEventData(EventData):
@@ -283,6 +291,7 @@ class StateData(EventData):
     """宠物状态机（驱动动画节奏与行为互斥）。"""
 
     state: Literal["idle", "walking", "sleeping", "thinking", "speaking", "dragging"]
+    session_id: str | None = None
 
 
 class BehaviorData(EventData):
@@ -297,6 +306,7 @@ class ReplyStartData(EventData):
     """一轮回复开始。"""
 
     message_id: str
+    session_id: str | None = None
 
 
 class MessageSavedData(EventData):
@@ -309,6 +319,7 @@ class MessageSavedData(EventData):
     client_id: str = ""
     db_id: int
     role: str
+    session_id: str | None = None
 
 
 class MessageDeletedData(EventData):
@@ -316,6 +327,7 @@ class MessageDeletedData(EventData):
 
     id: int
     ok: bool = True
+    session_id: str | None = None
 
 
 class ReasoningData(EventData):
@@ -327,6 +339,7 @@ class ReasoningData(EventData):
 
     message_id: str
     text: str
+    session_id: str | None = None
 
 
 class TokenData(EventData):
@@ -334,6 +347,7 @@ class TokenData(EventData):
 
     message_id: str
     text: str
+    session_id: str | None = None
 
 
 class SentenceData(EventData):
@@ -342,6 +356,7 @@ class SentenceData(EventData):
     message_id: str
     index: int
     text: str
+    session_id: str | None = None
 
 
 class EmotionData(EventData):
@@ -350,6 +365,7 @@ class EmotionData(EventData):
     message_id: str
     emotion: str
     intensity: float = 1.0
+    session_id: str | None = None
 
 
 class ReplyEndData(EventData):
@@ -358,6 +374,7 @@ class ReplyEndData(EventData):
     message_id: str
     full_text: str = ""
     interrupted: bool | None = None
+    session_id: str | None = None
 
 
 class ToolCallData(EventData):
@@ -498,6 +515,7 @@ class SourcesData(EventData):
 
     message_id: str
     items: list[SourceItemData] = Field(default_factory=list)
+    session_id: str | None = None
 
 
 class HistoryData(EventData):
@@ -586,6 +604,7 @@ class ErrorData(EventData):
     code: str
     message: str
     fatal: bool | None = None
+    session_id: str | None = None
 
 
 class PongData(EventData):
@@ -603,6 +622,7 @@ CLIENT_EVENT_MODELS: dict[str, type[EventData]] = {
     "user_message": UserMessageData,
     "ping": PingData,
     "interrupt": InterruptData,
+    "conversation_focus": ConversationFocusData,
     "pet_event": PetEventData,
     "get_config": GetConfigData,
     "set_config": SetConfigData,
