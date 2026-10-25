@@ -19,7 +19,7 @@ function state(overrides: Partial<AgentState> = {}): AgentState {
     startedAt: 1000,
     steps: [],
     todos: [],
-    usage: { calls: 0, input: 0, output: 0, cacheRead: 0 },
+    usage: { calls: 0, input: 0, output: 0, cacheRead: 0, cost: 0 },
     resumable: true,
     ...overrides
   } as AgentState

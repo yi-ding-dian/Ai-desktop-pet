@@ -32,7 +32,7 @@ def test_get_returns_configured_workspace(monkeypatch: pytest.MonkeyPatch) -> No
         lambda: SimpleNamespace(agent=SimpleNamespace(default_workspace="D:/pets")),
     )
     body = _client().get("/internal/agent-config", headers=_HEADER).json()
-    assert body == {"defaultWorkspace": "D:/pets"}
+    assert body == {"defaultWorkspace": "D:/pets", "thinkingLevel": "high"}
 
 
 def test_get_marks_broken_config(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -41,7 +41,11 @@ def test_get_marks_broken_config(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(config_module, "load_config", boom)
     body = _client().get("/internal/agent-config", headers=_HEADER).json()
-    assert body == {"defaultWorkspace": "", "configError": True}
+    assert body == {
+        "defaultWorkspace": "",
+        "thinkingLevel": "high",
+        "configError": True,
+    }
 
 
 def test_post_saves_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,9 +62,37 @@ def test_post_saves_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         headers=_HEADER,
     ).json()
 
-    assert body == {"ok": True, "defaultWorkspace": str(workspace)}
+    assert body == {
+        "ok": True,
+        "defaultWorkspace": str(workspace),
+        "thinkingLevel": "high",
+    }
     assert len(saved) == 1
     assert saved[0].agent.default_workspace == str(workspace)
+
+
+def test_post_saves_thinking_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = AppConfig()
+    saved: list[AppConfig] = []
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(config_module, "save_config", lambda value: saved.append(value))
+
+    body = _client().post(
+        "/internal/agent-config", json={"thinkingLevel": "max"}, headers=_HEADER
+    ).json()
+
+    assert body == {"ok": True, "defaultWorkspace": "", "thinkingLevel": "max"}
+    assert len(saved) == 1
+    assert saved[0].agent.thinking_level == "max"
+
+
+def test_post_rejects_invalid_thinking_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config_module, "load_config", lambda: AppConfig())
+    body = _client().post(
+        "/internal/agent-config", json={"thinkingLevel": "medium"}, headers=_HEADER
+    ).json()
+    assert body["ok"] is False
+    assert body["code"] == "INVALID_THINKING"
 
 
 def test_post_clears_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

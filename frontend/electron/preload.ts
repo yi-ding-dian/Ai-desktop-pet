@@ -2,7 +2,7 @@
  * preload：contextBridge 安全桥（只暴露白名单 API，设计文档 §2.2）。
  * 渲染进程只能访问 window.pet，无法触达 Node / Electron 原生能力。
  */
-import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   IPC,
   IPC_AGENT,
@@ -14,12 +14,14 @@ import {
   type AgentApprovePayload,
   type AgentExecutePlanPayload,
   type AgentFollowUpPayload,
+  type AgentLlmStatus,
   type AgentQuestionAnswerPayload,
   type AgentSetModePayload,
   type AgentStartPayload,
   type AgentState,
   type AgentTaskDraftPayload,
   type AgentTaskSummary,
+  type AgentWorkspaceCheck,
   type BackendReadyPayload,
   type BackendSnapshot,
   type BackendStatusPayload,
@@ -218,9 +220,9 @@ const api: PetBridgeApi = {
       return ipcRenderer.invoke(IPC.SYSTEM_OPEN_EXTERNAL, url)
     },
 
-    /** 写系统剪贴板（工作模式复制消息） */
-    copyText(text: string): void {
-      clipboard.writeText(String(text))
+    /** 写系统剪贴板（工作模式复制消息；沙箱 preload 没有 clipboard，交给主进程） */
+    copyText(text: string): Promise<void> {
+      return ipcRenderer.invoke(IPC.SYSTEM_COPY_TEXT, String(text))
     },
 
     /** 用默认程序打开本机文件/文件夹（主进程拒绝可执行/脚本类） */
@@ -594,6 +596,10 @@ const api: PetBridgeApi = {
       return ipcRenderer.invoke(IPC_AGENT.GET_STATE)
     },
 
+    validateWorkspace(path: string): Promise<AgentWorkspaceCheck> {
+      return ipcRenderer.invoke(IPC_AGENT.VALIDATE_WORKSPACE, path)
+    },
+
     pickWorkspace(): Promise<string | null> {
       return ipcRenderer.invoke(IPC_AGENT.PICK_WORKSPACE)
     },
@@ -677,6 +683,27 @@ const api: PetBridgeApi = {
       ipcRenderer.on(IPC_AGENT.TASK_DRAFT, listener)
       return () => {
         ipcRenderer.removeListener(IPC_AGENT.TASK_DRAFT, listener)
+      }
+    },
+
+    getLlmStatus(): Promise<AgentLlmStatus> {
+      return ipcRenderer.invoke(IPC_AGENT.GET_LLM_STATUS)
+    },
+
+    refreshLlmStatus(): Promise<AgentLlmStatus> {
+      return ipcRenderer.invoke(IPC_AGENT.REFRESH_LLM_STATUS)
+    },
+
+    setThinkingLevel(level: 'low' | 'high' | 'max'): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.SET_THINKING_LEVEL, level)
+    },
+
+    onLlmStatus(cb: (status: AgentLlmStatus) => void): () => void {
+      const listener = (_event: Electron.IpcRendererEvent, status: AgentLlmStatus): void =>
+        cb(status)
+      ipcRenderer.on(IPC_AGENT.LLM_STATUS, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_AGENT.LLM_STATUS, listener)
       }
     }
   },

@@ -50,6 +50,12 @@ export interface FormValues {
   searchCount: string
   /** 任务模式默认工作区（空 = 平台默认；保存后由主进程经内部端点读取） */
   agentDefaultWorkspace: string
+  /** 任务页顶部显示项（默认全部关闭） */
+  agentShowBalance: boolean
+  agentShowModel: boolean
+  agentShowCost: boolean
+  /** 任务模式思考强度（low / high / max；下次新任务生效） */
+  agentThinkingLevel: string
 }
 
 /** 空表单（等待 config 或字段缺失时的底座；布尔默认与 backend config.py 默认一致） */
@@ -73,7 +79,11 @@ export const EMPTY_FORM: FormValues = {
   searchEnabled: true,
   searchBaseUrl: 'https://api.deepseek.com',
   searchCount: '5',
-  agentDefaultWorkspace: ''
+  agentDefaultWorkspace: '',
+  agentShowBalance: false,
+  agentShowModel: false,
+  agentShowCost: false,
+  agentThinkingLevel: 'high'
 }
 
 // ------------------------------------------------------------------ 宽松读取工具
@@ -162,7 +172,14 @@ export function snapshotToForm(config: ConfigData): FormValues {
     searchEnabled: asBool(search?.enabled) ?? true,
     searchBaseUrl: asString(search?.base_url) ?? 'https://api.deepseek.com',
     searchCount: asNumberText(search?.count) ?? '5',
-    agentDefaultWorkspace: asString(agent?.default_workspace) ?? ''
+    agentDefaultWorkspace: asString(agent?.default_workspace) ?? '',
+    agentShowBalance: asBool(agent?.show_balance) ?? false,
+    agentShowModel: asBool(agent?.show_model) ?? false,
+    agentShowCost: asBool(agent?.show_cost) ?? false,
+    agentThinkingLevel:
+      asString(agent?.thinking_level) === 'low' || asString(agent?.thinking_level) === 'max'
+        ? (asString(agent?.thinking_level) as string)
+        : 'high'
   }
 }
 
@@ -263,6 +280,18 @@ export function buildPatch(
   const agentPatch: Record<string, unknown> = {}
   if (form.agentDefaultWorkspace.trim() !== baseline.agentDefaultWorkspace.trim()) {
     agentPatch.default_workspace = form.agentDefaultWorkspace.trim()
+  }
+  if (form.agentShowBalance !== baseline.agentShowBalance) {
+    agentPatch.show_balance = form.agentShowBalance
+  }
+  if (form.agentShowModel !== baseline.agentShowModel) {
+    agentPatch.show_model = form.agentShowModel
+  }
+  if (form.agentShowCost !== baseline.agentShowCost) {
+    agentPatch.show_cost = form.agentShowCost
+  }
+  if (form.agentThinkingLevel !== baseline.agentThinkingLevel) {
+    agentPatch.thinking_level = form.agentThinkingLevel
   }
   if (Object.keys(agentPatch).length > 0) patch.agent = agentPatch
 

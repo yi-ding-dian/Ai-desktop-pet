@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { renderMarkdownWithCitations } from '../../board/markdown'
 import type { AgentState, AgentStep, AgentTodoItem } from '../../../electron/ipc/channels'
-import { formatTime, formatTokens, handleMarkdownClick } from '../format'
+import { formatCost, formatTime, formatTokens, handleMarkdownClick } from '../format'
 import { TASK_START_ID } from './history'
 
 /** 消息底部：时间 · token · 复制（与对话模式一致，时间常显、按钮悬浮浮现） */
@@ -176,8 +176,8 @@ function TodoList({ items }: { items: AgentTodoItem[] }): ReactElement {
   )
 }
 
-/** 单轮统计：耗时 / 调用次数 / token / 上下文占用（固定渲染在最终回答之后）。 */
-function RoundStats({ step }: { step: AgentStep }): ReactElement {
+/** 单轮统计：耗时 / 调用次数 / token / 缓存命中率 / 费用 / 上下文占用（固定在最终回答之后）。 */
+function RoundStats({ step, showCost }: { step: AgentStep; showCost: boolean }): ReactElement {
   const stats = step.stats
   const seconds = Math.max(0, Math.round(((step.endedAt ?? step.startedAt) - step.startedAt) / 1000))
   const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
@@ -191,6 +191,10 @@ function RoundStats({ step }: { step: AgentStep }): ReactElement {
     generationMs > 0 && stats
       ? Math.round(stats.output / (generationMs / 1000))
       : 0
+  // 命中率按「命中 / 全部输入」算（DeepSeek 的 input 已是未命中部分）
+  const promptTokens = stats ? stats.input + stats.cacheRead : 0
+  const hitRate =
+    stats && promptTokens > 0 ? Math.round((stats.cacheRead / promptTokens) * 100) : 0
   return (
     <div className="task-round-stats">
       本轮耗时 {mm}:{ss}
@@ -198,8 +202,6 @@ function RoundStats({ step }: { step: AgentStep }): ReactElement {
         <>
           <span className="task-stats-sep"> · </span>
           调用 {stats.calls} 次
-          <span className="task-stats-sep"> · </span>
-          输入 {formatTokens(stats.input)} / 输出 {formatTokens(stats.output)} tokens
           {generationMs > 0 ? (
             <>
               <span className="task-stats-sep"> · </span>
@@ -207,10 +209,16 @@ function RoundStats({ step }: { step: AgentStep }): ReactElement {
               {tokensPerSecond > 0 ? <>{` · ${tokensPerSecond}token/s`}</> : null}
             </>
           ) : null}
-          {stats.cacheRead > 0 ? (
+          <br />
+          未命中 {formatTokens(stats.input)} / 命中 {formatTokens(stats.cacheRead)}
+          {promptTokens > 0 ? <>（{hitRate}%）</> : null} / 输出{' '}
+          {formatTokens(stats.output)} tokens
+          {showCost && typeof stats.cost === 'number' ? (
             <>
               <span className="task-stats-sep"> · </span>
-              缓存命中 {formatTokens(stats.cacheRead)}
+              <span title="按 DeepSeek 官方价估算：高峰/低谷自动折算；法定节假日未单独扣除">
+                费用 ≈{formatCost(stats.cost)}
+              </span>
             </>
           ) : null}
           {stats.contextWindow && stats.contextUsed ? (
@@ -329,6 +337,8 @@ export interface AgentFlowProps {
   canExecutePlan?: boolean
   /** 历史定位后短暂高亮的锚点 id（TASK_START_ID 或 round 步骤 id） */
   flashId?: string | null
+  /** 是否显示每轮费用（设置 → 任务；默认关闭） */
+  showCost?: boolean
   onAnswer?: (id: string, answer: string) => void
   onExecutePlan?: (mode: 'standard' | 'auto') => void
   /** 链接点击：与对话模式一致，交由工作窗内嵌浏览器打开 */
@@ -358,6 +368,7 @@ export default function AgentFlow({
   mode,
   canExecutePlan = false,
   flashId = null,
+  showCost = false,
   onAnswer,
   onExecutePlan,
   onLinkClick,
@@ -435,7 +446,7 @@ export default function AgentFlow({
           )
         }
         if (step.kind === 'stats') {
-          return <RoundStats key={step.id} step={step} />
+          return <RoundStats key={step.id} step={step} showCost={showCost} />
         }
         if (step.kind === 'text') {
           return (

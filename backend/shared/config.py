@@ -16,6 +16,7 @@ import re
 import tempfile
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 import tomlkit
 from loguru import logger
@@ -98,6 +99,12 @@ snooze_minutes              = 10
 #（Windows / Linux 都是「用户文档目录/ai-desktop-pet」）。
 # 必须是绝对路径；目录不存在时任务页会报错让你重新选择，不会静默换目录。
 default_workspace = ""
+# 任务页顶部显示项（默认都关闭；开启余额后每 10 分钟查询一次）
+show_balance = false
+show_model   = false
+show_cost    = false
+# 任务模式思考强度：low / high / max（默认 high；下次新任务生效）
+thinking_level = "high"
 
 [search]           # 联网搜索（DeepSeek Search / Fetch，2026-10-18；默认开启）
 # 打开后模型可调用 web_search / web_fetch：先搜网页、读结果，再回答。
@@ -408,9 +415,21 @@ class AgentConfig(BaseModel):
     ``ai-desktop-pet``）。这里只做**语法**校验（绝对路径），不检查目录是否存在——
     目录可能被用户临时删掉，读取配置时不能因此让整个配置加载失败；真正的可用性
     由主进程在启动任务前校验并给出可读错误。
+
+    ``show_balance`` / ``show_model`` / ``show_cost``：任务页顶部的三个显示开关，
+    默认全部关闭；关闭余额时后端连 ``/user/balance`` 都不会请求。
+
+    ``thinking_level``：任务模式思考强度（low / high / max），下次新任务生效；
+    对话模式不受影响。
     """
 
     default_workspace: str = ""
+    #: 任务页顶部显示项（默认全部关闭）
+    show_balance: bool = False
+    show_model: bool = False
+    show_cost: bool = False
+    #: 思考强度（任务模式；下次新任务生效）
+    thinking_level: Literal["low", "high", "max"] = "high"
 
     @field_validator("default_workspace")
     @classmethod

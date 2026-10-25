@@ -1,6 +1,7 @@
 /** Agent 事件流 → 面板步骤（思考/回复/工具/待办/统计）。 */
 import type { Agent, AgentEvent } from '@earendil-works/pi-agent-core'
 import { describeToolCall } from './tools'
+import { estimateCost } from './pricing'
 import {
   MAX_SOURCES,
   MAX_STEPS,
@@ -57,6 +58,7 @@ export class AgentEventTranslator {
         // 模型响应结束：累计 usage，并挂到本轮正文（没有正文就挂到本轮工具行）
         const message = event.message as {
           role?: string
+          timestamp?: number
           usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
         }
         // 生成时长 = 本次模型请求开始 → 响应结束（不含工具执行/等待）
@@ -74,6 +76,13 @@ export class AgentEventTranslator {
         session.roundInput += input
         session.roundOutput += output
         session.roundCache += cacheRead
+        // 费用按「请求开始时刻」判断高峰/低谷；未知模型不估算
+        if (session.price) {
+          const at = typeof message.timestamp === 'number' ? message.timestamp : Date.now()
+          const estimate = estimateCost(session.price, { input, cacheRead, output }, at)
+          session.roundCost += estimate.total
+          session.state.usage.cost = (session.state.usage.cost ?? 0) + estimate.total
+        }
         // 当前上下文 = 本次请求的输入（含缓存部分）+ 本次输出
         const windowSize = session.state.context?.window ?? 0
         const cacheWrite = message.usage.cacheWrite ?? 0

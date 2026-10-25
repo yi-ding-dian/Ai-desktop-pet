@@ -13,7 +13,7 @@ export function formatMessageTime(ms: number): string {
 export async function copyTextToClipboard(text: string): Promise<boolean> {
   if (!text) return false
   try {
-    getPetBridge().system.copyText(text)
+    await getPetBridge().system.copyText(text)
     return true
   } catch {
     try {

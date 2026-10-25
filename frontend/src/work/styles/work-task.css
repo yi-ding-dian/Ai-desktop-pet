@@ -770,23 +770,74 @@
   gap: 10px;
 }
 
-.task-ws-btn {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+.task-ws-wrap {
+  flex: 1 1 240px;
   min-width: 0;
-  max-width: 72%;
-  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.task-ws-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px 4px 10px;
   border: 1px solid var(--ui-border-soft);
   border-radius: 8px;
   background: var(--ui-panel-faint);
+}
+
+.task-ws-field:focus-within {
+  border-color: var(--ui-accent);
+}
+
+.task-ws-field-invalid {
+  border-color: rgba(255, 107, 107, 0.55);
+}
+
+.task-ws-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
   color: var(--ui-fg-dim);
+  font: inherit;
   font-size: 11.5px;
+  outline: none;
+}
+
+.task-ws-input::placeholder {
+  color: var(--ui-fg-faint);
+}
+
+.task-ws-pick {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ui-fg-faint);
   cursor: pointer;
 }
 
-.task-ws-btn:hover {
+.task-ws-pick:hover {
   background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
+.task-ws-error {
+  color: var(--ui-danger);
+  font-size: 11px;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .task-ws-default {
@@ -805,20 +856,20 @@
   color: var(--ui-fg);
 }
 
+.task-ws-default:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.task-ws-default:disabled:hover {
+  background: transparent;
+  color: var(--ui-fg-faint);
+}
+
 .task-ws-label {
   flex: none;
   color: var(--ui-fg-faint);
-}
-
-.task-ws-value {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-ws-empty {
-  color: var(--ui-fg-faint);
+  font-size: 11.5px;
 }
 
 .task-hero-hint {
@@ -1212,6 +1263,14 @@
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   text-align: center;
+}
+
+/* 任务累计费用（2026-10-25）：按官方价目估算，放右上角动作区 */
+.task-cost {
+  font-size: 11.5px;
+  color: var(--ui-fg-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* 上下文占用（80% 黄 / 90% 红；2026-10-24） */

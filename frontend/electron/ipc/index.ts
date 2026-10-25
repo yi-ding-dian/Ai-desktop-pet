@@ -7,6 +7,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Notification,
@@ -18,6 +19,7 @@ import { randomUUID } from 'node:crypto'
 import { extname } from 'node:path'
 import { IPC, IPC_AGENT, IPC_EVENTS, type PetWindowEdge, type WindowDebugState } from './channels'
 import { backendManager } from '../backend-process'
+import { llmStatusMonitor } from '../agent/llm-status'
 import { agentService } from '../agent/service'
 import { normalizeAttachments } from '../agent/attachments'
 import {
@@ -26,6 +28,7 @@ import {
   saveDefaultWorkspace
 } from '../agent/default-workspace'
 import type { AgentFollowUpPayload, AgentTaskDraftPayload } from '../agent/types'
+import { resolveWorkspace } from '../agent/workspace'
 import { draftTaskInWorkWindow, focusTaskInWorkWindow, pushToWorkWindow } from '../work'
 import { resolveAppIconImage } from '../app-icon'
 import { openConfirmBubble, setEdgeSpeechSuppression } from '../bubble'
@@ -212,6 +215,11 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   // - 打开文件拒绝可执行/脚本类（防“打开”变“运行”）；
   // - 删除必须先经确认（宠物面=气泡，设置面=原生对话框），且主进程再判一次
   //   受保护目录；执行用 shell.trashItem（系统回收站，可恢复），不做永久删除。
+
+  // 剪贴板：渲染层/沙箱 preload 不直接碰 Electron clipboard，统一经主进程写
+  ipcMain.handle(IPC.SYSTEM_COPY_TEXT, (_event, text: unknown) => {
+    clipboard.writeText(typeof text === 'string' ? text : String(text ?? ''))
+  })
 
   ipcMain.handle(IPC.SYSTEM_OPEN_EXTERNAL, async (_event, url: unknown) => {
     if (!isSafeHttpUrl(url)) {
@@ -606,6 +614,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(IPC_AGENT.START, (_event, payload) => agentService.start(payload))
   ipcMain.handle(IPC_AGENT.GET_STATE, () => agentService.getState())
+  // 手输工作区：与 agentService.start 共用 resolveWorkspace，保证提示与真正启动一致
+  ipcMain.handle(IPC_AGENT.VALIDATE_WORKSPACE, (_event, raw: unknown) => {
+    try {
+      return { ok: true, path: resolveWorkspace(typeof raw === 'string' ? raw : '') }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
   ipcMain.handle(IPC_AGENT.CANCEL, (_event, id: unknown) =>
     agentService.cancel(typeof id === 'string' && id ? id : agentService.getState().id, 'user')
   )
@@ -627,6 +643,12 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   )
   ipcMain.handle(IPC_AGENT.SET_MODE, (_event, payload) => agentService.setMode(payload))
   ipcMain.handle(IPC_AGENT.EXECUTE_PLAN, (_event, payload) => agentService.executePlan(payload))
+  // 模型 + 余额：主进程缓存，10 分钟轮询；渲染层只拿结果
+  ipcMain.handle(IPC_AGENT.GET_LLM_STATUS, () => llmStatusMonitor.ensureFresh())
+  ipcMain.handle(IPC_AGENT.REFRESH_LLM_STATUS, () => llmStatusMonitor.refresh(true))
+  ipcMain.handle(IPC_AGENT.SET_THINKING_LEVEL, (_event, level: unknown) =>
+    llmStatusMonitor.setThinkingLevel(typeof level === 'string' ? level : '')
+  )
 
   // 默认工作区（config.toml [agent]）；配置无效时 invoke 直接 reject，任务页展示原因
   ipcMain.handle(IPC_AGENT.GET_DEFAULT_WORKSPACE, () => resolveDefaultWorkspace())
@@ -658,6 +680,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   // 状态推送：任务状态以 agentService 为真相源，面板挂载时另有 get-state 补拉
   agentService.onState((state) => pushToWorkWindow(IPC_AGENT.STATE, state))
   agentService.onTasks((tasks) => pushToWorkWindow(IPC_AGENT.TASKS, tasks))
+  llmStatusMonitor.onStatus((status) => pushToWorkWindow(IPC_AGENT.LLM_STATUS, status))
+  llmStatusMonitor.start()
   // 后台任务等待确认/回答：系统通知 + 点击直达该任务
   agentService.onAttention((attention) => {
     if (!Notification.isSupported()) return

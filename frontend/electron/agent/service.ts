@@ -19,7 +19,13 @@ import { join } from 'node:path'
 import { app, shell } from 'electron'
 import type { Agent } from '@earendil-works/pi-agent-core'
 import type { ImageContent } from '@earendil-works/pi-ai'
-import { buildAgent, type BuiltAgent } from './pi'
+import {
+  buildAgent,
+  normalizeThinkingLevel,
+  thinkingLevelsForModel,
+  type BuiltAgent
+} from './pi'
+import { priceForModel } from './pricing'
 import { createTools, describeToolCall, type ApprovalDescription } from './tools'
 import { decideToolCall } from './policy'
 import { MAX_PARALLEL_TASKS, findRunnableIndex, type QueueItem } from './queue'
@@ -36,7 +42,7 @@ import {
 import { buildPrompt, normalizeAttachments } from './attachments'
 import { AgentEventTranslator } from './events'
 import { fetchLlmKey } from './llm-key'
-import { callInternal } from './internal-api'
+import { callInternal, callInternalGet } from './internal-api'
 import { buildModeInstruction } from './prompt'
 import {
   APPROVAL_TIMEOUT_MS,
@@ -467,6 +473,7 @@ export class AgentService {
     session.roundInput = 0
     session.roundOutput = 0
     session.roundCache = 0
+    session.roundCost = 0
     session.state.status = 'queued'
     session.state.error = undefined
     session.state.endedAt = undefined
@@ -540,7 +547,14 @@ export class AgentService {
    */
   private async createSessionAgent(session: Session): Promise<BuiltAgent> {
     const workspace = session.state.workspace
-    const key = await fetchLlmKey()
+    // Key 与任务配置并行取；配置失败只影响思考强度（回退 high），不阻断任务
+    const [key, agentConfig] = await Promise.all([
+      fetchLlmKey(),
+      callInternalGet('/internal/agent-config').catch((err) => {
+        console.warn('[agent] 读取任务配置失败，思考强度按 high：', (err as Error).message)
+        return null
+      })
+    ])
     const tools = createTools({
       workspace,
       // 数组原地追加：后续追问附上的文件也能被 read_file 读到
@@ -557,12 +571,18 @@ export class AgentService {
     if (history === null) {
       throw new Error('任务对话记录损坏，无法恢复上下文；请新开一个任务')
     }
+    // 配置里的强度若不被当前模型支持（如 v4-pro 的 low），回退 high
+    const configuredThinking = normalizeThinkingLevel(agentConfig?.thinkingLevel)
+    const thinkingLevel = thinkingLevelsForModel(key.model).includes(configuredThinking)
+      ? configuredThinking
+      : 'high'
 
     return buildAgent({
       apiKey: key.key,
       baseUrl: key.baseUrl,
       model: key.model,
       mode: session.state.mode,
+      thinkingLevel,
       tools,
       history,
       beforeToolCall: async ({ toolCall, args }) => {
@@ -609,6 +629,9 @@ export class AgentService {
   private installAgent(session: Session, built: BuiltAgent): void {
     session.agent = built.agent
     this.modelId = built.modelId
+    session.state.model = built.modelId
+    // 费用估算按模型单价；自定义/未知模型为 null，面板不显示费用
+    session.price = priceForModel(built.modelId)
     session.state.context = { used: 0, window: built.contextWindow }
     session.agent.subscribe((event) => this.translator.onAgentEvent(session, event))
   }
@@ -793,11 +816,13 @@ export class AgentService {
         input: session.roundInput,
         output: session.roundOutput,
         cacheRead: session.roundCache,
+        cost: session.price ? session.roundCost : undefined,
         generationMs: session.roundGenMs,
         contextUsed: session.state.context?.used,
         contextWindow: session.state.context?.window
       }
     })
+    session.roundCost = 0
     session.roundCalls = 0
     session.roundInput = 0
     session.roundOutput = 0
@@ -997,6 +1022,7 @@ export class AgentService {
             id: session.state.id,
             task: session.state.task,
             workspace: session.state.workspace,
+            model: session.state.model,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
             status: session.state.status,

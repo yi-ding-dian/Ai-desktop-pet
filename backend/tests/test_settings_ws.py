@@ -192,6 +192,43 @@ def test_set_config_agent_workspace_requires_existing_dir(tmp_path: Path) -> Non
     asyncio.run(scenario())
 
 
+def test_set_config_agent_display_flags(tmp_path: Path) -> None:
+    """任务页顶部三个显示开关默认关闭，打开后写回 config.toml。"""
+
+    async def scenario() -> None:
+        dispatcher, _ = make_dispatcher(with_settings=True)
+        before = load_config(tmp_path / "config.toml").agent
+        assert before.show_model is False
+        assert before.show_cost is False
+        assert before.show_balance is False
+        assert before.thinking_level == "high"
+
+        ctx = FakeCtx()
+        await dispatch(
+            dispatcher,
+            ctx,
+            "set_config",
+            {
+                "patch": {
+                    "agent": {
+                        "show_model": True,
+                        "show_cost": True,
+                        "show_balance": True,
+                        "thinking_level": "max",
+                    }
+                }
+            },
+        )
+        assert ctx.errors == []
+        after = load_config(tmp_path / "config.toml").agent
+        assert after.show_model is True
+        assert after.show_cost is True
+        assert after.show_balance is True
+        assert after.thinking_level == "max"
+
+    asyncio.run(scenario())
+
+
 def test_set_config_success_pushes_config_reply(tmp_path: Path) -> None:
     async def scenario() -> None:
         dispatcher, runtime = make_dispatcher(with_settings=True)

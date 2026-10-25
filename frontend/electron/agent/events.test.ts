@@ -7,6 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import { AgentEventTranslator } from './events'
+import { priceForModel } from './pricing'
 import { buildAgentSystemPrompt } from './prompt'
 import { createSession } from './session'
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
@@ -81,6 +82,28 @@ async function main(): Promise<void> {
       result: { content: [{ type: 'text', text: '抓取失败' }] }
     })
     assert.equal(session.state.sources?.length, 2)
+  })
+
+  check('用量：按模型单价与请求时刻的峰谷价累计费用', () => {
+    const priced = createSession('t-price', '计费', '', Date.now())
+    priced.price = priceForModel('deepseek-flash')
+    const costTranslator = new AgentEventTranslator({
+      touch: () => undefined,
+      audit: () => undefined
+    })
+    const at = Date.UTC(2026, 9, 26, 2, 0) // 周一 02:00 UTC = 高峰
+    costTranslator.onAgentEvent(priced, { type: 'turn_start' } as AgentEvent)
+    costTranslator.onAgentEvent(priced, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        timestamp: at,
+        usage: { input: 1000, output: 500, cacheRead: 2000, cacheWrite: 0 }
+      }
+    } as unknown as AgentEvent)
+    const expected = (1000 * 2 + 2000 * 0.04 + 500 * 8) / 1_000_000
+    assert.ok(Math.abs(priced.state.usage.cost - expected) < 1e-12)
+    assert.ok(Math.abs(priced.roundCost - expected) < 1e-12)
   })
 
   check('系统提示词：注入当前本地时间与搜索日期提示', () => {

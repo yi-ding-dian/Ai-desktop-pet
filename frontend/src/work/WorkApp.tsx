@@ -184,6 +184,32 @@ export default function WorkApp(): ReactElement {
     }
   }, [])
 
+  // 选中文本 → Ctrl/Cmd+C：无应用菜单时 Chromium 的原生复制可能失效，这里显式写剪贴板。
+  // 输入框/可编辑区不接管，保留原生行为。
+  useEffect(() => {
+    const onCopyKey = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+      if (event.key.toLowerCase() !== 'c') return
+      const target = event.target as HTMLElement | null
+      // 输入框：用 selectionStart/End 取选中段（原生快捷键在无菜单窗口里也不稳）
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        const start = target.selectionStart ?? 0
+        const end = target.selectionEnd ?? 0
+        if (start === end) return
+        event.preventDefault()
+        void copyTextToClipboard(target.value.slice(start, end))
+        return
+      }
+      if (target?.closest('[contenteditable="true"]')) return
+      const selection = window.getSelection()?.toString() ?? ''
+      if (!selection) return
+      event.preventDefault()
+      void copyTextToClipboard(selection)
+    }
+    window.addEventListener('keydown', onCopyKey)
+    return () => window.removeEventListener('keydown', onCopyKey)
+  }, [])
+
   // 通知点击：切到任务标签并聚焦指定任务；宠物窗带文件的消息：切任务标签并交给 TaskPanel
   useEffect(() => {
     let offFocus: (() => void) | undefined

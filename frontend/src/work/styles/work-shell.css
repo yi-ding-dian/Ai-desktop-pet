@@ -328,6 +328,8 @@ body,
 /* ---------------------------------------------------------------- 顶栏 */
 
 .task-head {
+  position: relative;
+  z-index: 5;
   flex: none;
   display: flex;
   align-items: center;
@@ -349,6 +351,192 @@ body,
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 任务头部中间：模型 / 工作目录 / 本次费用 / 余额（2026-10-25） */
+
+.task-head-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ui-fg-faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-model {
+  white-space: nowrap;
+}
+
+.task-model-static {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 模型 + 思考强度（点击切换，下次新任务生效；2026-10-25） */
+
+.task-thinking {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.task-thinking-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 240px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.task-thinking-btn > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-thinking-btn:hover {
+  color: var(--ui-fg);
+}
+
+.task-thinking-level {
+  color: var(--ui-fg-faint);
+}
+
+.task-thinking-caret {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+.task-thinking-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  background: var(--ui-panel);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+
+.task-thinking-menu-head {
+  padding: 6px 8px 4px;
+  color: var(--ui-fg-faint);
+  font-size: 10.5px;
+}
+
+.task-thinking-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ui-fg-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-thinking-item:hover {
+  background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
+.task-thinking-item-active {
+  color: var(--ui-fg);
+}
+
+.task-thinking-item:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.task-thinking-check {
+  color: var(--ui-accent);
+}
+
+/* 「下次新任务生效」短暂提示（不参与布局，避免顶栏跳动） */
+.task-thinking-note {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  white-space: nowrap;
+  color: var(--ui-fg-faint);
+  font-size: 10.5px;
+}
+
+.task-thinking-note-error {
+  color: var(--ui-danger);
+}
+
+.task-workspace {
+  flex: 1 1 auto;
+  min-width: 40px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-balance {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.task-balance:hover {
+  color: var(--ui-fg);
+}
+
+.task-balance-refresh {
+  display: inline-block;
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.task-balance-busy .task-balance-refresh {
+  animation: task-spin 0.9s linear infinite;
+}
+
+@keyframes task-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.task-balance-low {
+  color: #d9a441;
+  font-weight: 600;
+}
+
+/* 上次刷新失败但保留了旧值 */
+.task-balance-stale {
+  opacity: 0.72;
 }
 /* ============================================================================
  * 任务模式：左侧任务列表 + 居中空态（2026-10-23）

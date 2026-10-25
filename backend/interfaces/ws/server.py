@@ -11,6 +11,7 @@ import secrets as _secrets
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket
 from fastapi.responses import JSONResponse
@@ -381,6 +382,129 @@ def create_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    def _balance_origin(base_url: str) -> str | None:
+        """官方 DeepSeek 端点才支持 /user/balance；自定义兼容端点返回 None。"""
+        raw = (base_url or "").strip()
+        if not raw:
+            return "https://api.deepseek.com"
+        try:
+            parsed = urlparse(raw)
+        except ValueError:
+            return None
+        host = (parsed.netloc or "").lower()
+        if host != "api.deepseek.com" and not host.endswith(".api.deepseek.com"):
+            return None
+        return f"{parsed.scheme or 'https'}://{host}"
+
+    def _balance_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @app.get("/internal/llm-status")
+    async def internal_llm_status(
+        x_pet_internal_token: str | None = Header(default=None, alias="X-Pet-Internal-Token"),
+    ) -> JSONResponse:
+        """当前模型 + DeepSeek 账户余额（任务页顶部；10 分钟轮询由主进程控制）。
+
+        余额只对官方端点可用；自定义兼容端点返回 ``custom_endpoint``，不抛错。
+        失败也返回 200 + code/message，主进程保留上一次成功的余额。
+        """
+        _require_internal(x_pet_internal_token)
+        import httpx
+
+        from backend.shared.config import load_config
+        from backend.shared.secrets import get_llm_key
+
+        key = get_llm_key() or ""
+        try:
+            config = load_config()
+            llm = config.llm
+            base_url, model = llm.base_url, llm.model
+            # 任务页顶部显示项（默认关闭）；关闭余额时连请求都不发
+            agent = getattr(config, "agent", None)
+            show_balance = bool(getattr(agent, "show_balance", False))
+            show_model = bool(getattr(agent, "show_model", False))
+            show_cost = bool(getattr(agent, "show_cost", False))
+            thinking_level = str(getattr(agent, "thinking_level", "high"))
+        except Exception:  # noqa: BLE001 - 配置损坏按未配置处理（与 llm-key 一致）
+            logger.warning("读取 LLM 配置失败，余额查询按未配置处理")
+            base_url, model = "", ""
+            show_balance = show_model = show_cost = False
+            thinking_level = "high"
+
+        payload: dict[str, Any] = {
+            "configured": bool(key),
+            "model": model,
+            "showBalance": show_balance,
+            "showModel": show_model,
+            "showCost": show_cost,
+            "thinkingLevel": thinking_level,
+            "balanceSupported": False,
+            "currency": "",
+            "total": None,
+            "granted": None,
+            "toppedUp": None,
+            "code": "",
+            "message": "",
+        }
+        if not show_balance:
+            return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+        if not key:
+            payload.update(code="no_key", message="还没有配置聊天模型")
+            return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+        origin = _balance_origin(base_url)
+        if origin is None:
+            payload.update(code="custom_endpoint", message="自定义端点不支持查询余额")
+            return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+        payload["balanceSupported"] = True
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.get(
+                    f"{origin}/user/balance",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+            if response.status_code != 200:
+                payload.update(
+                    code="http_error", message=f"余额查询失败（HTTP {response.status_code}）"
+                )
+                return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+            data = response.json()
+            raw_infos = data.get("balance_infos") if isinstance(data, dict) else None
+            infos = (
+                [item for item in raw_infos if isinstance(item, dict)]
+                if isinstance(raw_infos, list)
+                else []
+            )
+            if not infos:
+                payload.update(code="bad_response", message="余额响应为空")
+                return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+            chosen = next(
+                (
+                    item
+                    for item in infos
+                    if str(item.get("currency") or "").upper() == "CNY"
+                ),
+                infos[0],
+            )
+            payload.update(
+                currency=str(chosen.get("currency") or ""),
+                total=_balance_float(chosen.get("total_balance")),
+                granted=_balance_float(chosen.get("granted_balance")),
+                toppedUp=_balance_float(chosen.get("topped_up_balance")),
+            )
+        except httpx.TimeoutException:
+            payload.update(code="timeout", message="余额查询超时")
+        except ValueError:
+            payload.update(code="bad_response", message="余额响应解析失败")
+        except httpx.HTTPError as exc:
+            logger.info("余额查询失败：{}", exc)
+            payload.update(code="network", message="连不上 DeepSeek 余额接口")
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
     def _search_payload(result: dict[str, Any]) -> JSONResponse:
         """把 SearchService 的蛇形结果转成主进程用的驼峰契约（结构与 /internal/llm-key 一致）。
 
@@ -533,20 +657,22 @@ def create_app(
     async def internal_agent_config_get(
         x_pet_internal_token: str | None = Header(default=None, alias="X-Pet-Internal-Token"),
     ) -> JSONResponse:
-        """任务模式配置（目前只有默认工作区）；空串 = 让主进程按平台默认解析。"""
+        """任务模式配置：默认工作区 + 思考强度；空串 = 让主进程按平台默认解析。"""
         _require_internal(x_pet_internal_token)
         from backend.shared.config import load_config
 
         try:
-            default_workspace = load_config().agent.default_workspace
+            agent = load_config().agent
+            default_workspace = agent.default_workspace
+            thinking_level = getattr(agent, "thinking_level", "high")
         except Exception:  # noqa: BLE001 - 配置损坏：明确告知主进程，由它报错而不是静默换目录
             logger.warning("读取 agent 配置失败，内部端点标记 configError")
             return JSONResponse(
-                {"defaultWorkspace": "", "configError": True},
+                {"defaultWorkspace": "", "thinkingLevel": "high", "configError": True},
                 headers={"Cache-Control": "no-store"},
             )
         return JSONResponse(
-            {"defaultWorkspace": default_workspace},
+            {"defaultWorkspace": default_workspace, "thinkingLevel": thinking_level},
             headers={"Cache-Control": "no-store"},
         )
 
@@ -555,55 +681,87 @@ def create_app(
         payload: dict[str, Any],
         x_pet_internal_token: str | None = Header(default=None, alias="X-Pet-Internal-Token"),
     ) -> JSONResponse:
-        """写回默认工作区（任务页「设为默认」用），走 save_config 保留注释与排版。"""
+        """写回任务模式配置（默认工作区 / 思考强度），保留 config.toml 注释与排版。
+
+        两个字段都可选：只传哪个就只改哪个（「设为默认」与顶部思考强度切换共用）。
+        """
         _require_internal(x_pet_internal_token)
         from backend.shared.config import load_config, save_config
 
-        raw = payload.get("defaultWorkspace")
-        if not isinstance(raw, str):
+        raw_workspace = payload.get("defaultWorkspace")
+        raw_thinking = payload.get("thinkingLevel")
+        if raw_workspace is None and raw_thinking is None:
             return JSONResponse(
-                {"ok": False, "code": "INVALID_PATH", "message": "工作区路径格式不正确"},
+                {"ok": False, "code": "INVALID_PATCH", "message": "没有要保存的配置"},
                 headers={"Cache-Control": "no-store"},
             )
-        text = raw.strip()
-        if text:
-            if "\x00" in text or text.startswith("\\\\"):
+
+        workspace_text: str | None = None
+        if raw_workspace is not None:
+            if not isinstance(raw_workspace, str):
                 return JSONResponse(
-                    {"ok": False, "code": "INVALID_PATH", "message": "不支持这个工作区路径"},
+                    {"ok": False, "code": "INVALID_PATH", "message": "工作区路径格式不正确"},
                     headers={"Cache-Control": "no-store"},
                 )
-            path = Path(text)
-            if not path.is_absolute() or path.parent == path:
+            workspace_text = raw_workspace.strip()
+            if workspace_text:
+                if "\x00" in workspace_text or workspace_text.startswith("\\\\"):
+                    return JSONResponse(
+                        {"ok": False, "code": "INVALID_PATH", "message": "不支持这个工作区路径"},
+                        headers={"Cache-Control": "no-store"},
+                    )
+                path = Path(workspace_text)
+                if not path.is_absolute() or path.parent == path:
+                    return JSONResponse(
+                        {
+                            "ok": False,
+                            "code": "INVALID_PATH",
+                            "message": "工作区必须是绝对路径，且不能是磁盘根目录",
+                        },
+                        headers={"Cache-Control": "no-store"},
+                    )
+                if not path.exists() or not path.is_dir():
+                    return JSONResponse(
+                        {
+                            "ok": False,
+                            "code": "INVALID_PATH",
+                            "message": "这个目录不存在或不是文件夹，请重新选择～",
+                        },
+                        headers={"Cache-Control": "no-store"},
+                    )
+
+        thinking_text: str | None = None
+        if raw_thinking is not None:
+            if raw_thinking not in ("low", "high", "max"):
                 return JSONResponse(
                     {
                         "ok": False,
-                        "code": "INVALID_PATH",
-                        "message": "工作区必须是绝对路径，且不能是磁盘根目录",
+                        "code": "INVALID_THINKING",
+                        "message": "思考强度只能是 low / high / max",
                     },
                     headers={"Cache-Control": "no-store"},
                 )
-            if not path.exists() or not path.is_dir():
-                return JSONResponse(
-                    {
-                        "ok": False,
-                        "code": "INVALID_PATH",
-                        "message": "这个目录不存在或不是文件夹，请重新选择～",
-                    },
-                    headers={"Cache-Control": "no-store"},
-                )
+            thinking_text = str(raw_thinking)
 
         try:
             config = load_config()
-            config.agent.default_workspace = text
+            if workspace_text is not None:
+                config.agent.default_workspace = workspace_text
+            if thinking_text is not None:
+                config.agent.thinking_level = thinking_text  # type: ignore[assignment]
             save_config(config)
         except Exception:  # noqa: BLE001 - 配置损坏/写盘失败都回可读原因
-            logger.exception("保存默认工作区失败")
+            logger.exception("保存任务配置失败")
             return JSONResponse(
-                {"ok": False, "code": "SAVE_FAILED", "message": "保存默认工作区失败，请稍后再试～"},
+                {"ok": False, "code": "SAVE_FAILED", "message": "保存失败，请稍后再试～"},
                 headers={"Cache-Control": "no-store"},
             )
         return JSONResponse(
-            {"ok": True, "defaultWorkspace": text},
+            {
+                "ok": True,
+                "defaultWorkspace": config.agent.default_workspace,
+                "thinkingLevel": config.agent.thinking_level,
+            },
             headers={"Cache-Control": "no-store"},
         )
 

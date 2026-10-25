@@ -8,7 +8,7 @@ import { useEffect, useState, type ReactElement } from 'react'
 import { Button } from '../../shared/ui'
 import { getPetBridge } from '../../shared/pet-bridge'
 import Section from '../components/section'
-import { Field, TextField } from '../components/fields'
+import { Field, SelectField, SwitchRow, TextField } from '../components/fields'
 import type { PanelProps } from './panel-props'
 
 export default function AgentPanel({ form, setField }: PanelProps): ReactElement {
@@ -46,7 +46,7 @@ export default function AgentPanel({ form, setField }: PanelProps): ReactElement
   return (
     <Section
       title="任务"
-      desc="宠物窗带文件的消息会转到任务模式处理；这里设置新任务的默认工作区。"
+      desc="宠物窗带文件的消息会转到任务模式处理；这里设置新任务的默认工作区与任务页顶部显示项。"
     >
       <Field
         label="默认工作区"
@@ -61,6 +61,42 @@ export default function AgentPanel({ form, setField }: PanelProps): ReactElement
           <Button onClick={() => void browse()}>选择文件夹…</Button>
         </div>
       </Field>
+
+      <Field
+        label="思考强度"
+        hint="任务模式每次新任务生效：low 省 token/更快，high 默认，max 适合复杂任务；deepseek-v4-pro 不支持 low，会自动回退 high；对话模式不受影响"
+      >
+        <SelectField
+          value={form.agentThinkingLevel}
+          onValueChange={(value) => setField('agentThinkingLevel', value)}
+          options={[
+            { value: 'low', label: 'low · 省 token' },
+            { value: 'high', label: 'high · 默认' },
+            { value: 'max', label: 'max · 复杂任务' }
+          ]}
+        />
+      </Field>
+
+      <SwitchRow
+        label="显示模型名称"
+        hint="在任务页顶部显示当前任务实际使用的模型"
+        checked={form.agentShowModel}
+        onCheckedChange={(value) => setField('agentShowModel', value)}
+      />
+
+      <SwitchRow
+        label="显示本次消耗"
+        hint="显示当前任务的预估费用（按 DeepSeek 官方价估算，含每轮统计里的费用）"
+        checked={form.agentShowCost}
+        onCheckedChange={(value) => setField('agentShowCost', value)}
+      />
+
+      <SwitchRow
+        label="显示账户余额"
+        hint="在任务页顶部显示 DeepSeek 账户余额；开启后每 10 分钟查询一次（只支持官方端点）"
+        checked={form.agentShowBalance}
+        onCheckedChange={(value) => setField('agentShowBalance', value)}
+      />
     </Section>
   )
 }

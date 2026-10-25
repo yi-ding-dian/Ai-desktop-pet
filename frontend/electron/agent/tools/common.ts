@@ -59,6 +59,8 @@ export interface InternalResult {
   files?: InternalFilePayload[]
   /** 任务配置端点的默认工作区（空串 = 平台默认） */
   defaultWorkspace?: string
+  /** 任务配置端点的思考强度（low / high / max） */
+  thinkingLevel?: string
   /** 配置读取/校验失败（任务配置端点）；此时 defaultWorkspace 不可信 */
   configError?: boolean
 }

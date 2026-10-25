@@ -15,6 +15,30 @@ import { deepseekProvider } from '@earendil-works/pi-ai/providers/deepseek'
 import { buildAgentSystemPrompt } from './prompt'
 import type { ExecutionMode } from './types'
 
+/** 任务模式支持的思考强度（与 DeepSeek 模型的 thinkingLevelMap 对齐） */
+export type TaskThinkingLevel = 'low' | 'high' | 'max'
+const THINKING_LEVELS: TaskThinkingLevel[] = ['low', 'high', 'max']
+
+/** 配置值归一化：未知值回退 high */
+export function normalizeThinkingLevel(value: unknown): TaskThinkingLevel {
+  return value === 'low' || value === 'max' ? value : 'high'
+}
+
+/**
+ * 当前模型支持的思考强度（用于顶部切换菜单）。
+ *
+ * DeepSeek 各模型的 thinkingLevelMap 不同：deepseek-flash 支持 low/high/max，
+ * deepseek-v4-pro 只支持 high/max。未知模型按模板（官方首个模型）取。
+ */
+export function thinkingLevelsForModel(modelId: string): TaskThinkingLevel[] {
+  const known = deepseekProvider().getModels()
+  const wanted = (modelId || '').trim()
+  const template = known.find((item) => item.id === wanted) ?? known[0]
+  const map = template?.thinkingLevelMap as Record<string, string | null> | undefined
+  if (!map) return [...THINKING_LEVELS]
+  return THINKING_LEVELS.filter((level) => map[level] != null)
+}
+
 export interface AgentBuildOptions {
   apiKey: string
   /** 聊天设置里的端点；空 = 用 DeepSeek 官方 */
@@ -23,6 +47,8 @@ export interface AgentBuildOptions {
   model: string
   /** 执行模式（决定系统提示词里的权限说明） */
   mode: ExecutionMode
+  /** 思考强度（任务模式；缺省 high） */
+  thinkingLevel?: TaskThinkingLevel
   tools: AgentTool[]
   beforeToolCall: NonNullable<AgentOptions['beforeToolCall']>
   /**
@@ -73,7 +99,7 @@ export function buildAgent(options: AgentBuildOptions): BuiltAgent {
       model,
       tools: options.tools,
       // 开启推理：模型会返回 reasoning_content，面板里的「思考过程」才有内容（2026-10-24）
-      thinkingLevel: 'high'
+      thinkingLevel: options.thinkingLevel ?? 'high'
     },
     streamFn: (ctxModel, context, streamOptions) =>
       models.streamSimple(ctxModel, context, { ...(streamOptions ?? {}), apiKey: options.apiKey }),

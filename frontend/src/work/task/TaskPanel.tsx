@@ -21,6 +21,7 @@ import {
 } from 'react'
 import type {
   AgentAttachment,
+  AgentLlmStatus,
   AgentState,
   AgentStep,
   AgentTaskDraftPayload,
@@ -35,7 +36,7 @@ import {
   looksLikeAbsolutePath,
   unsupportedReason
 } from '../../modules/chat/file-support'
-import { copyText } from '../format'
+import { copyText, formatCost, formatMoney, formatWorkspacePath } from '../format'
 import { attachmentKind } from '../message/AttachmentStrip'
 import LinkPreviewCard from '../conversation/LinkPreviewCard'
 import { useLinkHover } from '../conversation/useLinkHover'
@@ -60,6 +61,12 @@ function agentBridge(): ReturnType<typeof getPetBridge>['agent'] | undefined {
   } catch {
     return undefined
   }
+}
+
+const THINKING_MENU_LABELS: Record<string, string> = {
+  low: 'low · 省 token',
+  high: 'high · 默认',
+  max: 'max · 复杂任务'
 }
 
 const STATUS_TEXT: Record<AgentState['status'], string> = {
@@ -101,6 +108,18 @@ export default function TaskPanel({
   onDraftHandled
 }: TaskPanelProps = {}): ReactElement {
   const [state, setState] = useState<AgentState | null>(null)
+  /** 顶部：当前模型 + 账户余额（主进程 10 分钟轮询） */
+  const [llmStatus, setLlmStatus] = useState<AgentLlmStatus | null>(null)
+  const [refreshingLlm, setRefreshingLlm] = useState(false)
+  /** 思考强度菜单 / 保存中 / 「下次生效」提示 */
+  const [thinkingOpen, setThinkingOpen] = useState(false)
+  const [savingThinking, setSavingThinking] = useState(false)
+  const [thinkingNotice, setThinkingNotice] = useState<{
+    text: string
+    error: boolean
+  } | null>(null)
+  const thinkingRef = useRef<HTMLDivElement | null>(null)
+  const thinkingNoticeTimer = useRef<number | null>(null)
   /** 新任务页选中的执行模式（记住上次选择） */
   const [composeMode, setComposeMode] = useState<ExecutionMode>(() => {
     try {
@@ -113,6 +132,14 @@ export default function TaskPanel({
   const [tasks, setTasks] = useState<AgentTaskSummary[]>([])
   /** 默认工作区（config.toml [agent]；空 = 平台默认）；不再恢复"上次工作区" */
   const [workspace, setWorkspace] = useState('')
+  /** 手输/选择后的工作区校验状态（开始与设为默认都要求 valid） */
+  const [workspaceCheck, setWorkspaceCheck] = useState<{
+    status: 'checking' | 'valid' | 'invalid'
+    error: string | null
+  }>({ status: 'checking', error: null })
+  const wsTimerRef = useRef<number | null>(null)
+  /** 校验请求序号：输入变化后旧请求的结果直接丢弃 */
+  const wsSeqRef = useRef(0)
   const [wsNotice, setWsNotice] = useState<string | null>(null)
   const [task, setTask] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -171,30 +198,47 @@ export default function TaskPanel({
     void api.getTasks().then((list) => {
       if (alive) setTasks(list)
     })
+    void api
+      .getLlmStatus()
+      .then((status) => {
+        if (alive) setLlmStatus(status)
+      })
+      .catch(() => {
+        /* 余额是软功能：拿不到就不显示 */
+      })
     const offState = api.onState((snapshot) => {
       setState(snapshot)
       if (snapshot.status !== 'idle' && !draftActiveRef.current) setCompose(false)
     })
     const offTasks = api.onTasks((list) => setTasks(list))
+    const offLlm = api.onLlmStatus((status) => setLlmStatus(status))
     return () => {
       alive = false
       offState()
       offTasks()
+      offLlm()
     }
   }, [])
 
-  // 默认工作区：新任务每次从这里开始；配置无效 → 展示原因，不静默换目录
+  // 默认工作区：新任务每次从这里开始；配置无效 → 行内提示，不静默换目录
   useEffect(() => {
     const api = agentBridge()
-    if (!api?.getDefaultWorkspace) return
+    if (!api?.getDefaultWorkspace) {
+      setWorkspaceCheck({ status: 'invalid', error: '任务模式不可用：请重启应用' })
+      return
+    }
     let alive = true
     void api
       .getDefaultWorkspace()
       .then((path) => {
-        if (alive) setWorkspace(path)
+        if (!alive) return
+        setWorkspace(path)
+        // 主进程解析默认工作区时已经做过存在性/目录校验
+        setWorkspaceCheck({ status: 'valid', error: null })
       })
       .catch((err) => {
-        if (alive) setError(`默认工作区不可用：${errorText(err)}`)
+        if (!alive) return
+        setWorkspaceCheck({ status: 'invalid', error: errorText(err) })
       })
     return () => {
       alive = false
@@ -533,6 +577,82 @@ export default function TaskPanel({
     })
   }, [])
 
+  const clearWsTimer = useCallback((): void => {
+    if (wsTimerRef.current === null) return
+    window.clearTimeout(wsTimerRef.current)
+    wsTimerRef.current = null
+  }, [])
+
+  useEffect(() => () => clearWsTimer(), [clearWsTimer])
+
+  /** 校验工作区（与主进程 agentService.start 同一套规则）；返回是否可用 */
+  const checkWorkspace = useCallback(async (raw: string): Promise<boolean> => {
+    const api = agentBridge()
+    const text = raw.trim()
+    if (!api) {
+      setWorkspaceCheck({ status: 'invalid', error: '任务模式不可用：请重启应用' })
+      return false
+    }
+    if (!text) {
+      wsSeqRef.current += 1
+      setWorkspaceCheck({ status: 'invalid', error: '工作区不能为空' })
+      return false
+    }
+    const seq = wsSeqRef.current + 1
+    wsSeqRef.current = seq
+    setWorkspaceCheck({ status: 'checking', error: null })
+    try {
+      const result = await api.validateWorkspace(text)
+      if (wsSeqRef.current !== seq) return false
+      if (result.ok) {
+        setWorkspaceCheck({ status: 'valid', error: null })
+        return true
+      }
+      setWorkspaceCheck({ status: 'invalid', error: result.error ?? '工作区不可用' })
+      return false
+    } catch (err) {
+      if (wsSeqRef.current !== seq) return false
+      setWorkspaceCheck({ status: 'invalid', error: errorText(err) })
+      return false
+    }
+  }, [])
+
+  /** 输入路径：去资源管理器「复制为路径」带的首尾引号，400ms 防抖校验 */
+  const handleWorkspaceChange = useCallback(
+    (value: string): void => {
+      const trimmed = value.trim()
+      const next =
+        trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
+          ? trimmed.slice(1, -1)
+          : value
+      setWorkspace(next)
+      setError(null)
+      clearWsTimer()
+      wsSeqRef.current += 1 // 让在途的旧校验结果失效
+      if (!next.trim()) {
+        setWorkspaceCheck({ status: 'invalid', error: '工作区不能为空' })
+        return
+      }
+      setWorkspaceCheck({ status: 'checking', error: null })
+      wsTimerRef.current = window.setTimeout(() => {
+        wsTimerRef.current = null
+        void checkWorkspace(next)
+      }, 400)
+    },
+    [checkWorkspace, clearWsTimer]
+  )
+
+  const handleWorkspaceBlur = useCallback((): void => {
+    clearWsTimer()
+    void checkWorkspace(workspace)
+  }, [checkWorkspace, clearWsTimer, workspace])
+
+  /** 开始/设为默认前的兜底：valid 直接用，否则现场校验 */
+  const ensureWorkspace = useCallback(async (): Promise<boolean> => {
+    if (workspaceCheck.status === 'valid') return true
+    return checkWorkspace(workspace)
+  }, [checkWorkspace, workspace, workspaceCheck.status])
+
   /** 真正启动任务（草稿和手动「开始」共用；失败时保留输入与附件） */
   const startWith = useCallback(
     async (text: string, files: PickedFile[], targetWorkspace: string): Promise<void> => {
@@ -546,10 +666,9 @@ export default function TaskPanel({
         setError('先说说要做什么')
         return
       }
-      if (!targetWorkspace) {
-        setError('先选择一个工作区')
-        return
-      }
+      clearWsTimer()
+      const workspaceOk = await checkWorkspace(targetWorkspace)
+      if (!workspaceOk) return
       setError(null)
       let result: { ok: boolean; error?: string }
       try {
@@ -575,7 +694,7 @@ export default function TaskPanel({
       clearAttachments()
       setCompose(false)
     },
-    [composeMode, clearAttachments]
+    [composeMode, clearAttachments, checkWorkspace, clearWsTimer]
   )
 
   const start = useCallback(async (): Promise<void> => {
@@ -651,30 +770,39 @@ export default function TaskPanel({
     try {
       const picked = await api.pickWorkspace()
       if (!picked) return
+      clearWsTimer()
+      wsSeqRef.current += 1
       setWorkspace(picked)
       setError(null)
+      void checkWorkspace(picked)
     } catch (err) {
       setError(errorText(err))
     }
-  }, [])
+  }, [checkWorkspace, clearWsTimer])
 
   /** 把当前目录写回 config.toml，下次新任务仍从这里开始 */
   const setWorkspaceAsDefault = useCallback(async (): Promise<void> => {
     const api = agentBridge()
-    if (!api || !workspace) return
+    const target = workspace.trim()
+    if (!api || !target) return
+    clearWsTimer()
+    if (!(await ensureWorkspace())) return
     try {
-      const result = await api.setDefaultWorkspace(workspace)
+      const result = await api.setDefaultWorkspace(target)
       if (!result.ok) {
-        setError(result.error ?? '保存默认工作区失败')
+        setWorkspaceCheck({
+          status: 'invalid',
+          error: result.error ?? '保存默认工作区失败'
+        })
         return
       }
     } catch (err) {
-      setError(errorText(err))
+      setWorkspaceCheck({ status: 'invalid', error: errorText(err) })
       return
     }
-    setWsNotice(`已把「${workspace}」设为默认工作区`)
+    setWsNotice(`已把「${target}」设为默认工作区`)
     window.setTimeout(() => setWsNotice(null), 4000)
-  }, [workspace])
+  }, [workspace, ensureWorkspace, clearWsTimer])
 
   const selectTask = useCallback(async (id: string): Promise<void> => {
     const api = agentBridge()
@@ -750,6 +878,119 @@ export default function TaskPanel({
   const flow = (state?.steps ?? []).filter((step) => step.kind !== 'todo').slice(-200)
   const history = useMemo(() => buildTaskHistory(state), [state])
 
+  /** 手动刷新余额（10 分钟自动刷新由主进程负责） */
+  const refreshLlmStatus = useCallback(async (): Promise<void> => {
+    const api = agentBridge()
+    if (!api || refreshingLlm) return
+    setRefreshingLlm(true)
+    try {
+      setLlmStatus(await api.refreshLlmStatus())
+    } catch {
+      /* 余额是软功能：失败保持旧值 */
+    } finally {
+      setRefreshingLlm(false)
+    }
+  }, [refreshingLlm])
+
+  const showThinkingNotice = useCallback((text: string, error = false): void => {
+    if (thinkingNoticeTimer.current !== null) {
+      window.clearTimeout(thinkingNoticeTimer.current)
+    }
+    setThinkingNotice({ text, error })
+    thinkingNoticeTimer.current = window.setTimeout(
+      () => {
+        thinkingNoticeTimer.current = null
+        setThinkingNotice(null)
+      },
+      error ? 4_000 : 2_500
+    )
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (thinkingNoticeTimer.current !== null) {
+        window.clearTimeout(thinkingNoticeTimer.current)
+        thinkingNoticeTimer.current = null
+      }
+    },
+    []
+  )
+
+  // 思考强度菜单：点外面 / Esc 关闭
+  useEffect(() => {
+    if (!thinkingOpen) return
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!thinkingRef.current?.contains(event.target as Node)) setThinkingOpen(false)
+    }
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setThinkingOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [thinkingOpen])
+
+  /** 切换下次新任务的思考强度（当前任务不变） */
+  const chooseThinkingLevel = useCallback(
+    async (level: string): Promise<void> => {
+      const api = agentBridge()
+      const current = llmStatus?.thinkingLevel
+      setThinkingOpen(false)
+      if (!api || savingThinking || !current || level === current) return
+      setSavingThinking(true)
+      try {
+        const result = await api.setThinkingLevel(level as 'low' | 'high' | 'max')
+        if (!result.ok) showThinkingNotice(result.error ?? '切换失败', true)
+        else showThinkingNotice('下次新任务生效')
+      } catch (err) {
+        showThinkingNotice(errorText(err), true)
+      } finally {
+        setSavingThinking(false)
+      }
+    },
+    [llmStatus?.thinkingLevel, savingThinking, showThinkingNotice]
+  )
+
+  const activeModel = state?.model || llmStatus?.model || ''
+  const modelTitle = state?.model ? '当前任务使用的模型' : '当前配置的模型'
+  const taskCost = state?.usage.cost ?? 0
+  const balanceTotal = llmStatus?.total ?? null
+  const balanceText = !llmStatus
+    ? '余额 …'
+    : balanceTotal === null
+      ? refreshingLlm
+        ? '余额 …'
+        : '余额 —'
+      : `余额 ${formatMoney(balanceTotal, llmStatus.currency)}`
+  const balanceStale = Boolean(llmStatus?.code)
+  const balanceLow =
+    balanceTotal !== null &&
+    (llmStatus?.currency ?? '').toUpperCase() === 'CNY' &&
+    balanceTotal < 5
+  const balanceTitle = [
+    balanceTotal !== null && llmStatus
+      ? `余额 ${formatMoney(balanceTotal, llmStatus.currency)}` +
+        (llmStatus.toppedUp !== null || llmStatus.granted !== null
+          ? `（充值 ${
+              llmStatus.toppedUp !== null
+                ? formatMoney(llmStatus.toppedUp, llmStatus.currency)
+                : '—'
+            } / 赠送 ${
+              llmStatus.granted !== null
+                ? formatMoney(llmStatus.granted, llmStatus.currency)
+                : '—'
+            }）`
+          : '')
+      : '',
+    llmStatus?.message ?? '',
+    '每 10 分钟自动刷新，点击立即刷新'
+  ]
+    .filter((line) => line.length > 0)
+    .join('\n')
+
   return (
     <div className="task-layout">
       <TaskList
@@ -792,6 +1033,11 @@ export default function TaskPanel({
             onPickFiles={() => void pickFiles()}
             onPickWorkspace={() => void pickWorkspace()}
             onSetDefaultWorkspace={() => void setWorkspaceAsDefault()}
+            workspaceValid={workspaceCheck.status === 'valid'}
+            workspaceChecking={workspaceCheck.status === 'checking'}
+            workspaceError={workspaceCheck.status === 'invalid' ? workspaceCheck.error : null}
+            onWorkspaceChange={handleWorkspaceChange}
+            onWorkspaceBlur={handleWorkspaceBlur}
             onStart={() => void start()}
           />
         ) : (
@@ -808,6 +1054,99 @@ export default function TaskPanel({
                 </span>
                 {state && state.id && state.status !== 'idle' ? (
                   <TaskModeSelector mode={state.mode} onChange={(mode) => void changeMode(mode)} compact />
+                ) : null}
+              </div>
+              <div className="task-head-meta">
+                {state?.workspace ? (
+                  <span className="task-workspace" title={state.workspace}>
+                    {formatWorkspacePath(state.workspace)}
+                  </span>
+                ) : null}
+                {llmStatus?.showModel && activeModel ? (
+                  <div className="task-thinking" ref={thinkingRef}>
+                    {llmStatus.thinkingLevels.length > 0 ? (
+                      <button
+                        type="button"
+                        className="task-model task-thinking-btn"
+                        title={`${modelTitle}；思考强度 ${llmStatus.thinkingLevel}（点击切换，下次新任务生效）`}
+                        aria-haspopup="menu"
+                        aria-expanded={thinkingOpen}
+                        onClick={() => setThinkingOpen((open) => !open)}
+                      >
+                        <span>{activeModel}</span>
+                        <span className="task-thinking-level">
+                          · {llmStatus.thinkingLevel}
+                        </span>
+                        <span className="task-thinking-caret" aria-hidden="true">
+                          ▾
+                        </span>
+                      </button>
+                    ) : (
+                      <span className="task-model task-model-static" title={modelTitle}>
+                        {activeModel}
+                      </span>
+                    )}
+                    {thinkingOpen ? (
+                      <div className="task-thinking-menu" role="menu">
+                        <div className="task-thinking-menu-head">思考强度 · 下次新任务生效</div>
+                        {llmStatus.thinkingLevels.map((level) => (
+                          <button
+                            key={level}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={level === llmStatus.thinkingLevel}
+                            className={`task-thinking-item${
+                              level === llmStatus.thinkingLevel
+                                ? ' task-thinking-item-active'
+                                : ''
+                            }`}
+                            disabled={savingThinking}
+                            onClick={() => void chooseThinkingLevel(level)}
+                          >
+                            <span>{THINKING_MENU_LABELS[level] ?? level}</span>
+                            {level === llmStatus.thinkingLevel ? (
+                              <span className="task-thinking-check">✓</span>
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {thinkingNotice ? (
+                      <span
+                        className={`task-thinking-note${
+                          thinkingNotice.error ? ' task-thinking-note-error' : ''
+                        }`}
+                        role="status"
+                      >
+                        {thinkingNotice.text}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {llmStatus?.showCost && taskCost > 0 ? (
+                  <span
+                    className="task-cost"
+                    title="按 DeepSeek 官方价估算的本次任务累计费用（高峰/低谷自动折算）"
+                  >
+                    本次 ≈{formatCost(taskCost)}
+                  </span>
+                ) : null}
+                {llmStatus?.showBalance ? (
+                  <button
+                    type="button"
+                    className={`task-balance${balanceLow ? ' task-balance-low' : ''}${
+                      balanceStale ? ' task-balance-stale' : ''
+                    }${refreshingLlm ? ' task-balance-busy' : ''}`}
+                    title={balanceTitle}
+                    aria-label="刷新账户余额"
+                    aria-busy={refreshingLlm}
+                    onClick={() => void refreshLlmStatus()}
+                  >
+                    {balanceText}
+                    <span className="task-balance-refresh" aria-hidden="true">
+                      ↻
+                    </span>
+                  </button>
                 ) : null}
               </div>
               <div className="task-head-actions">
@@ -844,6 +1183,7 @@ export default function TaskPanel({
                 status={state?.status}
                 mode={state?.mode}
                 canExecutePlan={Boolean(state?.resumable)}
+                showCost={llmStatus?.showCost === true}
                 flashId={flashId}
                 onAnswer={(id, answer) => void answerQuestion(id, answer)}
                 onExecutePlan={(mode) => void executePlan(mode)}

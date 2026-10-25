@@ -6,6 +6,7 @@ export type {
   AgentAttention,
   AgentExecutePlanPayload,
   AgentFollowUpPayload,
+  AgentLlmStatus,
   AgentQuestionAnswerPayload,
   AgentQuestionRequest,
   AgentSetModePayload,
@@ -16,5 +17,6 @@ export type {
   AgentTaskSummary,
   AgentTodoItem,
   AgentWaitingKind,
+  AgentWorkspaceCheck,
   ExecutionMode
 } from '../../agent/types'

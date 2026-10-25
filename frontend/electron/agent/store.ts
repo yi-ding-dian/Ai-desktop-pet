@@ -28,6 +28,8 @@ export interface PersistedSession {
   id: string
   task: string
   workspace: string
+  /** 本任务实际使用的模型（旧记录可能没有） */
+  model?: string
   createdAt: number
   updatedAt: number
   status: AgentStatus

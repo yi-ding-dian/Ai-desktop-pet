@@ -4,12 +4,14 @@ import type {
   AgentApprovePayload,
   AgentExecutePlanPayload,
   AgentFollowUpPayload,
+  AgentLlmStatus,
   AgentQuestionAnswerPayload,
   AgentSetModePayload,
   AgentStartPayload,
   AgentState,
   AgentTaskDraftPayload,
-  AgentTaskSummary
+  AgentTaskSummary,
+  AgentWorkspaceCheck
 } from './agent'
 import type {
   BallAnimationCommand,
@@ -143,8 +145,8 @@ export interface PetBridgeApi {
     notify(title: string, body: string): void
     /** 用系统默认浏览器打开 http/https 外链（只放行 http/https；2026-10-18 记忆本） */
     openExternal(url: string): Promise<OpenResult>
-    /** 写系统剪贴板（工作模式复制消息；preload 直接调 Electron clipboard） */
-    copyText(text: string): void
+    /** 写系统剪贴板（工作模式复制消息；经主进程 Electron clipboard） */
+    copyText(text: string): Promise<void>
     /** 用默认程序打开本机文件/文件夹（可执行/脚本类拒绝；2026-10-18 记忆本） */
     openPath(path: string): Promise<OpenResult>
     /**
@@ -343,6 +345,8 @@ export interface PetBridgeApi {
     previewImage(path: string): Promise<string | null>
     /** 查询当前任务状态（面板挂载时补状态） */
     getState(): Promise<AgentState>
+    /** 校验手输的工作区路径（与开始任务同一套规则） */
+    validateWorkspace(path: string): Promise<AgentWorkspaceCheck>
     /** 弹原生文件夹对话框选工作区（取消返回 null） */
     pickWorkspace(): Promise<string | null>
     /** 回应确认卡（用户点允许/拒绝） */
@@ -377,6 +381,14 @@ export interface PetBridgeApi {
     draftTask(payload: AgentTaskDraftPayload): Promise<{ ok: boolean; error?: string }>
     /** 工作窗：订阅任务草稿；返回取消订阅函数 */
     onTaskDraft(cb: (draft: AgentTaskDraftPayload) => void): () => void
+    /** 当前模型 + 账户余额（缓存够新时不发请求） */
+    getLlmStatus(): Promise<AgentLlmStatus>
+    /** 立即刷新模型/余额 */
+    refreshLlmStatus(): Promise<AgentLlmStatus>
+    /** 切换下次新任务的思考强度 */
+    setThinkingLevel(level: 'low' | 'high' | 'max'): Promise<{ ok: boolean; error?: string }>
+    /** 订阅模型/余额更新；返回取消订阅函数 */
+    onLlmStatus(cb: (status: AgentLlmStatus) => void): () => void
   }
   work: {
     /** 打开工作窗（单例；已存在则 show + focus） */

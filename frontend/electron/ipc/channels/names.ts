@@ -34,6 +34,8 @@ export const IPC = {
   SYSTEM_GET_IDLE_SECONDS: 'system:get-idle-seconds',
   /** 显示系统通知（payload: {title, body}；提醒在宠物隐藏/教学/向导中补发，2026-10-18） */
   SYSTEM_NOTIFY: 'system:notify',
+  /** 写系统剪贴板（invoke；主进程 Electron clipboard，preload 沙箱里不直接调） */
+  SYSTEM_COPY_TEXT: 'system:copy-text',
   /** 用系统默认浏览器打开 http/https 外链（invoke(url) → OpenResult；记忆本 open_item） */
   SYSTEM_OPEN_EXTERNAL: 'system:open-external',
   /** 用默认程序打开本机文件/文件夹（invoke(path) → OpenResult；可执行/脚本类拒绝） */
@@ -317,6 +319,8 @@ export const IPC_AGENT = {
   PREVIEW: 'agent:preview',
   /** 查询当前状态（invoke → AgentState；面板晚挂载时补状态） */
   GET_STATE: 'agent:get-state',
+  /** 校验手输的工作区路径（invoke（path）→ AgentWorkspaceCheck；与 start 同一套规则） */
+  VALIDATE_WORKSPACE: 'agent:validate-workspace',
   /** 选择工作区（invoke → string | null；主进程原生文件夹对话框） */
   PICK_WORKSPACE: 'agent:pick-workspace',
   /** 回应确认卡（payload: AgentApprovePayload） */
@@ -350,5 +354,13 @@ export const IPC_AGENT = {
   /** 宠物窗 → 主：把带文件的消息转成任务草稿（invoke → {ok, error?}） */
   DRAFT_TASK: 'agent:draft-task',
   /** 主 → 工作窗：任务草稿已就绪（payload: AgentTaskDraftPayload） */
-  TASK_DRAFT: 'agent:task-draft'
+  TASK_DRAFT: 'agent:task-draft',
+  /** 查询当前模型 + 余额（invoke → AgentLlmStatus；缓存够新时不发请求） */
+  GET_LLM_STATUS: 'agent:get-llm-status',
+  /** 立即刷新模型/余额（invoke → AgentLlmStatus） */
+  REFRESH_LLM_STATUS: 'agent:refresh-llm-status',
+  /** 切换下次新任务的思考强度（invoke（low|high|max）→ {ok, error?}） */
+  SET_THINKING_LEVEL: 'agent:set-thinking-level',
+  /** 主 → 工作窗：模型/余额更新（payload: AgentLlmStatus；10 分钟轮询） */
+  LLM_STATUS: 'agent:llm-status'
 } as const

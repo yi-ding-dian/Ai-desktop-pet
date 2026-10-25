@@ -42,9 +42,13 @@ export type AgentStepStatus = 'running' | 'done' | 'failed' | 'blocked'
 export interface AgentUsage {
   /** 模型调用次数 */
   calls: number
+  /** 未命中缓存的输入 token */
   input: number
   output: number
+  /** 命中缓存的输入 token */
   cacheRead: number
+  /** 估算费用（人民币元；模型未知时为 0） */
+  cost: number
 }
 
 export interface AgentStep {
@@ -60,6 +64,8 @@ export interface AgentStep {
     input: number
     output: number
     cacheRead: number
+    /** 本轮估算费用（人民币元；模型未知时缺省） */
+    cost?: number
     /** 本轮所有模型调用的生成时长合计（turn_start → message_end，不含工具执行） */
     generationMs?: number
     contextUsed?: number
@@ -159,6 +165,8 @@ export interface AgentState {
   task: string
   /** 工作区绝对路径（用户通过原生对话框选定） */
   workspace: string
+  /** 本任务实际使用的模型 id（旧记录可能没有） */
+  model?: string
   /** 当前执行模式 */
   mode: ExecutionMode
   startedAt?: number
@@ -198,6 +206,44 @@ export interface AgentTaskSummary {
   queuePosition?: number
   /** 后台完成、用户尚未查看（点开后清除；不跨应用重启保留） */
   hasUpdate?: boolean
+}
+
+/**
+ * 任务页顶部的模型/余额状态（2026-10-25）。
+ *
+ * 余额只对 DeepSeek 官方端点可用；自定义端点或未配置 Key 时
+ * ``balanceSupported=false``，主进程保留上一次成功值并在 ``code/message`` 里说明原因。
+ */
+export interface AgentLlmStatus {
+  /** 配置里的模型名（任务运行中应优先用 AgentState.model） */
+  model: string
+  configured: boolean
+  /** 任务页顶部显示项（设置 → 任务；默认全部关闭） */
+  showBalance: boolean
+  showModel: boolean
+  showCost: boolean
+  /** 下次新任务使用的思考强度（low / high / max） */
+  thinkingLevel: string
+  /** 当前模型支持的思考强度（顶部菜单只列这些） */
+  thinkingLevels: string[]
+  balanceSupported: boolean
+  currency: string
+  total: number | null
+  granted: number | null
+  toppedUp: number | null
+  /** 最近一次成功拿到余额的时间（0 = 从未成功） */
+  updatedAt: number
+  /** 最近一次刷新结果：空串 = 成功 */
+  code: string
+  message: string
+}
+
+/** 工作区输入校验结果（agent:validate-workspace） */
+export interface AgentWorkspaceCheck {
+  ok: boolean
+  /** 校验通过后的 realpath */
+  path?: string
+  error?: string
 }
 
 /** agent:start 的入参 */

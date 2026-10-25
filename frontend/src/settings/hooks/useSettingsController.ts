@@ -209,6 +209,13 @@ export function useSettingsController(): SettingsController {
       } catch {
         /* 旧 preload 无 settings 段 / bridge 缺失：静默（向导编排降级为"仅关闭时飞回"） */
       }
+      // 任务页顶部显示项（模型/余额/本次消耗）随配置保存立即生效：
+      // 让主进程重新拉一次模型/余额并推给工作窗（失败不影响保存结果）。
+      try {
+        void getPetBridge().agent.refreshLlmStatus().catch(() => undefined)
+      } catch {
+        /* 旧 preload / bridge 缺失：等下一次轮询 */
+      }
       return
     }
 

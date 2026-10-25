@@ -1,5 +1,6 @@
 /** 任务服务的会话模型、常量与通用小工具。 */
 import type { Agent } from '@earendil-works/pi-agent-core'
+import type { TokenPrice } from './pricing'
 import type {
   AgentQuestionRequest,
   AgentState,
@@ -75,6 +76,10 @@ export interface Session {
   turnTokens: Map<number, { input: number; output: number }>
   /** 用户附上的文件原路径（read_file 只读放行） */
   attachmentPaths: string[]
+  /** 当前模型单价（null = 未知模型，不做费用估算） */
+  price: TokenPrice | null
+  /** 本轮已估算费用（人民币元） */
+  roundCost: number
   /** 本轮统计起点（一次用户消息 → 模型跑完为止） */
   roundStartedAt: number
   roundCalls: number
@@ -98,7 +103,7 @@ export interface Session {
 }
 
 export function zeroUsage(): AgentUsage {
-  return { calls: 0, input: 0, output: 0, cacheRead: 0 }
+  return { calls: 0, input: 0, output: 0, cacheRead: 0, cost: 0 }
 }
 
 export function emptyState(): AgentState {
@@ -177,6 +182,8 @@ export function createSession(
     turn: 0,
     turnTokens: new Map(),
     attachmentPaths: [],
+    price: null,
+    roundCost: 0,
     roundStartedAt: now,
     roundCalls: 0,
     roundInput: 0,
@@ -205,6 +212,7 @@ export function restoreSession(record: {
   status: AgentState['status']
   task: string
   workspace: string
+  model?: string
   createdAt: number
   updatedAt: number
   steps?: AgentStep[]
@@ -239,12 +247,14 @@ export function restoreSession(record: {
       status: interrupted ? 'cancelled' : record.status,
       task: record.task,
       workspace: record.workspace,
+      model: record.model,
       mode,
       startedAt: record.createdAt,
       endedAt: record.updatedAt,
       steps: restoredSteps,
       todos: Array.isArray(record.todos) ? record.todos : [],
-      usage: record.usage ?? zeroUsage(),
+      // 旧记录没有 cost 字段：补默认值，避免累加时 NaN
+      usage: { ...zeroUsage(), ...(record.usage ?? {}) },
       resumable: false,
       sources: Array.isArray(record.sources) ? record.sources : [],
       summary: record.summary,
@@ -262,6 +272,8 @@ export function restoreSession(record: {
     turn: restoredTurn,
     turnTokens: new Map(),
     attachmentPaths: Array.isArray(record.attachmentPaths) ? [...record.attachmentPaths] : [],
+    price: null,
+    roundCost: 0,
     roundStartedAt: 0,
     roundCalls: 0,
     roundInput: 0,

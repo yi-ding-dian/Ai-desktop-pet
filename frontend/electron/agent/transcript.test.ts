@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
-import { buildAgent } from './pi'
+import { buildAgent, thinkingLevelsForModel } from './pi'
 import {
   deleteTranscript,
   hasTranscript,
@@ -51,6 +51,26 @@ function main(): void {
       assert.equal(messages[0].role, 'system')
       assert.equal(messages[1].role, 'user')
       assert.equal(messages[2].role, 'assistant')
+    })
+
+    check('思考强度：按模型过滤支持档位', () => {
+      assert.deepEqual(thinkingLevelsForModel('deepseek-flash'), ['low', 'high', 'max'])
+      assert.deepEqual(thinkingLevelsForModel('deepseek-v4-pro'), ['high', 'max'])
+      // 未知模型按官方模板（Flash）取
+      assert.deepEqual(thinkingLevelsForModel('my-custom'), ['low', 'high', 'max'])
+    })
+
+    check('装配：思考强度传入 Agent 初始状态', () => {
+      const built = buildAgent({
+        apiKey: 'test-key',
+        baseUrl: '',
+        model: 'deepseek-flash',
+        mode: 'standard',
+        thinkingLevel: 'low',
+        tools: [],
+        beforeToolCall: async () => undefined
+      })
+      assert.equal(built.agent.state.thinkingLevel, 'low')
     })
 
     check('保存/读取：开头的 system 不落盘，装配时按当天配置重建', () => {
