@@ -1,8 +1,8 @@
 /**
  * 任务会话记录落盘（2026-10-23）。
  *
- * 只存「可回看」的部分：任务名、工作区、步骤、待办、总结、错误、状态。
- * Agent 与确认卡不落盘——重启后上下文不可恢复（见设计文档 §3）。
+ * 存「可回看」的部分：任务名、工作区、步骤、待办、总结、错误、状态、附件路径。
+ * 模型上下文（Agent 的 messages）另存 transcript.ts；确认卡/提问不落盘。
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -39,6 +39,8 @@ export interface PersistedSession {
   usage?: AgentUsage
   /** 联网来源（旧记录可能没有；回看时悬浮卡片用） */
   sources?: AgentSourceItem[]
+  /** 用户附带过的文件原路径（重启后 read_file 仍需放行） */
+  attachmentPaths?: string[]
   summary?: string
   error?: string
 }
@@ -46,6 +48,13 @@ export interface PersistedSession {
 export interface PersistedState {
   activeId: string | null
   sessions: PersistedSession[]
+  /**
+   * 索引文件是否存在且解析成功。
+   *
+   * 为 false 时（首次运行 / 文件损坏）不能拿这个空列表去清理 transcript，
+   * 否则会把还能恢复的对话记录误删。
+   */
+  healthy?: boolean
 }
 
 function storePath(): string {
@@ -55,7 +64,7 @@ function storePath(): string {
 /** 读盘：损坏 / 缺失一律回退空列表（不影响启动） */
 export function loadSessions(): PersistedState {
   const file = storePath()
-  if (!existsSync(file)) return { activeId: null, sessions: [] }
+  if (!existsSync(file)) return { activeId: null, sessions: [], healthy: false }
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8')) as Partial<PersistedState>
     const sessions = Array.isArray(raw.sessions)
@@ -64,11 +73,13 @@ export function loadSessions(): PersistedState {
     sessions.sort((a, b) => b.updatedAt - a.updatedAt)
     return {
       activeId: typeof raw.activeId === 'string' ? raw.activeId : null,
-      sessions: sessions.slice(0, MAX_SESSIONS)
+      sessions: sessions.slice(0, MAX_SESSIONS),
+      // 结构缺失（比如只剩 {}）不算健康：不能据此清理 transcript
+      healthy: Array.isArray(raw.sessions)
     }
   } catch (err) {
     console.warn('[agent] 会话记录损坏，已忽略：', (err as Error).message)
-    return { activeId: null, sessions: [] }
+    return { activeId: null, sessions: [], healthy: false }
   }
 }
 

@@ -89,6 +89,23 @@ function main(): void {
     assert.equal(session.state.question, undefined)
   })
 
+  check('恢复：附件路径沿用，追问轮次接着旧步骤编号', () => {
+    const session = restoreSession({
+      ...record('done'),
+      attachmentPaths: ['/tmp/a.pdf'],
+      steps: [
+        { id: 'round-1', kind: 'round', title: '第一轮', status: 'done', startedAt: 1 },
+        { id: 'thinking-2', kind: 'thinking', turn: 2, title: '思考', status: 'done', startedAt: 2 },
+        { id: 'stats-2-9', kind: 'stats', title: '统计', status: 'done', startedAt: 3 },
+        { id: 'round-4', kind: 'round', title: '第四轮', status: 'done', startedAt: 4 }
+      ]
+    })
+    assert.deepEqual(session.attachmentPaths, ['/tmp/a.pdf'])
+    assert.equal(session.round, 4)
+    assert.equal(session.turn, 2)
+    assert.equal(session.hasTranscript, false)
+  })
+
   console.log('session.test 全部通过')
 }
 

@@ -4,7 +4,12 @@
  * 这里只做三件事：建模型、建 Agent、把 Key 显式传给每次调用。
  * 主循环、工具调度、参数校验、审批闸门全部由 pi-agent-core 提供。
  */
-import { Agent, type AgentOptions, type AgentTool } from '@earendil-works/pi-agent-core'
+import {
+  Agent,
+  type AgentMessage,
+  type AgentOptions,
+  type AgentTool
+} from '@earendil-works/pi-agent-core'
 import { createModels } from '@earendil-works/pi-ai'
 import { deepseekProvider } from '@earendil-works/pi-ai/providers/deepseek'
 import { buildAgentSystemPrompt } from './prompt'
@@ -20,6 +25,14 @@ export interface AgentBuildOptions {
   mode: ExecutionMode
   tools: AgentTool[]
   beforeToolCall: NonNullable<AgentOptions['beforeToolCall']>
+  /**
+   * 重启后恢复的历史消息（transcript.ts 读回）。
+   *
+   * 不能放进 initialState.messages：那样构造函数会把历史开头的 system 当提示词，
+   * 反而不再注入当天的系统提示与最新工具声明。这里先按最新配置建 Agent，
+   * 再把历史追加到新 system 消息之后。
+   */
+  history?: AgentMessage[]
 }
 
 export interface BuiltAgent {
@@ -66,6 +79,10 @@ export function buildAgent(options: AgentBuildOptions): BuiltAgent {
       models.streamSimple(ctxModel, context, { ...(streamOptions ?? {}), apiKey: options.apiKey }),
     beforeToolCall: options.beforeToolCall
   })
+
+  if (options.history && options.history.length > 0) {
+    agent.state.messages = [...agent.state.messages, ...options.history]
+  }
 
   return { agent, modelId: model.id, contextWindow: model.contextWindow ?? 0 }
 }

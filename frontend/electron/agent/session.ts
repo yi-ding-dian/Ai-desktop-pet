@@ -93,6 +93,8 @@ export interface Session {
   running: boolean
   /** 后台完成、用户尚未查看（点开/回到任务页即清除；不落盘） */
   hasUpdate: boolean
+  /** 落盘/内存里有可用于恢复的对话记录（重启后仍能继续聊） */
+  hasTranscript: boolean
 }
 
 export function zeroUsage(): AgentUsage {
@@ -187,11 +189,17 @@ export function createSession(
     interactionChain: Promise.resolve(),
     taskTimer: null,
     running: false,
-    hasUpdate: false
+    hasUpdate: false,
+    hasTranscript: false
   }
 }
 
-/** 从落盘记录恢复（Agent 不恢复，只回看）。 */
+/**
+ * 从落盘记录恢复（2026-10-25 起支持续聊）。
+ *
+ * Agent 不在这里建（需要 Key/网络）：只要 transcript 文件在，`hasTranscript`
+ * 由服务层标上，首次追问时再按记录重建 Agent。
+ */
 export function restoreSession(record: {
   id: string
   status: AgentState['status']
@@ -206,6 +214,7 @@ export function restoreSession(record: {
   mode?: ExecutionMode
   summary?: string
   error?: string
+  attachmentPaths?: string[]
 }): Session {
   const mode = normalizeMode(record.mode)
   const interrupted =
@@ -215,6 +224,15 @@ export function restoreSession(record: {
     record.status === 'waiting'
   const restoredSteps = Array.isArray(record.steps) ? record.steps : []
   if (interrupted) finalizeRunningSteps(restoredSteps, record.updatedAt)
+  // 追问步骤 id 是 round-N、思考步骤是 thinking-<turn>：重启后接着编号，
+  // 避免和落盘的旧步骤撞名（撞了会重复渲染、历史定位也会指错）
+  let restoredRound = 0
+  let restoredTurn = 0
+  for (const step of restoredSteps) {
+    const match = /^round-(\d+)$/.exec(step.id)
+    if (match) restoredRound = Math.max(restoredRound, Number(match[1]))
+    if (typeof step.turn === 'number') restoredTurn = Math.max(restoredTurn, step.turn)
+  }
   return {
     state: {
       id: record.id,
@@ -240,10 +258,10 @@ export function restoreSession(record: {
     mode,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
-    round: 0,
-    turn: 0,
+    round: restoredRound,
+    turn: restoredTurn,
     turnTokens: new Map(),
-    attachmentPaths: [],
+    attachmentPaths: Array.isArray(record.attachmentPaths) ? [...record.attachmentPaths] : [],
     roundStartedAt: 0,
     roundCalls: 0,
     roundInput: 0,
@@ -256,6 +274,7 @@ export function restoreSession(record: {
     interactionChain: Promise.resolve(),
     taskTimer: null,
     running: false,
-    hasUpdate: false
+    hasUpdate: false,
+    hasTranscript: false
   }
 }

@@ -17,13 +17,22 @@ import { randomUUID } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, shell } from 'electron'
+import type { Agent } from '@earendil-works/pi-agent-core'
 import type { ImageContent } from '@earendil-works/pi-ai'
-import { buildAgent } from './pi'
+import { buildAgent, type BuiltAgent } from './pi'
 import { createTools, describeToolCall, type ApprovalDescription } from './tools'
 import { decideToolCall } from './policy'
 import { MAX_PARALLEL_TASKS, findRunnableIndex, type QueueItem } from './queue'
 import { resolveWorkspace } from './workspace'
 import { loadSessions, saveSessions, type PersistedSession, type PersistedState } from './store'
+import {
+  deleteTranscript,
+  hasTranscript,
+  loadTranscript,
+  pruneTranscripts,
+  saveTranscript,
+  transcriptDir
+} from './transcript'
 import { buildPrompt, normalizeAttachments } from './attachments'
 import { AgentEventTranslator } from './events'
 import { fetchLlmKey } from './llm-key'
@@ -35,6 +44,7 @@ import {
   PUSH_THROTTLE_MS,
   SAVE_DEBOUNCE_MS,
   TASK_TIMEOUT_MS,
+  clipText,
   createSession,
   emptyState,
   finalizeRunningSteps,
@@ -107,8 +117,7 @@ export class AgentService {
   /** 当前任务状态（没有任务时返回空态） */
   getState(): AgentState {
     this.ensureLoaded()
-    const session = this.activeSession()
-    return session ? session.state : emptyState()
+    return this.snapshotOf(this.activeSession())
   }
 
   /** 左侧列表（按更新时间倒序） */
@@ -176,6 +185,7 @@ export class AgentService {
     session.state.question = undefined
     session.agent = null
     this.sessions.delete(id)
+    deleteTranscript(id, this.transcriptRoot())
     this.audit('delete', { id })
     if (this.activeId === id) {
       const next = [...this.sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt)[0]
@@ -235,7 +245,7 @@ export class AgentService {
     this.ensureLoaded()
     const session = this.activeSession()
     if (!session) return { ok: false, error: '还没有任务，先开始一个' }
-    if (!session.agent) {
+    if (!session.agent && !session.hasTranscript) {
       return { ok: false, error: '这个任务的上下文已释放（应用重启或超出保留数），点「新任务」重新开始' }
     }
     const text = typeof payload === 'string' ? payload : (payload?.text ?? '')
@@ -264,16 +274,18 @@ export class AgentService {
     this.preparingFollowUps.add(sessionId)
     try {
       prompt = await buildPrompt(trimmed, attachments, callInternal)
+      // 重启/超出保留数/被释放后没有 Agent：按 transcript 懒重建上下文再继续
+      if (!session.agent) {
+        const resumed = await this.attachAgent(session)
+        if (!resumed.ok) return { ok: false, error: resumed.error }
+      }
     } finally {
       this.preparingFollowUps.delete(sessionId)
     }
 
-    // 文档抽取可能耗时；期间任务可能已结束/被中止，不能再往旧 Agent 里塞插话
+    // 文档抽取可能耗时；期间任务可能被删掉，不能再往旧 Agent 里塞插话
     if (!session.agent) {
       return { ok: false, error: '任务刚刚结束，请重新开始' }
-    }
-    if (session.state.status === 'cancelled' || session.state.status === 'done') {
-      return { ok: false, error: '任务已经结束，请重新开始' }
     }
 
     session.round += 1
@@ -306,15 +318,19 @@ export class AgentService {
   }
 
   /** 计划任务「按此执行」：切到标准/自动后在同一 Agent 上下文继续。 */
-  executePlan(payload: AgentExecutePlanPayload): { ok: boolean; error?: string } {
+  async executePlan(payload: AgentExecutePlanPayload): Promise<{ ok: boolean; error?: string }> {
     this.ensureLoaded()
     const session = this.sessions.get(payload?.id ?? '')
     if (!session) return { ok: false, error: '任务不存在' }
     if (session.state.status !== 'planned') {
       return { ok: false, error: '这个任务当前不是「待执行」状态' }
     }
-    if (!session.agent) {
+    if (!session.agent && !session.hasTranscript) {
       return { ok: false, error: '任务上下文已释放，无法按此执行；请新开任务' }
+    }
+    if (!session.agent) {
+      const resumed = await this.attachAgent(session)
+      if (!resumed.ok) return { ok: false, error: resumed.error }
     }
     const mode: ExecutionMode = payload.mode === 'auto' ? 'auto' : 'standard'
     const switched = this.setMode({ id: session.state.id, mode })
@@ -516,75 +532,126 @@ export class AgentService {
     this.queue = this.queue.filter((item) => item.sessionId !== id)
   }
 
+  /**
+   * 按当前配置建 Agent（新任务与重启后恢复共用）。
+   *
+   * 恢复时把 transcript 里的历史消息追加到新 system 提示之后；
+   * 文件损坏直接报错，不静默按空上下文继续（否则模型会「失忆」还照常回答）。
+   */
+  private async createSessionAgent(session: Session): Promise<BuiltAgent> {
+    const workspace = session.state.workspace
+    const key = await fetchLlmKey()
+    const tools = createTools({
+      workspace,
+      // 数组原地追加：后续追问附上的文件也能被 read_file 读到
+      extraReadPaths: session.attachmentPaths,
+      onTodo: (items) => this.translator.applyTodo(session, items),
+      // 联网搜索/抓取：开关与格式化都在后端（设置 → 搜索）
+      callInternal,
+      askUser: (question, options) => this.askQuestion(session, question, options),
+      trashPath: (abs) => shell.trashItem(abs)
+    })
+    const history = session.hasTranscript
+      ? loadTranscript(session.state.id, this.transcriptRoot())
+      : []
+    if (history === null) {
+      throw new Error('任务对话记录损坏，无法恢复上下文；请新开一个任务')
+    }
+
+    return buildAgent({
+      apiKey: key.key,
+      baseUrl: key.baseUrl,
+      model: key.model,
+      mode: session.state.mode,
+      tools,
+      history,
+      beforeToolCall: async ({ toolCall, args }) => {
+        const decision = decideToolCall({
+          mode: session.state.mode,
+          toolName: toolCall.name,
+          args,
+          workspace
+        })
+        if (decision.action === 'allow') return undefined
+        if (decision.action === 'deny') {
+          this.audit('tool-denied', {
+            id: session.state.id,
+            tool: toolCall.name,
+            mode: session.state.mode,
+            reason: decision.reason
+          })
+          return { block: true, reason: decision.reason }
+        }
+        const desc = describeToolCall(toolCall.name, args, workspace)
+        const allowed = await this.askApproval(session, toolCall.name, {
+          ...desc,
+          dangerous: decision.dangerous || desc.dangerous,
+          preview: [decision.reason, desc.preview].filter(Boolean).join('\n\n') || undefined
+        })
+        if (allowed) {
+          this.audit('tool-auto', {
+            id: session.state.id,
+            tool: toolCall.name,
+            mode: session.state.mode,
+            decision: 'confirmed'
+          })
+          return undefined
+        }
+        return {
+          block: true,
+          reason: '用户拒绝了这次操作。不要原样重试，换方案或停下来问用户。'
+        }
+      }
+    })
+  }
+
+  /** 把建好的 Agent 挂到会话上（模型信息 / 事件订阅）。 */
+  private installAgent(session: Session, built: BuiltAgent): void {
+    session.agent = built.agent
+    this.modelId = built.modelId
+    session.state.context = { used: 0, window: built.contextWindow }
+    session.agent.subscribe((event) => this.translator.onAgentEvent(session, event))
+  }
+
+  /** 懒恢复：重启 / Agent 被释放后，第一次追问时按 transcript 重建上下文。 */
+  private async attachAgent(session: Session): Promise<{ ok: boolean; error?: string }> {
+    if (session.agent) return { ok: true }
+    if (!session.hasTranscript) return { ok: false, error: '任务上下文已释放，请新开任务' }
+    // 标记后文件被人为删掉：宁可报错，也不要按空上下文继续（模型会「失忆」）
+    if (!hasTranscript(session.state.id, this.transcriptRoot())) {
+      session.hasTranscript = false
+      return { ok: false, error: '任务对话记录已丢失，无法恢复；请新开任务' }
+    }
+    try {
+      const built = await this.createSessionAgent(session)
+      // 建 Agent 期间任务可能已被删除
+      if (this.sessions.get(session.state.id) !== session) {
+        return { ok: false, error: '任务已被删除' }
+      }
+      this.installAgent(session, built)
+      this.audit('resume', {
+        id: session.state.id,
+        messages: built.agent.state.messages.length,
+        attachments: session.attachmentPaths.length
+      })
+      this.scheduleSave()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: sanitizeError((err as Error)?.message ?? String(err)) }
+    }
+  }
+
   private async launch(session: Session, attachments: AgentAttachment[]): Promise<void> {
     const workspace = session.state.workspace
     try {
-      const key = await fetchLlmKey()
-      const tools = createTools({
-        workspace,
-        // 数组原地追加：后续追问附上的文件也能被 read_file 读到
-        extraReadPaths: session.attachmentPaths,
-        onTodo: (items) => this.translator.applyTodo(session, items),
-        // 联网搜索/抓取：开关与格式化都在后端（设置 → 搜索）
-        callInternal,
-        askUser: (question, options) => this.askQuestion(session, question, options),
-        trashPath: (abs) => shell.trashItem(abs)
-      })
-
-      const built = buildAgent({
-        apiKey: key.key,
-        baseUrl: key.baseUrl,
-        model: key.model,
-        mode: session.state.mode,
-        tools,
-        beforeToolCall: async ({ toolCall, args }) => {
-          const decision = decideToolCall({
-            mode: session.state.mode,
-            toolName: toolCall.name,
-            args,
-            workspace
-          })
-          if (decision.action === 'allow') return undefined
-          if (decision.action === 'deny') {
-            this.audit('tool-denied', {
-              id: session.state.id,
-              tool: toolCall.name,
-              mode: session.state.mode,
-              reason: decision.reason
-            })
-            return { block: true, reason: decision.reason }
-          }
-          const desc = describeToolCall(toolCall.name, args, workspace)
-          const allowed = await this.askApproval(session, toolCall.name, {
-            ...desc,
-            dangerous: decision.dangerous || desc.dangerous,
-            preview: [decision.reason, desc.preview].filter(Boolean).join('\n\n') || undefined
-          })
-          if (allowed) {
-            this.audit('tool-auto', {
-              id: session.state.id,
-              tool: toolCall.name,
-              mode: session.state.mode,
-              decision: 'confirmed'
-            })
-            return undefined
-          }
-          return {
-            block: true,
-            reason: '用户拒绝了这次操作。不要原样重试，换方案或停下来问用户。'
-          }
-        }
-      })
+      const built = await this.createSessionAgent(session)
 
       // 准备期间任务可能已被取消/删除
       if (session.state.status === 'cancelled' || !this.sessions.has(session.state.id)) {
         this.releaseExecution(session)
         return
       }
-      session.agent = built.agent
-      this.modelId = built.modelId
-      session.state.context = { used: 0, window: built.contextWindow }
-      session.agent.subscribe((event) => this.translator.onAgentEvent(session, event))
+      this.installAgent(session, built)
       this.audit('start', {
         id: session.state.id,
         task: session.state.task,
@@ -664,10 +731,48 @@ export class AgentService {
       this.scheduleSave()
     } finally {
       this.clearTaskTimer(session)
+      // 本轮结束（含中止/失败）把模型上下文落盘：重启后据此续聊
+      this.persistTranscript(session, agent)
       this.finishRound(session)
       this.releaseExtraAgents()
       this.releaseExecution(session)
     }
+  }
+
+  /** 把模型上下文落盘（裁剪规则在 transcript.ts）。 */
+  private persistTranscript(session: Session, agent: Agent): void {
+    // 任务已删除（abort 引发的 finally 晚于删除）：别把刚删的记录又写回来
+    if (!this.sessions.has(session.state.id)) return
+    try {
+      const outcome = saveTranscript(
+        session.state.id,
+        agent.state.messages,
+        this.transcriptRecap(session),
+        this.transcriptRoot()
+      )
+      if (outcome.saved) session.hasTranscript = true
+      if (outcome.dropped > 0) {
+        this.audit('transcript-trim', { id: session.state.id, dropped: outcome.dropped })
+      }
+    } catch (err) {
+      // 落盘失败只影响续聊，不影响本次任务结果
+      console.warn('[agent] 对话记录保存失败：', (err as Error).message)
+    }
+  }
+
+  /** 历史被裁剪时给模型的概要：只用已有的任务/步骤/总结，不编造细节。 */
+  private transcriptRecap(session: Session): string {
+    const rounds = session.state.steps
+      .filter((step) => step.kind === 'round')
+      .slice(-8)
+      .map((step) => `- ${clipText(step.title, 160)}`)
+    const lines = [
+      '【较早的对话已被省略，下面是任务概要与用户后续要求；细节需要时请重新查看文件】',
+      `任务：${clipText(session.state.task, 500)}`
+    ]
+    if (session.state.summary) lines.push(`最近总结：${clipText(session.state.summary, 1500)}`)
+    if (rounds.length > 0) lines.push('用户后续要求：', ...rounds)
+    return lines.join('\n')
   }
 
   /** 本轮收尾：在步骤流末尾追加一条统计（耗时 / 调用 / token） */
@@ -828,6 +933,11 @@ export class AgentService {
     return this.sessions.get(this.activeId) ?? null
   }
 
+  /** transcript 根目录（userData/agent-transcripts） */
+  private transcriptRoot(): string {
+    return transcriptDir(app.getPath('userData'))
+  }
+
   /** 进入结束态：用户没在看这个任务时标未读完成（点开/回到面板即清除） */
   private markFinished(session: Session): void {
     if (this.panelActive && this.activeId === session.state.id) return
@@ -860,7 +970,15 @@ export class AgentService {
     this.loaded = true
     const persisted = loadSessions()
     for (const record of persisted.sessions) {
-      this.sessions.set(record.id, restoreSession(record))
+      const session = restoreSession(record)
+      // transcript 在不在决定这个任务重启后能不能继续聊
+      session.hasTranscript = hasTranscript(record.id, this.transcriptRoot())
+      this.sessions.set(record.id, session)
+    }
+    // 被 MAX_SESSIONS 裁掉/删除失败留下的 transcript 一并清理。
+    // 索引缺失/损坏时不清理：这时空列表不代表任务真的没了。
+    if (persisted.healthy) {
+      pruneTranscripts([...this.sessions.keys()], this.transcriptRoot())
     }
     this.activeId =
       persisted.activeId && this.sessions.has(persisted.activeId)
@@ -887,6 +1005,7 @@ export class AgentService {
             todos: session.state.todos,
             usage: session.state.usage,
             sources: session.state.sources,
+            attachmentPaths: session.attachmentPaths,
             summary: session.state.summary,
             error: session.state.error
           })
@@ -910,12 +1029,13 @@ export class AgentService {
     }, PUSH_THROTTLE_MS)
   }
 
-  private flush(): void {
-    const session = this.activeSession()
+  /** 对外快照：补上运行期才有的 resumable，并复制可变数组（避免渲染侧改到内部状态） */
+  private snapshotOf(session: Session | null): AgentState {
     const state = session ? session.state : emptyState()
-    const snapshot: AgentState = {
+    return {
       ...state,
-      resumable: session !== null && session.agent !== null,
+      // 有 Agent 可直接续；只有 transcript 也能在下次追问时懒重建
+      resumable: session !== null && (session.agent !== null || session.hasTranscript),
       steps: state.steps.map((step) => ({ ...step })),
       todos: state.todos.map((item) => ({ ...item })),
       approval: state.approval ? { ...state.approval } : undefined,
@@ -923,6 +1043,10 @@ export class AgentService {
         ? { ...state.question, options: [...state.question.options] }
         : undefined
     }
+  }
+
+  private flush(): void {
+    const snapshot = this.snapshotOf(this.activeSession())
     for (const listener of this.stateListeners) {
       try {
         listener(snapshot)
