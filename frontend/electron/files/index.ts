@@ -93,6 +93,7 @@ export function initFileSelection(): void {
       properties: ['openFile', 'multiSelections'],
       filters: [
         { name: '文本 / 代码', extensions: TEXT_EXTENSIONS },
+        { name: 'PDF 文档（.pdf）', extensions: ['pdf'] },
         { name: 'Word 文档（.docx）', extensions: ['docx'] },
         { name: 'Excel 表格（.xlsx/.xlsm）', extensions: ['xlsx', 'xlsm'] },
         { name: '图片（PNG/JPEG/WebP/GIF）', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },

@@ -1,12 +1,14 @@
-"""本地文件读取（文件分析 P1）：读取文本/代码、图片与 Word .docx。
+"""本地文件读取（文件分析 P1/P2）：读取文本/代码、图片、Word .docx、Excel 与 PDF。
 
-设计约束（与产品讨论对齐，2026-10-17）：
+设计约束（与产品讨论对齐，2026-10-17；PDF 2026-10-25）：
 - 文件由用户在原生选择框/粘贴路径/拖拽时显式指定；后端只读**普通文件**，不执行、不修改；
 - 文本：单文件与"本轮合计"都受 ``max_chars`` 限制；超限**拒绝整轮**，不做静默截断；
 - .docx：提取正文与表格（普通表格 Markdown、超大/超宽自动 TSV），提取文本走同一字数限额；
   老式 .doc 不支持，提示另存为 .docx；文档内图片暂不提取；
 - .xlsx/.xlsm：openpyxl 读可见工作表（TSV）、正式表格按名称拆块、合并单元格清单、公式缓存值优先；
   老式 .xls 不支持，提示另存为 .xlsx；
+- .pdf：pypdf 解压内容流并抽取文字，每页加页码分隔；扫描件/无文字层明确拒绝；
+  加密 PDF 先试空密码，仍失败提示取消密码；
 - 图片：PNG/JPEG/WebP/GIF（按 magic bytes，不信任扩展名），单张受
   ``max_image_bytes`` 限制；是否允许由 ``allow_images`` 控制（多模态模型开关）；
 - 只读 ``max_bytes`` 以内；先 stat 再读，避免超大文件把内存/CPU 吃掉；
@@ -25,6 +27,7 @@ from typing import Sequence
 
 from backend.modules.files.docx_reader import DocxExtractError, extract_docx_if_present
 from backend.modules.files.excel_reader import ExcelExtractError, extract_excel_if_present
+from backend.modules.files.pdf_reader import PdfExtractError, extract_pdf_if_present
 
 
 @dataclass(frozen=True)
@@ -89,7 +92,9 @@ class FileRejected(Exception):
 _OLE_COMPOUND_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
-def read_attachments(refs: Sequence[FileRef], limits: FileLimits) -> list[FileAttachment]:
+def read_attachments(
+    refs: Sequence[FileRef], limits: FileLimits, *, pages: str | None = None
+) -> list[FileAttachment]:
     """读取并校验本轮附件；任一文件不合法即抛 ``FileRejected``（整轮拒绝）。
 
     为什么整轮拒绝而不是跳过坏文件：用户看到的问题/文件是一组语义，静默少读一个
@@ -189,6 +194,14 @@ def read_attachments(refs: Sequence[FileRef], limits: FileLimits) -> list[FileAt
 
         remaining_chars = max(1, limits.max_chars - total_chars)
 
+        # .pdf：按文件头识别，解压内容流抽文字；扫描件/加密在提取层明确拒绝
+        try:
+            pdf_text = extract_pdf_if_present(
+                data, name, max_chars=remaining_chars, pages=pages
+            )
+        except PdfExtractError as exc:
+            raise FileRejected(exc.code, exc.message) from exc
+
         # .docx：ZIP + OOXML，提取正文与表格（表格 Markdown/TSV）后按普通文本限额处理
         try:
             docx_text = extract_docx_if_present(data, name, max_chars=remaining_chars)
@@ -218,7 +231,9 @@ def read_attachments(refs: Sequence[FileRef], limits: FileLimits) -> list[FileAt
                 raise FileRejected(exc.code, exc.message) from exc
 
         text = (
-            docx_text
+            pdf_text
+            if pdf_text is not None
+            else docx_text
             if docx_text is not None
             else excel_text
             if excel_text is not None

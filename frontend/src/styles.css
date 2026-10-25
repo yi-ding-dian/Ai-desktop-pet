@@ -226,6 +226,10 @@ body,
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* 附件 chip 从输入行向上生长，会伸到兔子脚下。.pet-view 有 z-index:1，
+     本面板不写 z-index 时按 auto(0) 参与层叠，会被兔子画布盖住；
+     提到 2，让文件名 chip / 输入行始终显示在宠物之上（2026-10-25）。 */
+  z-index: 2;
 }
 
 /* 文件分析（P1）：待发送附件 chip 行（面板 bottom 锚定，向上生长） */

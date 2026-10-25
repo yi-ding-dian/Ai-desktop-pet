@@ -23,6 +23,7 @@ import type {
   AgentAttachment,
   AgentState,
   AgentStep,
+  AgentTaskDraftPayload,
   AgentTaskSummary,
   ExecutionMode,
   PickedFile
@@ -45,8 +46,6 @@ import TaskHero from './TaskHero'
 import TaskList, { groupTasks } from './TaskList'
 import TaskModeSelector from './TaskModeSelector'
 
-/** 上次使用的工作区（仅本机偏好，不参与安全校验——主进程会重新 resolve） */
-const WORKSPACE_KEY = 'pet.task.workspace'
 /** 左侧任务列表宽度（可拖动） */
 const SIDEBAR_KEY = 'pet.task.sidebarWidth'
 const SIDEBAR_DEFAULT = 216
@@ -81,12 +80,23 @@ export interface TaskPanelProps {
   onFocusHandled?: () => void
   /** 正文链接点击（与对话模式一致：内嵌浏览器打开） */
   onLinkClick?: (event: ReactMouseEvent<HTMLDivElement>) => void
+  /** 宠物窗带文件的消息转来的草稿：预填并自动开始 */
+  draft?: AgentTaskDraftPayload | null
+  onDraftHandled?: (id: string) => void
+}
+
+/** 去掉 IPC 包装后的可读错误（invoke reject 会带 "Error invoking remote method ..." 前缀） */
+function errorText(err: unknown): string {
+  const raw = (err as Error)?.message ?? String(err)
+  return raw.replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '')
 }
 
 export default function TaskPanel({
   focusTaskId = null,
   onFocusHandled,
-  onLinkClick
+  onLinkClick,
+  draft = null,
+  onDraftHandled
 }: TaskPanelProps = {}): ReactElement {
   const [state, setState] = useState<AgentState | null>(null)
   /** 新任务页选中的执行模式（记住上次选择） */
@@ -99,13 +109,9 @@ export default function TaskPanel({
     }
   })
   const [tasks, setTasks] = useState<AgentTaskSummary[]>([])
-  const [workspace, setWorkspace] = useState<string>(() => {
-    try {
-      return localStorage.getItem(WORKSPACE_KEY) ?? ''
-    } catch {
-      return ''
-    }
-  })
+  /** 默认工作区（config.toml [agent]；空 = 平台默认）；不再恢复"上次工作区" */
+  const [workspace, setWorkspace] = useState('')
+  const [wsNotice, setWsNotice] = useState<string | null>(null)
   const [task, setTask] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [compose, setCompose] = useState(true)
@@ -143,6 +149,10 @@ export default function TaskPanel({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const stickRef = useRef(true)
+  /** 已处理过的草稿 id（防止重渲染/重复事件把同一份文件启动两次） */
+  const handledDraftRef = useRef<string | null>(null)
+  /** 处理过草稿后保持 true：压住 getState/状态推送的「切到已有任务」，避免把草稿页藏掉 */
+  const draftActiveRef = useRef(false)
 
   useEffect(() => {
     const api = agentBridge()
@@ -151,20 +161,38 @@ export default function TaskPanel({
     void api.getState().then((snapshot) => {
       if (!alive) return
       setState(snapshot)
-      if (snapshot.status !== 'idle') setCompose(false)
+      if (snapshot.status !== 'idle' && !draftActiveRef.current) setCompose(false)
     })
     void api.getTasks().then((list) => {
       if (alive) setTasks(list)
     })
     const offState = api.onState((snapshot) => {
       setState(snapshot)
-      if (snapshot.status !== 'idle') setCompose(false)
+      if (snapshot.status !== 'idle' && !draftActiveRef.current) setCompose(false)
     })
     const offTasks = api.onTasks((list) => setTasks(list))
     return () => {
       alive = false
       offState()
       offTasks()
+    }
+  }, [])
+
+  // 默认工作区：新任务每次从这里开始；配置无效 → 展示原因，不静默换目录
+  useEffect(() => {
+    const api = agentBridge()
+    if (!api?.getDefaultWorkspace) return
+    let alive = true
+    void api
+      .getDefaultWorkspace()
+      .then((path) => {
+        if (alive) setWorkspace(path)
+      })
+      .catch((err) => {
+        if (alive) setError(`默认工作区不可用：${errorText(err)}`)
+      })
+    return () => {
+      alive = false
     }
   }, [])
 
@@ -458,36 +486,93 @@ export default function TaskPanel({
     })
   }, [])
 
+  /** 真正启动任务（草稿和手动「开始」共用；失败时保留输入与附件） */
+  const startWith = useCallback(
+    async (text: string, files: PickedFile[], targetWorkspace: string): Promise<void> => {
+      const api = agentBridge()
+      if (!api) {
+        setError('任务模式不可用：请重启应用')
+        return
+      }
+      const trimmed = text.trim() || (files.length > 0 ? '帮我看看这些文件' : '')
+      if (!trimmed) {
+        setError('先说说要做什么')
+        return
+      }
+      if (!targetWorkspace) {
+        setError('先选择一个工作区')
+        return
+      }
+      setError(null)
+      let result: { ok: boolean; error?: string }
+      try {
+        result = await api.start({
+          task: trimmed,
+          workspace: targetWorkspace,
+          attachments: files.map((file) => ({
+            path: file.path,
+            name: file.name,
+            kind: attachmentKind(file.name)
+          })),
+          mode: composeMode
+        })
+      } catch (err) {
+        setError(errorText(err))
+        return
+      }
+      if (!result.ok) {
+        setError(result.error ?? '启动失败')
+        return
+      }
+      setTask('')
+      clearAttachments()
+      setCompose(false)
+    },
+    [composeMode, clearAttachments]
+  )
+
   const start = useCallback(async (): Promise<void> => {
+    await startWith(task, attachments, workspace)
+  }, [startWith, task, attachments, workspace])
+
+  // 宠物窗带文件的消息：预填草稿 + 用默认工作区自动开始；工作区无效时保留草稿并报错
+  useEffect(() => {
+    if (!draft) return
+    const draftId =
+      draft.id ?? `${draft.text}|${(draft.attachments ?? []).map((item) => item.path).join('|')}`
+    if (handledDraftRef.current === draftId) return
+    handledDraftRef.current = draftId
+    draftActiveRef.current = true
+    onDraftHandled?.(draftId)
+
     const api = agentBridge()
     if (!api) {
       setError('任务模式不可用：请重启应用')
       return
     }
-    const trimmed = task.trim()
-    if (!trimmed) {
-      setError('先说说要做什么')
-      return
-    }
-    if (!workspace) {
-      setError('先选择一个工作区')
-      return
-    }
+    const files = (draft.attachments ?? [])
+      .map((item) => ({ path: item.path, name: item.name, size: 0 }))
+      .filter((file) => unsupportedReason(file) === null)
+      .slice(0, MAX_ATTACHMENTS)
+    const text = draft.text.trim() || (files.length > 0 ? '帮我看看这些文件' : '')
+
+    setCompose(true)
+    setTask(text)
+    setAttachments(files)
+    setPreviews({})
     setError(null)
-    const result = await api.start({
-      task: trimmed,
-      workspace,
-      attachments: toAgentAttachments(),
-      mode: composeMode
-    })
-    if (!result.ok) {
-      setError(result.error ?? '启动失败')
-      return
-    }
-    setTask('')
-    clearAttachments()
-    setCompose(false)
-  }, [task, workspace, composeMode, toAgentAttachments, clearAttachments])
+
+    void api
+      .getDefaultWorkspace()
+      .then((resolved) => {
+        setWorkspace(resolved)
+        return startWith(text, files, resolved)
+      })
+      .catch((err) => {
+        setError(`默认工作区不可用：${errorText(err)}`)
+        setCompose(true)
+      })
+  }, [draft, onDraftHandled, startWith])
 
   const chooseComposeMode = useCallback((mode: ExecutionMode): void => {
     setComposeMode(mode)
@@ -512,18 +597,37 @@ export default function TaskPanel({
     clearAttachments()
   }, [reply, toAgentAttachments, clearAttachments])
 
+  /** 手动选目录：只对当前草稿生效；要长期使用需另点「设为默认」 */
   const pickWorkspace = useCallback(async (): Promise<void> => {
     const api = agentBridge()
     if (!api) return
-    const picked = await api.pickWorkspace()
-    if (!picked) return
-    setWorkspace(picked)
     try {
-      localStorage.setItem(WORKSPACE_KEY, picked)
-    } catch {
-      /* 隐私模式下写不进去，不影响本次使用 */
+      const picked = await api.pickWorkspace()
+      if (!picked) return
+      setWorkspace(picked)
+      setError(null)
+    } catch (err) {
+      setError(errorText(err))
     }
   }, [])
+
+  /** 把当前目录写回 config.toml，下次新任务仍从这里开始 */
+  const setWorkspaceAsDefault = useCallback(async (): Promise<void> => {
+    const api = agentBridge()
+    if (!api || !workspace) return
+    try {
+      const result = await api.setDefaultWorkspace(workspace)
+      if (!result.ok) {
+        setError(result.error ?? '保存默认工作区失败')
+        return
+      }
+    } catch (err) {
+      setError(errorText(err))
+      return
+    }
+    setWsNotice(`已把「${workspace}」设为默认工作区`)
+    window.setTimeout(() => setWsNotice(null), 4000)
+  }, [workspace])
 
   const selectTask = useCallback(async (id: string): Promise<void> => {
     const api = agentBridge()
@@ -628,12 +732,14 @@ export default function TaskPanel({
             attachments={attachments}
             previews={previews}
             error={error}
+            notice={wsNotice}
             onTaskChange={setTask}
             onDrop={handleDropFiles}
             onRemoveAttachment={removeAttachment}
             onPaste={handlePasteFiles}
             onPickFiles={() => void pickFiles()}
             onPickWorkspace={() => void pickWorkspace()}
+            onSetDefaultWorkspace={() => void setWorkspaceAsDefault()}
             onStart={() => void start()}
           />
         ) : (

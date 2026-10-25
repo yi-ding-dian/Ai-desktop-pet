@@ -38,14 +38,29 @@ export const SKIP_DIRS = new Set([
   '.cache'
 ])
 
-/** 内部端点统一回执（联网搜索 / 抓取；蛇形结果由后端转成驼峰） */
+/** 内部端点返回的单个文件（文本正文或图片 data URL，二选一） */
+export interface InternalFilePayload {
+  name: string
+  text: string
+  chars: number
+  imageUrl: string | null
+  mime: string | null
+}
+
+/** 内部端点统一回执（联网搜索 / 抓取 / 文件抽取 / 任务配置；蛇形结果由后端转成驼峰） */
 export interface InternalResult {
   ok: boolean
-  code: string
-  message: string
-  modelContent: string
+  code?: string
+  message?: string
+  modelContent?: string
   /** 结构化来源（引用悬浮卡片用；搜索失败时为空） */
   sources?: AgentSourceItem[]
+  /** 文件抽取端点返回的文件列表（成功时） */
+  files?: InternalFilePayload[]
+  /** 任务配置端点的默认工作区（空串 = 平台默认） */
+  defaultWorkspace?: string
+  /** 配置读取/校验失败（任务配置端点）；此时 defaultWorkspace 不可信 */
+  configError?: boolean
 }
 
 export interface ToolContext {

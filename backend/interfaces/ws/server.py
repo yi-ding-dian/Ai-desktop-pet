@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import secrets as _secrets
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket
@@ -444,6 +445,167 @@ def create_app(
         url = payload.get("url")
         result = await search.fetch_from_tool({"url": url if isinstance(url, str) else ""})
         return _search_payload(result)
+
+    @app.post("/internal/files/extract")
+    async def internal_files_extract(
+        payload: dict[str, Any],
+        x_pet_internal_token: str | None = Header(default=None, alias="X-Pet-Internal-Token"),
+    ) -> JSONResponse:
+        """任务模式的文件读取：复用对话附件的同一套读取与限额（2026-10-25）。
+
+        只接受主进程调用（令牌鉴权）。文本/代码、Word、Excel、PDF 都走这里，
+        任务模式不再自己维护第二套解析器；图片仍由主进程本地转 base64（更快）。
+        """
+        _require_internal(x_pet_internal_token)
+        from backend.modules.files import (
+            FileLimits,
+            FileRef,
+            FileRejected,
+            read_attachments,
+        )
+        from backend.shared.config import load_config
+
+        raw_paths = payload.get("paths")
+        if (
+            not isinstance(raw_paths, list)
+            or not raw_paths
+            or not all(isinstance(item, str) for item in raw_paths)
+        ):
+            return JSONResponse(
+                {"ok": False, "code": "INVALID_PATH", "message": "请提供要读取的文件路径"},
+                headers={"Cache-Control": "no-store"},
+            )
+        raw_pages = payload.get("pages")
+        if raw_pages is not None and not isinstance(raw_pages, str):
+            return JSONResponse(
+                {"ok": False, "code": "PDF_PAGE_RANGE", "message": "页范围格式不正确"},
+                headers={"Cache-Control": "no-store"},
+            )
+
+        try:
+            files_cfg = load_config().files
+            limits = FileLimits(
+                max_chars=files_cfg.max_chars,
+                max_bytes=files_cfg.max_bytes,
+                max_per_turn=files_cfg.max_per_turn,
+                max_image_bytes=files_cfg.max_image_bytes,
+                allow_images=files_cfg.allow_images,
+            )
+        except Exception:  # noqa: BLE001 - 配置损坏不影响读取（退回默认限额）
+            logger.warning("读取文件配置失败，内部端点改用默认限额")
+            limits = FileLimits()
+
+        refs = [FileRef(path) for path in raw_paths]
+        try:
+            attachments = await asyncio.to_thread(
+                read_attachments, refs, limits, pages=raw_pages
+            )
+        except FileRejected as exc:
+            return JSONResponse(
+                {"ok": False, "code": exc.code, "message": exc.message},
+                headers={"Cache-Control": "no-store"},
+            )
+        except Exception:  # noqa: BLE001 - 兜底：内部端点不把堆栈回给主进程
+            logger.exception("内部文件抽取失败")
+            return JSONResponse(
+                {"ok": False, "code": "READ_FAILED", "message": "读取文件失败，请稍后再试～"},
+                headers={"Cache-Control": "no-store"},
+            )
+
+        return JSONResponse(
+            {
+                "ok": True,
+                "files": [
+                    {
+                        "name": item.name,
+                        "text": item.text,
+                        "chars": item.chars,
+                        "imageUrl": item.image_url,
+                        "mime": item.mime,
+                    }
+                    for item in attachments
+                ],
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/internal/agent-config")
+    async def internal_agent_config_get(
+        x_pet_internal_token: str | None = Header(default=None, alias="X-Pet-Internal-Token"),
+    ) -> JSONResponse:
+        """任务模式配置（目前只有默认工作区）；空串 = 让主进程按平台默认解析。"""
+        _require_internal(x_pet_internal_token)
+        from backend.shared.config import load_config
+
+        try:
+            default_workspace = load_config().agent.default_workspace
+        except Exception:  # noqa: BLE001 - 配置损坏：明确告知主进程，由它报错而不是静默换目录
+            logger.warning("读取 agent 配置失败，内部端点标记 configError")
+            return JSONResponse(
+                {"defaultWorkspace": "", "configError": True},
+                headers={"Cache-Control": "no-store"},
+            )
+        return JSONResponse(
+            {"defaultWorkspace": default_workspace},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post("/internal/agent-config")
+    async def internal_agent_config_set(
+        payload: dict[str, Any],
+        x_pet_internal_token: str | None = Header(default=None, alias="X-Pet-Internal-Token"),
+    ) -> JSONResponse:
+        """写回默认工作区（任务页「设为默认」用），走 save_config 保留注释与排版。"""
+        _require_internal(x_pet_internal_token)
+        from backend.shared.config import load_config, save_config
+
+        raw = payload.get("defaultWorkspace")
+        if not isinstance(raw, str):
+            return JSONResponse(
+                {"ok": False, "code": "INVALID_PATH", "message": "工作区路径格式不正确"},
+                headers={"Cache-Control": "no-store"},
+            )
+        text = raw.strip()
+        if text:
+            if "\x00" in text or text.startswith("\\\\"):
+                return JSONResponse(
+                    {"ok": False, "code": "INVALID_PATH", "message": "不支持这个工作区路径"},
+                    headers={"Cache-Control": "no-store"},
+                )
+            path = Path(text)
+            if not path.is_absolute() or path.parent == path:
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "code": "INVALID_PATH",
+                        "message": "工作区必须是绝对路径，且不能是磁盘根目录",
+                    },
+                    headers={"Cache-Control": "no-store"},
+                )
+            if not path.exists() or not path.is_dir():
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "code": "INVALID_PATH",
+                        "message": "这个目录不存在或不是文件夹，请重新选择～",
+                    },
+                    headers={"Cache-Control": "no-store"},
+                )
+
+        try:
+            config = load_config()
+            config.agent.default_workspace = text
+            save_config(config)
+        except Exception:  # noqa: BLE001 - 配置损坏/写盘失败都回可读原因
+            logger.exception("保存默认工作区失败")
+            return JSONResponse(
+                {"ok": False, "code": "SAVE_FAILED", "message": "保存默认工作区失败，请稍后再试～"},
+                headers={"Cache-Control": "no-store"},
+            )
+        return JSONResponse(
+            {"ok": True, "defaultWorkspace": text},
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:

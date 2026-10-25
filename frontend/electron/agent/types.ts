@@ -209,6 +209,16 @@ export interface AgentStartPayload {
   mode?: ExecutionMode
 }
 
+/** 宠物窗 → 任务页的草稿（2026-10-25：带文件的宠物消息统一转任务模式） */
+export interface AgentTaskDraftPayload {
+  /** 主进程补的草稿 id（同一份草稿只自动启动一次） */
+  id?: string
+  /** 宠物输入条里的文字（可空 = 只带文件） */
+  text: string
+  /** 本轮附件（主进程会再过滤一次） */
+  attachments?: AgentAttachment[]
+}
+
 /** agent:follow-up 的入参 */
 export interface AgentFollowUpPayload {
   text: string

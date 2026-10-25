@@ -20,6 +20,8 @@ export interface TaskHeroProps {
   attachments: PickedFile[]
   previews: Record<string, string>
   error: string | null
+  /** 轻提示（如"已设为默认工作区"），不是错误 */
+  notice?: string | null
   onTaskChange: (value: string) => void
   onDrop: (event: ReactDragEvent<HTMLDivElement>) => void
   onRemoveAttachment: (path: string) => void
@@ -27,6 +29,7 @@ export interface TaskHeroProps {
   onPaste: (text: string) => boolean
   onPickFiles: () => void
   onPickWorkspace: () => void
+  onSetDefaultWorkspace: () => void
   onStart: () => void
 }
 
@@ -38,12 +41,14 @@ export default function TaskHero({
   attachments,
   previews,
   error,
+  notice,
   onTaskChange,
   onDrop,
   onRemoveAttachment,
   onPaste,
   onPickFiles,
   onPickWorkspace,
+  onSetDefaultWorkspace,
   onStart
 }: TaskHeroProps): ReactElement {
   return (
@@ -90,6 +95,16 @@ export default function TaskHero({
                 {workspace || '未选择'}
               </span>
             </button>
+            {workspace ? (
+              <button
+                type="button"
+                className="task-ws-default"
+                title="把这个目录写回 config.toml，作为以后新任务的默认工作区"
+                onClick={onSetDefaultWorkspace}
+              >
+                设为默认
+              </button>
+            ) : null}
             <TaskModeSelector mode={mode} onChange={onModeChange} compact />
           </div>
           <button type="button" className="task-btn task-btn-primary" onClick={onStart}>
@@ -99,7 +114,7 @@ export default function TaskHero({
       </div>
       {error ? <div className="task-error">{error}</div> : null}
       <div className="task-hero-hint">
-        {MODE_HINTS[mode]} · Enter 开始，Shift+Enter 换行
+        {notice ? notice : `${MODE_HINTS[mode]} · Enter 开始，Shift+Enter 换行`}
       </div>
     </div>
   )

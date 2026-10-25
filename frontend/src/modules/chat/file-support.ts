@@ -28,9 +28,15 @@ const TEXT_BASENAMES = new Set([
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
 const WORD_EXTENSIONS = new Set(['docx', 'docm'])
 const EXCEL_EXTENSIONS = new Set(['xlsx', 'xlsm'])
+const PDF_EXTENSIONS = new Set(['pdf'])
 
 export const SUPPORTED_FILE_HINT =
-  '目前支持：文本/代码、图片（PNG/JPEG/WebP/GIF）、Word（.docx/.docm）、Excel（.xlsx/.xlsm）。'
+  '目前支持：文本/代码、图片（PNG/JPEG/WebP/GIF）、PDF、Word（.docx/.docm）、Excel（.xlsx/.xlsm）。'
+
+/** 附件类型（AgentAttachment.kind 的展示口径）：图片走宠物会话，其余走任务模式。 */
+export function attachmentKindOf(file: PickedFile): 'image' | 'other' {
+  return IMAGE_EXTENSIONS.has(fileExtension(file.name)) ? 'image' : 'other'
+}
 
 function fileExtension(name: string): string {
   const index = name.lastIndexOf('.')
@@ -46,11 +52,11 @@ export function unsupportedReason(file: PickedFile): string | null {
     TEXT_BASENAMES.has(base) ||
     IMAGE_EXTENSIONS.has(ext) ||
     WORD_EXTENSIONS.has(ext) ||
-    EXCEL_EXTENSIONS.has(ext)
+    EXCEL_EXTENSIONS.has(ext) ||
+    PDF_EXTENSIONS.has(ext)
   ) {
     return null
   }
-  if (ext === 'pdf') return 'PDF 暂时还不支持'
   if (ext === 'doc' || ext === 'xls') {
     return '老式 .doc/.xls 暂时不支持，请另存为 .docx/.xlsx'
   }

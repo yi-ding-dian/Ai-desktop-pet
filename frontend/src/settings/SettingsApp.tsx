@@ -1,7 +1,7 @@
 /**
  * 设置页主组件（settings 域）：左侧分区导航 + 右侧分区视图 + 底部保存条。
  *
- * 十个分区（设计文档 §7.6.1）：LLM / 搜索 / 文件 / 宠物 / 声音 / 行为 / 记忆 / 记忆本 / 主题 / 关于。
+ * 十一个分区（设计文档 §7.6.1）：LLM / 搜索 / 文件 / 任务 / 宠物 / 声音 / 行为 / 记忆 / 记忆本 / 主题 / 关于。
  * 数据流与全部状态在 useSettingsController（唯一控制器）；本文件只做布局、分区切换与状态文案。
  * 「记忆本」面板自带 WS 连接与数据流（useMemoryBookController），不混入配置保存状态。
  */
@@ -11,6 +11,7 @@ import { useSettingsController, type SettingsController } from './hooks/useSetti
 import LlmPanel from './panels/LlmPanel'
 import SearchPanel from './panels/SearchPanel'
 import FilePanel from './panels/FilePanel'
+import AgentPanel from './panels/AgentPanel'
 import PetPanel from './panels/PetPanel'
 import VoicePanel from './panels/VoicePanel'
 import BehaviorPanel from './panels/BehaviorPanel'
@@ -23,6 +24,7 @@ type PanelId =
   | 'llm'
   | 'search'
   | 'files'
+  | 'agent'
   | 'pet'
   | 'voice'
   | 'behavior'
@@ -35,6 +37,7 @@ const PANELS: ReadonlyArray<{ id: PanelId; label: string }> = [
   { id: 'llm', label: 'LLM' },
   { id: 'search', label: '搜索' },
   { id: 'files', label: '文件' },
+  { id: 'agent', label: '任务' },
   { id: 'pet', label: '宠物' },
   { id: 'voice', label: '声音' },
   { id: 'behavior', label: '行为' },
@@ -108,6 +111,8 @@ export default function SettingsApp(): ReactElement {
             contextTokensError={ctrl.contextTokensError}
           />
         )
+      case 'agent':
+        return <AgentPanel form={ctrl.form} setField={ctrl.setField} />
       case 'pet':
         return (
           <PetPanel

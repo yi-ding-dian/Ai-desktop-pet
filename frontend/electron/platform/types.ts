@@ -17,6 +17,17 @@ export interface LinuxOnlyWindowOptions {
 }
 
 /**
+ * 默认工作区解析所需的系统目录（由主进程注入，平台层不 import electron）。
+ *
+ * Windows / Linux 都优先「用户文档目录」，拿不到再退「家目录」——两边规则一致，
+ * 但集中在本层，新增平台时只改 `DEFAULT_WORKSPACE_BASE` 一行。
+ */
+export interface DefaultWorkspaceHost {
+  documents: string
+  home: string
+}
+
+/**
  * 后端启动路径：开发态 venv 解释器（相对 `backend/` 的路径段）+ 生产态 onedir 产物名。
  *
  * 为什么必须按平台取：PyInstaller **不支持交叉编译**，后端产物只能在本平台构建，

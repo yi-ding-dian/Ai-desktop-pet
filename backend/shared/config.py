@@ -93,6 +93,12 @@ os_notification_when_hidden = true
 # 二期"稍后提醒"默认分钟数（当前仅存配置）
 snooze_minutes              = 10
 
+[agent]            # 任务模式（2026-10-25）
+# 默认工作区：新任务从这里开始执行；留空 = 平台默认
+#（Windows / Linux 都是「用户文档目录/ai-desktop-pet」）。
+# 必须是绝对路径；目录不存在时任务页会报错让你重新选择，不会静默换目录。
+default_workspace = ""
+
 [search]           # 联网搜索（DeepSeek Search / Fetch，2026-10-18；默认开启）
 # 打开后模型可调用 web_search / web_fetch：先搜网页、读结果，再回答。
 # 计费：Search / Fetch 各 ¥5 / 1000 次成功请求；北京时间 2026-11-01 00:00 起计费
@@ -395,6 +401,35 @@ class SearchConfig(BaseModel):
         return value
 
 
+class AgentConfig(BaseModel):
+    """任务模式配置（2026-10-25）。
+
+    ``default_workspace``：新任务的默认工作区；空 = 平台默认（用户文档目录下的
+    ``ai-desktop-pet``）。这里只做**语法**校验（绝对路径），不检查目录是否存在——
+    目录可能被用户临时删掉，读取配置时不能因此让整个配置加载失败；真正的可用性
+    由主进程在启动任务前校验并给出可读错误。
+    """
+
+    default_workspace: str = ""
+
+    @field_validator("default_workspace")
+    @classmethod
+    def _check_default_workspace(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            return ""
+        if "\x00" in text:
+            raise ValueError("agent.default_workspace 不能包含非法字符")
+        if text.startswith("\\\\"):
+            raise ValueError("agent.default_workspace 不支持网络路径（UNC）")
+        path = Path(text)
+        if not path.is_absolute():
+            raise ValueError("agent.default_workspace 必须是绝对路径（~ 不会展开）")
+        if path.parent == path:
+            raise ValueError("agent.default_workspace 不能是磁盘根目录")
+        return text
+
+
 class AppConfig(BaseModel):
     """完整配置（缺省字段自动取默认值，容忍用户手改 TOML 的遗漏）。"""
 
@@ -407,6 +442,7 @@ class AppConfig(BaseModel):
     files: FileConfig = Field(default_factory=FileConfig)
     reminders: ReminderConfig = Field(default_factory=ReminderConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
 
 
 def load_config(path: Path | None = None) -> AppConfig:

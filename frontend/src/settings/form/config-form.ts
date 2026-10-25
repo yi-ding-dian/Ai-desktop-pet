@@ -48,6 +48,8 @@ export interface FormValues {
   searchBaseUrl: string
   /** 每次搜索返回条数（字符串保存用户输入；保存时校验 1–50） */
   searchCount: string
+  /** 任务模式默认工作区（空 = 平台默认；保存后由主进程经内部端点读取） */
+  agentDefaultWorkspace: string
 }
 
 /** 空表单（等待 config 或字段缺失时的底座；布尔默认与 backend config.py 默认一致） */
@@ -70,7 +72,8 @@ export const EMPTY_FORM: FormValues = {
   allowImages: true,
   searchEnabled: true,
   searchBaseUrl: 'https://api.deepseek.com',
-  searchCount: '5'
+  searchCount: '5',
+  agentDefaultWorkspace: ''
 }
 
 // ------------------------------------------------------------------ 宽松读取工具
@@ -137,6 +140,7 @@ export function snapshotToForm(config: ConfigData): FormValues {
   const memory = asObject(config.memory)
   const files = asObject(config.files)
   const search = asObject(config.search)
+  const agent = asObject(config.agent)
 
   return {
     llmBaseUrl: asString(llm?.base_url) ?? '',
@@ -157,7 +161,8 @@ export function snapshotToForm(config: ConfigData): FormValues {
     allowImages: asBool(files?.allow_images) ?? true,
     searchEnabled: asBool(search?.enabled) ?? true,
     searchBaseUrl: asString(search?.base_url) ?? 'https://api.deepseek.com',
-    searchCount: asNumberText(search?.count) ?? '5'
+    searchCount: asNumberText(search?.count) ?? '5',
+    agentDefaultWorkspace: asString(agent?.default_workspace) ?? ''
   }
 }
 
@@ -253,6 +258,13 @@ export function buildPatch(
     llm.context_tokens = contextTokens
     patch.llm = llm
   }
+
+  // 任务模式：只提交有变化的默认工作区（空串 = 平台默认；路径合法性由后端校验）
+  const agentPatch: Record<string, unknown> = {}
+  if (form.agentDefaultWorkspace.trim() !== baseline.agentDefaultWorkspace.trim()) {
+    agentPatch.default_workspace = form.agentDefaultWorkspace.trim()
+  }
+  if (Object.keys(agentPatch).length > 0) patch.agent = agentPatch
 
   return Object.keys(patch).length > 0 ? patch : null
 }

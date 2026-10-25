@@ -74,6 +74,8 @@ export class AgentService {
   private pushTimer: NodeJS.Timeout | null = null
   private saveTimer: NodeJS.Timeout | null = null
   private loaded = false
+  /** 正在读附件的追问（同一任务并发追问时防止慢的那条被后一条插队） */
+  private readonly preparingFollowUps = new Set<string>()
   /** 当前模型（面板副标题用） */
   private modelId = ''
   /** 任务面板是否正在显示（且工作窗可见）——决定完成时是否标未读 */
@@ -227,7 +229,9 @@ export class AgentService {
    *
    * 运行中作为插话（steer）；排队中拒绝；有槽位立即执行，否则排队。
    */
-  followUp(payload: AgentFollowUpPayload | string): { ok: boolean; error?: string } {
+  async followUp(
+    payload: AgentFollowUpPayload | string
+  ): Promise<{ ok: boolean; error?: string }> {
     this.ensureLoaded()
     const session = this.activeSession()
     if (!session) return { ok: false, error: '还没有任务，先开始一个' }
@@ -244,6 +248,10 @@ export class AgentService {
     if (session.state.status === 'waiting') {
       return { ok: false, error: '请先处理上方的确认/提问' }
     }
+    const sessionId = session.state.id
+    if (this.preparingFollowUps.has(sessionId)) {
+      return { ok: false, error: '上一条还在读取附件，请稍后再发' }
+    }
 
     const attachments = normalizeAttachments(
       typeof payload === 'string' ? [] : payload?.attachments
@@ -251,7 +259,22 @@ export class AgentService {
     for (const item of attachments) {
       if (!session.attachmentPaths.includes(item.path)) session.attachmentPaths.push(item.path)
     }
-    const prompt = buildPrompt(trimmed, attachments)
+    // 附件抽取是异步的（PDF/Office 走后端）：先占住本任务的准备位，保证后发不先到
+    let prompt: { text: string; images: ImageContent[] }
+    this.preparingFollowUps.add(sessionId)
+    try {
+      prompt = await buildPrompt(trimmed, attachments, callInternal)
+    } finally {
+      this.preparingFollowUps.delete(sessionId)
+    }
+
+    // 文档抽取可能耗时；期间任务可能已结束/被中止，不能再往旧 Agent 里塞插话
+    if (!session.agent) {
+      return { ok: false, error: '任务刚刚结束，请重新开始' }
+    }
+    if (session.state.status === 'cancelled' || session.state.status === 'done') {
+      return { ok: false, error: '任务已经结束，请重新开始' }
+    }
 
     session.round += 1
     this.translator.pushStep(session, {
@@ -570,7 +593,7 @@ export class AgentService {
         model: this.modelId,
         attachments: session.attachmentPaths.length
       })
-      const prompt = buildPrompt(session.state.task, attachments)
+      const prompt = await buildPrompt(session.state.task, attachments, callInternal)
       await this.executeTurn(session, prompt.text, prompt.images)
     } catch (err) {
       // 走到这里只可能是准备阶段失败（取 Key / 建 Agent）

@@ -27,7 +27,16 @@ from backend.shared.config import AppConfig, save_config
 from backend.shared.secrets import get_llm_key, mask_secret, set_llm_key
 
 #: patch 允许出现的配置域（与设置面板分区一致，§7.6.1；reminders 暂只在配置文件/热更可用）
-_ALLOWED_SECTIONS = ("llm", "pet", "voice", "behavior", "memory", "files", "reminders")
+_ALLOWED_SECTIONS = (
+    "llm",
+    "pet",
+    "voice",
+    "behavior",
+    "memory",
+    "files",
+    "reminders",
+    "agent",
+)
 #: patch 顶层 key 专用字段（设置 LLM API key；空/未提供 = 不修改）
 _KEY_FIELD = "key"
 #: patch 内 key 专用字段（设置面板约定放 ``llm.api_key``；与顶层 key 等价）
@@ -141,6 +150,16 @@ class SettingsService:
                     f"{section} 下不支持的字段：{', '.join(unknown_fields)}"
                 )
             merged[section].update(config_values)
+
+        # 任务默认工作区：设置面板保存时校验目录存在（手改 config.toml 仍宽松，
+        # 由任务页在启动前报错；这里只拦用户当场选错的路径）
+        agent_values = patch.get("agent")
+        if isinstance(agent_values, dict):
+            workspace = agent_values.get("default_workspace")
+            if isinstance(workspace, str) and workspace.strip():
+                path = Path(workspace.strip())
+                if path.is_absolute() and not path.is_dir():
+                    raise ConfigInvalid("默认工作区不存在或不是文件夹，请重新选择")
 
         try:
             return AppConfig.model_validate(merged)

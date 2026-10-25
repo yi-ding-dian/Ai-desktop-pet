@@ -1,8 +1,14 @@
-/** 任务附件：过滤与拼进本轮消息（图片给模型看，文本内联）。 */
+/** 任务附件：过滤与拼进本轮消息（图片给模型看，文本/文档内联）。 */
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname } from 'node:path'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { AgentAttachment } from './types'
+import {
+  extractDocument,
+  isDocumentPath,
+  looksLikePdf,
+  type InternalCaller
+} from './file-extract'
 import {
   IMAGE_MIME,
   MAX_ATTACHMENTS,
@@ -36,13 +42,17 @@ export function normalizeAttachments(
 /**
  * 把附件拼进这一轮消息：
  *  - 图片 → 作为 image content 直接给模型看（不复制文件）
+ *  - PDF / Word / Excel → 调后端内部端点抽取正文（与对话附件同一套解析）
  *  - 文本/代码 → 读取内容内联（单文件 2 万字上限）
  *  - 其它 → 只给路径（模型读不了）
+ *
+ * ``callInternal`` 由主进程注入；离线自测没有后端时，文档走"读不了"的提示。
  */
-export function buildPrompt(
+export async function buildPrompt(
   text: string,
-  attachments: AgentAttachment[]
-): { text: string; images: ImageContent[] } {
+  attachments: AgentAttachment[],
+  callInternal?: InternalCaller
+): Promise<{ text: string; images: ImageContent[] }> {
   const parts: string[] = [text]
   const images: ImageContent[] = []
   for (const item of attachments) {
@@ -60,6 +70,21 @@ export function buildPrompt(
           mimeType: IMAGE_MIME[ext]
         })
         parts.push(`（用户附带图片：${item.name}，已随本条消息提供）`)
+        continue
+      }
+      if (isDocumentPath(item.path) || looksLikePdf(item.path)) {
+        if (!callInternal) {
+          parts.push(`（附件 ${item.name} 是 PDF/Office 文档，当前环境读不了内容）`)
+          continue
+        }
+        try {
+          const document = await extractDocument(item.path, callInternal)
+          parts.push(
+            `<附件 名称="${item.name}" 路径="${item.path}">\n${clipText(document.text, MAX_INLINE_TEXT)}\n</附件>`
+          )
+        } catch (err) {
+          parts.push(`（附件 ${item.name} 读取失败：${(err as Error).message}）`)
+        }
         continue
       }
       if (stat.size > MAX_INLINE_TEXT * 4) {

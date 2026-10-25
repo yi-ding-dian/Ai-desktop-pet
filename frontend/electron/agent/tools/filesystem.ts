@@ -14,6 +14,7 @@ import {
   resolveMutationTarget,
   resolveReadablePath
 } from '../workspace'
+import { extractDocument, isDocumentPath, looksLikePdf } from '../file-extract'
 import { matchGlob } from './glob'
 import {
   READ_LIMIT_BYTES,
@@ -92,23 +93,34 @@ export function createListFiles(root: string): AgentTool {
   return listFiles
 }
 
-export function createReadFile(root: string, _ctx: ToolContext): AgentTool {
+export function createReadFile(root: string, ctx: ToolContext): AgentTool {
   const readFile: AgentTool = {
     name: 'read_file',
     label: '读取文件',
     description:
-      '读取文本文件，返回带行号的内容。相对路径按工作区解析，也支持工作区外的绝对路径（只读）。可用 offset/limit 按行区间读取。',
+      '读取文本文件，返回带行号的内容；PDF / Word / Excel 会抽取正文（PDF 按页分隔，可用 pages 指定页范围）。相对路径按工作区解析，也支持工作区外的绝对路径（只读）。文本可用 offset/limit 按行区间读取。',
     parameters: Type.Object({
       path: Type.String({ description: '相对工作区的路径，或任意绝对路径' }),
-      offset: Type.Optional(Type.Number({ description: '起始行（1 起）' })),
-      limit: Type.Optional(Type.Number({ description: '最多读取多少行，默认 400，上限 2000' }))
+      offset: Type.Optional(Type.Number({ description: '起始行（1 起；仅文本文件）' })),
+      limit: Type.Optional(Type.Number({ description: '最多读取多少行，默认 400，上限 2000；仅文本文件' })),
+      pages: Type.Optional(
+        Type.String({ description: 'PDF 页范围，如 "1-20" 或 "3"（仅 PDF 有效）' })
+      )
     }),
     execute: async (_id, params) => {
-      const p = params as { path: string; offset?: number; limit?: number }
+      const p = params as { path: string; offset?: number; limit?: number; pages?: string }
       const abs = resolveReadablePath(root, p.path)
       if (!existsSync(abs)) throw new Error('文件不存在：' + displayOf(root, abs))
       const stat = statSync(abs)
       if (!stat.isFile()) throw new Error('不是文件：' + displayOf(root, abs))
+
+      // PDF / Office：统一交给后端抽取（同一套解析与文案）；文本仍走本地快路径
+      if (isDocumentPath(abs) || looksLikePdf(abs)) {
+        if (!ctx.callInternal) throw new Error('当前环境不支持读取 PDF/Office 文件')
+        const document = await extractDocument(abs, ctx.callInternal, p.pages)
+        return ok(`文档「${document.name}」已提取 ${document.chars} 字：\n\n${document.text}`)
+      }
+
       if (stat.size > READ_LIMIT_BYTES) {
         throw new Error(`文件过大（${formatBytes(stat.size)}），上限 ${formatBytes(READ_LIMIT_BYTES)}；请改用 search_text 定位`)
       }

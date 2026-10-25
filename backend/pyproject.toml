@@ -20,6 +20,7 @@ dependencies = [
     "tomlkit",
     "python-docx>=1.1",
     "openpyxl>=3.1",
+    "pypdf>=5.0",
     # DeepSeek Search / Fetch（2026-10-18）：直接用 httpx 调独立接口
     "httpx",
 ]

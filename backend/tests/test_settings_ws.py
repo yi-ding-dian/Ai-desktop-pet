@@ -159,6 +159,39 @@ def test_set_config_invalid_pushes_config_invalid_error(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_set_config_agent_workspace_requires_existing_dir(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        dispatcher, _ = make_dispatcher(with_settings=True)
+        ctx = FakeCtx()
+        missing = tmp_path / "nope"
+        await dispatch(
+            dispatcher,
+            ctx,
+            "set_config",
+            {"patch": {"agent": {"default_workspace": str(missing)}}},
+        )
+
+        assert ctx.sent == []
+        code, message = ctx.errors[0]
+        assert code == "CONFIG_INVALID"
+        assert "默认工作区" in message
+        assert not (tmp_path / "config.toml").exists()
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        ctx2 = FakeCtx()
+        await dispatch(
+            dispatcher,
+            ctx2,
+            "set_config",
+            {"patch": {"agent": {"default_workspace": str(workspace)}}},
+        )
+        assert ctx2.errors == []
+        assert load_config(tmp_path / "config.toml").agent.default_workspace == str(workspace)
+
+    asyncio.run(scenario())
+
+
 def test_set_config_success_pushes_config_reply(tmp_path: Path) -> None:
     async def scenario() -> None:
         dispatcher, runtime = make_dispatcher(with_settings=True)

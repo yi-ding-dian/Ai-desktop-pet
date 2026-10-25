@@ -18,6 +18,7 @@ import {
   type AgentSetModePayload,
   type AgentStartPayload,
   type AgentState,
+  type AgentTaskDraftPayload,
   type AgentTaskSummary,
   type BackendReadyPayload,
   type BackendSnapshot,
@@ -649,6 +650,33 @@ const api: PetBridgeApi = {
       ipcRenderer.on(IPC_AGENT.TASKS, listener)
       return () => {
         ipcRenderer.removeListener(IPC_AGENT.TASKS, listener)
+      }
+    },
+
+    getDefaultWorkspace(): Promise<string> {
+      return ipcRenderer.invoke(IPC_AGENT.GET_DEFAULT_WORKSPACE)
+    },
+
+    getPlatformDefaultWorkspace(): Promise<string> {
+      return ipcRenderer.invoke(IPC_AGENT.GET_PLATFORM_WORKSPACE)
+    },
+
+    setDefaultWorkspace(path: string): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.SET_DEFAULT_WORKSPACE, path)
+    },
+
+    draftTask(payload: AgentTaskDraftPayload): Promise<{ ok: boolean; error?: string }> {
+      return ipcRenderer.invoke(IPC_AGENT.DRAFT_TASK, payload)
+    },
+
+    onTaskDraft(cb: (draft: AgentTaskDraftPayload) => void): () => void {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        draft: AgentTaskDraftPayload
+      ): void => cb(draft)
+      ipcRenderer.on(IPC_AGENT.TASK_DRAFT, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC_AGENT.TASK_DRAFT, listener)
       }
     }
   },

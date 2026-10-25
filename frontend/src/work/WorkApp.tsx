@@ -17,6 +17,7 @@ import {
   type ReactElement
 } from 'react'
 import type {
+  AgentTaskDraftPayload,
   PickedFile,
   WorkBrowserAction,
   WorkBrowserState,
@@ -100,6 +101,8 @@ export default function WorkApp(): ReactElement {
   const [taskOpen, setTaskOpen] = useState(false)
   /** 通知点击要聚焦的任务（传给 TaskPanel 选中后清空） */
   const [focusTaskId, setFocusTaskId] = useState<string | null>(null)
+  /** 宠物窗带文件的消息（任务草稿）；TaskPanel 处理后清空 */
+  const [taskDraft, setTaskDraft] = useState<AgentTaskDraftPayload | null>(null)
   /** 正文缩放（Ctrl+滚轮；只看内容层，标题栏/标签栏不缩放） */
   const [zoom, setZoom] = useState<number>(() => {
     try {
@@ -179,18 +182,27 @@ export default function WorkApp(): ReactElement {
     }
   }, [])
 
-  // 通知点击：切到任务标签并聚焦指定任务
+  // 通知点击：切到任务标签并聚焦指定任务；宠物窗带文件的消息：切任务标签并交给 TaskPanel
   useEffect(() => {
-    let off: (() => void) | undefined
+    let offFocus: (() => void) | undefined
+    let offDraft: (() => void) | undefined
     try {
-      off = getPetBridge().agent.onFocusTask((id) => {
+      const agent = getPetBridge().agent
+      offFocus = agent.onFocusTask((id) => {
         setTaskOpen(true)
         setFocusTaskId(id)
+      })
+      offDraft = agent.onTaskDraft?.((draft) => {
+        setTaskOpen(true)
+        setTaskDraft(draft)
       })
     } catch {
       /* 旧 preload：没有该通道，静默降级 */
     }
-    return () => off?.()
+    return () => {
+      offFocus?.()
+      offDraft?.()
+    }
   }, [])
 
   // 最大化状态：挂载时校准 + 订阅主进程变化
@@ -883,6 +895,8 @@ export default function WorkApp(): ReactElement {
             focusTaskId={focusTaskId}
             onFocusHandled={() => setFocusTaskId(null)}
             onLinkClick={handleMarkdownClick}
+            draft={taskDraft}
+            onDraftHandled={() => setTaskDraft(null)}
           />
         </div>
       ) : null}

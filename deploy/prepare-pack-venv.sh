@@ -23,7 +23,8 @@ PBS_MIRROR="${PBS_MIRROR:-https://mirror.nju.edu.cn/github-release/astral-sh/pyt
 PIP_INDEX="${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 
 # 依赖清单：与 backend/.venv 已装版本对齐（backend/pyproject.toml + 运行期实际 import：
-# openai=llm provider 依赖，keyring=密钥读取链，tomlkit=config.toml 保注释写回）
+# openai=llm provider 依赖，keyring=密钥读取链，tomlkit=config.toml 保注释写回，
+# httpx=联网搜索，python-docx/openpyxl/pypdf=文件正文抽取）
 DEPS=(
   fastapi==0.143.0
   'uvicorn[standard]==0.54.0'
@@ -33,6 +34,10 @@ DEPS=(
   openai==3.30.0
   keyring==25.7.0
   tomlkit==0.15.1
+  httpx==0.28.1
+  python-docx==1.2.0
+  openpyxl==3.1.5
+  pypdf==6.21.2
   pyinstaller==6.22.3
 )
 

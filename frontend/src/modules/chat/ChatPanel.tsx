@@ -10,8 +10,9 @@
  * - "停止"按钮（P2 §7.2 打断）：思考中/说话中显示 → 发 interrupt + 本地立即停播（voice 域）；
  * - 输入行是紧凑胶囊（250×32，居中贴兔子脚）：默认半透明、hover/focus 不透明；
  *   发送/停止共用右侧圆钮槽位（忙碌切换不抖宽度），发送改为图标（2026-10-17 用户定稿）。
- * - 文件分析（P1）：回形针选择 / 粘贴绝对路径 / 直接拖到兔子或窗口上 → 输入框上方
- *   并排显示附件 chip（× 可移除）；文件正文由后端读取，渲染进程只拿路径。
+ * - 文件分析（P1/P2）：回形针选择 / 粘贴绝对路径 / 直接拖到兔子或窗口上 → 输入框上方
+ *   并排显示附件 chip（× 可移除）。回车时按类型分流：纯图片仍进宠物会话（后端读图），
+ *   任何 PDF/Office/文档都转任务模式（2026-10-25），宠物固定会话不再处理文件。
  */
 import {
   useCallback,
@@ -22,6 +23,7 @@ import {
   type RefObject
 } from 'react'
 import type { PickedFile } from '../../../electron/ipc/channels'
+import { getPetBridge } from '../../shared/pet-bridge'
 import type { WsClient } from '../../shared/ws-client'
 import { PET_SESSION_ID, type PetState } from '../../shared/protocol'
 import { subscribeVoiceSpeaking, stopVoiceNow } from '../voice'
@@ -37,10 +39,17 @@ import { speakLocalNotice } from './speech'
 import {
   MAX_ATTACHMENTS,
   SUPPORTED_FILE_HINT,
+  attachmentKindOf,
   filesBridge,
   looksLikeAbsolutePath,
   unsupportedReason
 } from './file-support'
+
+/** 去掉 IPC 包装后的可读错误（invoke reject 会带 "Error invoking remote method ..." 前缀） */
+function ipcErrorText(err: unknown): string {
+  const raw = (err as Error)?.message ?? String(err)
+  return raw.replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '')
+}
 
 interface ChatPanelProps {
   client: WsClient
@@ -64,6 +73,8 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
   const [streaming, setStreaming] = useState(false)
   /** 本轮待发送附件（只存路径/文件名；正文由后端读取） */
   const [attachments, setAttachments] = useState<PickedFile[]>([])
+  /** 正在把附件转成任务草稿（防连按 Enter 发两份） */
+  const [drafting, setDrafting] = useState(false)
   /** 聊天区一次性提示（文件分析丢历史等） */
   const [notice, setNotice] = useState<ChatNotice | null>(null)
   /** 正有文件拖到窗口上（显示"松开添加"提示；透明区可能收不到事件，属平台限制） */
@@ -278,10 +289,51 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
     return () => offs.forEach((off) => off())
   }, [client])
 
-  const handleSend = useCallback((): void => {
+  const handleSend = useCallback(async (): Promise<void> => {
+    if (drafting) return
     const text = input.trim()
     if (!text && attachments.length === 0) return
-    // 只选文件没打字：给一个默认分析请求（后端也允许空问题，这里保证气泡/黑板有可读文本）
+
+    // 文档/代码/PDF 等非图片附件：不进宠物会话，一律转任务模式（纯图片仍由宠物直接看）
+    const hasDocument = attachments.some((file) => attachmentKindOf(file) !== 'image')
+    if (hasDocument) {
+      let agent: ReturnType<typeof getPetBridge>['agent'] | undefined
+      try {
+        agent = getPetBridge().agent
+      } catch {
+        agent = undefined
+      }
+      if (!agent?.draftTask) {
+        showChatNotice('当前版本不支持任务模式，请重启应用后再试～', 'warn')
+        return
+      }
+      setDrafting(true)
+      try {
+        const result = await agent.draftTask({
+          text,
+          attachments: attachments.map((file) => ({
+            path: file.path,
+            name: file.name,
+            kind: attachmentKindOf(file)
+          }))
+        })
+        if (!result.ok) {
+          showChatNotice(result.error ?? '转到任务模式失败，请重试～', 'error')
+          return
+        }
+        setInput('')
+        setAttachments([])
+        clearChatNotice()
+        showChatNotice('已转到任务模式处理', 'info', 4_000)
+      } catch (err) {
+        showChatNotice(ipcErrorText(err) || '转到任务模式失败，请重试～', 'error')
+      } finally {
+        setDrafting(false)
+      }
+      return
+    }
+
+    // 只选图片没打字：给一个默认分析请求（后端也允许空问题，这里保证气泡/黑板有可读文本）
     const question = text || '帮我看看这个文件'
     // 从宠物窗口发言：切到固定的宠物会话，并同步前台（气泡/语音跟它走）
     setActiveConversationId(PET_SESSION_ID)
@@ -293,7 +345,7 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
     setInput('')
     setAttachments([])
     clearChatNotice()
-  }, [attachments, client, input])
+  }, [attachments, client, drafting, input])
 
   /**
    * 打断（§7.2）：发 interrupt 通知后端取消 LLM 流 + TTS 队列；
@@ -319,7 +371,7 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
       {/* 拖拽提示：文件拖到兔子/窗口上时出现，松手后变成附件 chip */}
       {dragActive ? (
         <div className="chat-drop-hint" data-testid="chat-drop-hint">
-          松开鼠标，把文件加到聊天
+          松开鼠标：图片直接在聊天看，文档会转到任务模式
         </div>
       ) : null}
 
@@ -375,7 +427,15 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
             }
           }}
           placeholder={
-            !connected ? '等待后端连接…' : attachments.length > 0 ? '说说想让我看什么…' : '说点什么…'
+            !connected
+              ? '等待后端连接…'
+              : drafting
+                ? '正在转到任务模式…'
+                : attachments.some((file) => attachmentKindOf(file) !== 'image')
+                  ? '发送后转到任务模式处理…'
+                  : attachments.length > 0
+                    ? '说说想让我看什么…'
+                    : '说点什么…'
           }
           title={connected ? '按 Enter 发送；可粘贴文件路径' : undefined}
           aria-label="聊天输入"
@@ -400,7 +460,9 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
             data-testid="chat-send"
             type="button"
             onClick={handleSend}
-            disabled={!connected || (input.trim().length === 0 && attachments.length === 0)}
+            disabled={
+            !connected || drafting || (input.trim().length === 0 && attachments.length === 0)
+          }
             title="发送（Enter）"
             aria-label="发送"
           >

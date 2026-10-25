@@ -14,12 +14,19 @@ import {
   shell
 } from 'electron'
 import { existsSync, readFileSync, statSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { extname } from 'node:path'
 import { IPC, IPC_AGENT, IPC_EVENTS, type PetWindowEdge, type WindowDebugState } from './channels'
 import { backendManager } from '../backend-process'
 import { agentService } from '../agent/service'
-import type { AgentFollowUpPayload } from '../agent/types'
-import { focusTaskInWorkWindow, pushToWorkWindow } from '../work'
+import { normalizeAttachments } from '../agent/attachments'
+import {
+  platformDefaultWorkspacePath,
+  resolveDefaultWorkspace,
+  saveDefaultWorkspace
+} from '../agent/default-workspace'
+import type { AgentFollowUpPayload, AgentTaskDraftPayload } from '../agent/types'
+import { draftTaskInWorkWindow, focusTaskInWorkWindow, pushToWorkWindow } from '../work'
 import { resolveAppIconImage } from '../app-icon'
 import { openConfirmBubble, setEdgeSpeechSuppression } from '../bubble'
 import {
@@ -602,7 +609,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC_AGENT.CANCEL, (_event, id: unknown) =>
     agentService.cancel(typeof id === 'string' && id ? id : agentService.getState().id, 'user')
   )
-  ipcMain.handle(IPC_AGENT.FOLLOW_UP, (_event, payload: AgentFollowUpPayload) =>
+  ipcMain.handle(IPC_AGENT.FOLLOW_UP, async (_event, payload: AgentFollowUpPayload) =>
     agentService.followUp(payload)
   )
   ipcMain.handle(IPC_AGENT.PREVIEW, (_event, filePath: string) => readImagePreview(filePath))
@@ -620,6 +627,24 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   )
   ipcMain.handle(IPC_AGENT.SET_MODE, (_event, payload) => agentService.setMode(payload))
   ipcMain.handle(IPC_AGENT.EXECUTE_PLAN, (_event, payload) => agentService.executePlan(payload))
+
+  // 默认工作区（config.toml [agent]）；配置无效时 invoke 直接 reject，任务页展示原因
+  ipcMain.handle(IPC_AGENT.GET_DEFAULT_WORKSPACE, () => resolveDefaultWorkspace())
+  ipcMain.handle(IPC_AGENT.GET_PLATFORM_WORKSPACE, () => platformDefaultWorkspacePath())
+  ipcMain.handle(IPC_AGENT.SET_DEFAULT_WORKSPACE, (_event, path: unknown) =>
+    saveDefaultWorkspace(typeof path === 'string' ? path : '')
+  )
+
+  // 宠物窗带文件的消息 → 任务草稿（回车发送时调用）；工作窗由 work 域打开/排队
+  ipcMain.handle(IPC_AGENT.DRAFT_TASK, (_event, raw: AgentTaskDraftPayload) => {
+    const text = typeof raw?.text === 'string' ? raw.text.trim().slice(0, 2_000) : ''
+    const attachments = normalizeAttachments(raw?.attachments)
+    if (!text && attachments.length === 0) {
+      return { ok: false, error: '没有可以处理的内容' }
+    }
+    draftTaskInWorkWindow({ id: randomUUID(), text, attachments })
+    return { ok: true }
+  })
   ipcMain.handle(IPC_AGENT.PICK_WORKSPACE, async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender) ?? ctx.window
     const result = await dialog.showOpenDialog(win, {

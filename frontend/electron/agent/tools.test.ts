@@ -88,6 +88,40 @@ async function main(): Promise<void> {
     await assert.rejects(() => run('read_file', { path: '../secret.txt' }))
   })
 
+  await check('read_file 对 PDF 走后端端点并透传页范围', async () => {
+    const pdfPath = path.join(root, 'doc.pdf')
+    fs.writeFileSync(pdfPath, 'stub')
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = []
+    const pdfTools = new Map(
+      createTools({
+        workspace: root,
+        onTodo: () => undefined,
+        callInternal: async (endpoint, body) => {
+          calls.push({ path: endpoint, body })
+          return {
+            ok: true,
+            files: [
+              { name: 'doc.pdf', text: '— 第 3 页 —\n你好', chars: 9, imageUrl: null, mime: null }
+            ]
+          }
+        }
+      }).map((tool) => [tool.name, tool])
+    )
+    const tool = pdfTools.get('read_file')
+    assert.ok(tool)
+    const result = await tool.execute('test', { path: 'doc.pdf', pages: '3' }, undefined, undefined)
+    const text = result.content
+      .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n')
+    assert.match(text, /文档「doc\.pdf」已提取 9 字/)
+    assert.match(text, /你好/)
+    assert.deepEqual(calls, [
+      { path: '/internal/files/extract', body: { paths: [pdfPath], pages: '3' } }
+    ])
+    fs.unlinkSync(pdfPath)
+  })
+
   await check('search_text 命中文件与行号', async () => {
     const text = await run('search_text', { query: '登录' })
     assert.match(text, /notes\.md:2:/)

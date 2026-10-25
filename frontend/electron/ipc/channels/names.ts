@@ -340,5 +340,15 @@ export const IPC_AGENT = {
   /** 工作窗 → 主：任务面板是否正在显示（含工作窗可见性）；用于完成未读标记 */
   PANEL_ACTIVE: 'agent:panel-active',
   /** 主 → 工作窗：任务列表变化（payload: AgentTaskSummary[]） */
-  TASKS: 'agent:tasks'
+  TASKS: 'agent:tasks',
+  /** 查询当前生效的默认工作区（invoke → string；配置无效时 reject 可读原因） */
+  GET_DEFAULT_WORKSPACE: 'agent:get-default-workspace',
+  /** 查询平台默认工作区路径（只计算不建目录；设置页占位提示用） */
+  GET_PLATFORM_WORKSPACE: 'agent:get-platform-workspace',
+  /** 把当前目录设为默认（invoke（path）→ {ok, error?}；写回 config.toml） */
+  SET_DEFAULT_WORKSPACE: 'agent:set-default-workspace',
+  /** 宠物窗 → 主：把带文件的消息转成任务草稿（invoke → {ok, error?}） */
+  DRAFT_TASK: 'agent:draft-task',
+  /** 主 → 工作窗：任务草稿已就绪（payload: AgentTaskDraftPayload） */
+  TASK_DRAFT: 'agent:task-draft'
 } as const

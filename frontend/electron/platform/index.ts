@@ -19,8 +19,16 @@
  *
  * ⚠ 本文件**不得 import electron**：preload 也要用它，而 preload 里没有 `app` / `BrowserWindow`。
  *   需要 app 的地方（Windows 任务栏身份）走依赖注入——见 `applyWindowsAppIdentity`。
+ * ⚠ 也**不得 import `node:*` 内置模块**：渲染窗 preload 是 sandbox 环境，只能 require
+ *   electron 等少数模块；在 2026-10-25 就因 import `node:path` 导致全部窗口 bridge 失效。
+ *   路径拼接等 Node 能力放在主进程消费方。
  */
-import type { AppIdentityHost, BackendLaunchNames, LinuxOnlyWindowOptions } from './types'
+import type {
+  AppIdentityHost,
+  BackendLaunchNames,
+  DefaultWorkspaceHost,
+  LinuxOnlyWindowOptions
+} from './types'
 
 /** 当前平台。全项目只在本行读 `process.platform`（其余一律从这里取）。 */
 export const PLATFORM: NodeJS.Platform = process.platform
@@ -76,4 +84,35 @@ export const BACKEND_LAUNCH_NAMES: BackendLaunchNames = isWindows
   ? { venvPython: ['Scripts', 'python.exe'], exeName: 'backend.exe' }
   : { venvPython: ['bin', 'python'], exeName: 'backend' }
 
-export type { AppIdentityHost, BackendLaunchNames, LinuxOnlyWindowOptions } from './types'
+/** 默认工作区目录名（用户文档 / 家目录下的子目录） */
+export const DEFAULT_WORKSPACE_DIR_NAME = 'ai-desktop-pet'
+
+/**
+ * 各平台的默认工作区基目录；新增平台时在这里补一行，消费方零改动。
+ *
+ * Windows / Linux 目前规则一致：优先「文档」目录（Electron 已处理 XDG / 本地化），
+ * 拿不到再退家目录。不把 Windows 的 `%USERPROFILE%` 写法带到 Linux。
+ *
+ * 注意：本文件被 **sandbox preload** 复用，只返回基目录、不做路径拼接
+ * （拼接子目录由主进程消费方做）。否则 preload 会因 `require('node:path')` 加载失败。
+ */
+const DEFAULT_WORKSPACE_BASE: Partial<
+  Record<NodeJS.Platform, (host: DefaultWorkspaceHost) => string>
+> = {
+  win32: (host) => host.documents || host.home,
+  linux: (host) => host.documents || host.home,
+  darwin: (host) => host.documents || host.home
+}
+
+/** 默认工作区基目录（用户文档 / 家目录）；系统目录都取不到时返回空串。 */
+export function defaultWorkspaceBase(host: DefaultWorkspaceHost): string {
+  const pick = DEFAULT_WORKSPACE_BASE[PLATFORM] ?? ((value: DefaultWorkspaceHost) => value.home)
+  return pick(host).trim()
+}
+
+export type {
+  AppIdentityHost,
+  BackendLaunchNames,
+  DefaultWorkspaceHost,
+  LinuxOnlyWindowOptions
+} from './types'

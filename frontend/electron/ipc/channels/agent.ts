@@ -12,6 +12,7 @@ export type {
   AgentStartPayload,
   AgentState,
   AgentStep,
+  AgentTaskDraftPayload,
   AgentTaskSummary,
   AgentTodoItem,
   AgentWaitingKind,

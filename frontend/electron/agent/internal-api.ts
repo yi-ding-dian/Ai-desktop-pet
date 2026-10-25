@@ -18,21 +18,21 @@ export function internalEndpoint(path: string): { url: string; token: string } {
   return { url: `http://127.0.0.1:${snapshot.port}${path}`, token }
 }
 
-/** POST 内部端点：非 200 与网络错误都转成可读错误，不把 HTML 错误页回给模型。 */
-export async function callInternal(
+/** 内部端点统一请求：非 200 与网络错误都转成可读错误，不把 HTML 错误页回给模型。 */
+async function requestInternal(
   path: string,
-  body: Record<string, unknown>
+  init: { method: 'GET' | 'POST'; body?: Record<string, unknown> }
 ): Promise<InternalResult> {
   const { url, token } = internalEndpoint(path)
   let res: Response
   try {
     res = await fetch(url, {
-      method: 'POST',
+      method: init.method,
       headers: {
-        'Content-Type': 'application/json',
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
         'X-Pet-Internal-Token': token
       },
-      body: JSON.stringify(body),
+      body: init.body ? JSON.stringify(init.body) : undefined,
       signal: AbortSignal.timeout(INTERNAL_TIMEOUT_MS)
     })
   } catch (err) {
@@ -48,4 +48,17 @@ export async function callInternal(
   } catch {
     throw new Error('后端返回了无法解析的结果')
   }
+}
+
+/** POST 内部端点（搜索/抓取/文件抽取/写配置）。 */
+export async function callInternal(
+  path: string,
+  body: Record<string, unknown>
+): Promise<InternalResult> {
+  return requestInternal(path, { method: 'POST', body })
+}
+
+/** GET 内部端点（任务配置快照）。 */
+export async function callInternalGet(path: string): Promise<InternalResult> {
+  return requestInternal(path, { method: 'GET' })
 }

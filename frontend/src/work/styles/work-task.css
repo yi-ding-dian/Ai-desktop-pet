@@ -768,6 +768,22 @@
   background: var(--ui-hover);
 }
 
+.task-ws-default {
+  flex: none;
+  padding: 6px 8px;
+  border: 1px dashed var(--ui-border-soft);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ui-fg-faint);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.task-ws-default:hover {
+  background: var(--ui-hover);
+  color: var(--ui-fg);
+}
+
 .task-ws-label {
   flex: none;
   color: var(--ui-fg-faint);

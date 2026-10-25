@@ -8,6 +8,7 @@ import type {
   AgentSetModePayload,
   AgentStartPayload,
   AgentState,
+  AgentTaskDraftPayload,
   AgentTaskSummary
 } from './agent'
 import type {
@@ -366,6 +367,16 @@ export interface PetBridgeApi {
     deleteTask(id: string): Promise<{ ok: boolean; error?: string }>
     /** 订阅任务列表变化；返回取消订阅函数 */
     onTasks(cb: (tasks: AgentTaskSummary[]) => void): () => void
+    /** 当前生效的默认工作区（配置为空时按平台默认解析；配置无效时 reject 可读原因） */
+    getDefaultWorkspace(): Promise<string>
+    /** 平台默认工作区路径（只计算、不建目录；设置页"留空 = …"占位提示用） */
+    getPlatformDefaultWorkspace(): Promise<string>
+    /** 把目录写回 config.toml 作为默认工作区 */
+    setDefaultWorkspace(path: string): Promise<{ ok: boolean; error?: string }>
+    /** 宠物窗：把带文件的消息转成任务草稿并打开工作窗（回车发送时调用） */
+    draftTask(payload: AgentTaskDraftPayload): Promise<{ ok: boolean; error?: string }>
+    /** 工作窗：订阅任务草稿；返回取消订阅函数 */
+    onTaskDraft(cb: (draft: AgentTaskDraftPayload) => void): () => void
   }
   work: {
     /** 打开工作窗（单例；已存在则 show + focus） */

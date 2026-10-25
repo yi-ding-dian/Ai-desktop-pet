@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import {
   IPC_AGENT,
   IPC_WORK,
+  type AgentTaskDraftPayload,
   type WorkConversationDeletedPayload,
   type WorkConversationRenamedPayload,
   type WorkConversationsPayload,
@@ -165,6 +166,22 @@ export function focusTaskInWorkWindow(id: string): void {
   if (workReady) {
     sendToWork(IPC_AGENT.FOCUS_TASK, id)
     pendingFocusTaskId = null
+  }
+}
+
+/**
+ * 宠物窗带文件的消息 → 工作窗任务草稿（2026-10-25）。
+ *
+ * 工作窗未就绪时只缓存最后一份草稿：连续拖入多次以最后一份为准，
+ * 避免工作窗启动期间堆一长串待执行任务。
+ */
+let pendingTaskDraft: AgentTaskDraftPayload | null = null
+export function draftTaskInWorkWindow(draft: AgentTaskDraftPayload): void {
+  pendingTaskDraft = draft
+  openWork()
+  if (workReady) {
+    sendToWork(IPC_AGENT.TASK_DRAFT, draft)
+    pendingTaskDraft = null
   }
 }
 
@@ -620,6 +637,10 @@ export function initWork(pet: BrowserWindow): void {
     if (pendingFocusTaskId !== null) {
       sendToWork(IPC_AGENT.FOCUS_TASK, pendingFocusTaskId)
       pendingFocusTaskId = null
+    }
+    if (pendingTaskDraft !== null) {
+      sendToWork(IPC_AGENT.TASK_DRAFT, pendingTaskDraft)
+      pendingTaskDraft = null
     }
     console.log(`[work] 工作窗就绪，回放缓冲事件 ${buffered.length} 条`)
   })
