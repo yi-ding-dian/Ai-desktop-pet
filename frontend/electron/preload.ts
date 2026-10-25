@@ -266,6 +266,10 @@ const api: PetBridgeApi = {
       } catch {
         return ''
       }
+    },
+
+    savePastedImage(data: ArrayBuffer): Promise<PickedFile | null> {
+      return ipcRenderer.invoke(IPC.FILES_SAVE_PASTED_IMAGE, { data })
     }
   },
 

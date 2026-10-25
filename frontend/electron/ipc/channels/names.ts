@@ -86,6 +86,8 @@ export const IPC = {
   FILES_PICK: 'files:pick',
   /** 文件分析：粘贴路径时校验（invoke(path) → PickedFile | null；只 stat，不读正文） */
   FILES_STAT: 'files:stat',
+  /** 把剪贴板里的内存图片落盘（invoke（{data}）→ PickedFile | null） */
+  FILES_SAVE_PASTED_IMAGE: 'files:save-pasted-image',
   /** 自绘托盘菜单：菜单项动作（菜单窗 → 主；payload: TrayMenuAction，执行后主进程收起菜单） */
   TRAY_MENU_ACTION: 'tray-menu:action',
   /** 气泡系统：请求弹出气泡（payload: BubbleRequest；宠物窗右键 = 'menu' 菜单；主进程定位+防出屏后弹出气泡窗） */

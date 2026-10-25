@@ -2,6 +2,7 @@
 import { useRef, type DragEvent as ReactDragEvent, type ReactElement } from 'react'
 import type { PickedFile } from '../../../electron/ipc/channels'
 import { Textarea } from '../../shared/ui/components/Textarea'
+import { clipboardFileList } from '../../modules/chat/file-support'
 import AttachmentStrip from '../message/AttachmentStrip'
 import {
   ComposerHistoryButton,
@@ -55,6 +56,8 @@ export interface ComposerBarProps {
   onRemoveAttachment: (path: string) => void
   /** 粘贴的是本机绝对路径时返回 true（并异步读取文件） */
   onPaste: (text: string) => boolean
+  /** 剪贴板里的文件/图片对象（与拖拽共用附件逻辑） */
+  onPasteFiles: (files: File[]) => void
   onPickFiles: () => void
   onSend: () => void
   onStop: () => void
@@ -76,6 +79,7 @@ export default function ComposerBar({
   onDrop,
   onRemoveAttachment,
   onPaste,
+  onPasteFiles,
   onPickFiles,
   onSend,
   onStop
@@ -134,6 +138,12 @@ export default function ComposerBar({
             }
           }}
           onPaste={(event) => {
+            const files = clipboardFileList(event)
+            if (files.length > 0) {
+              event.preventDefault()
+              onPasteFiles(files)
+              return
+            }
             const text = event.clipboardData.getData('text')
             if (onPaste(text)) event.preventDefault()
           }}

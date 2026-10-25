@@ -43,6 +43,7 @@ import { buildPrompt, normalizeAttachments } from './attachments'
 import { AgentEventTranslator } from './events'
 import { fetchLlmKey } from './llm-key'
 import { callInternal, callInternalGet } from './internal-api'
+import { deletePastedImages } from '../files'
 import { buildModeInstruction } from './prompt'
 import {
   APPROVAL_TIMEOUT_MS,
@@ -192,6 +193,12 @@ export class AgentService {
     session.agent = null
     this.sessions.delete(id)
     deleteTranscript(id, this.transcriptRoot())
+    // 粘贴图片是主进程落盘的副本：任务删除后一并清理（仍被其他任务引用的保留）
+    const stillReferenced = new Set<string>()
+    for (const other of this.sessions.values()) {
+      for (const path of other.attachmentPaths) stillReferenced.add(path)
+    }
+    deletePastedImages(session.attachmentPaths.filter((path) => !stillReferenced.has(path)))
     this.audit('delete', { id })
     if (this.activeId === id) {
       const next = [...this.sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt)[0]

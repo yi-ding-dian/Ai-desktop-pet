@@ -69,6 +69,7 @@ export function filesBridge():
       pick?: () => Promise<PickedFile[]>
       stat?: (path: string) => Promise<PickedFile | null>
       pathFor?: (file: File) => string
+      savePastedImage?: (data: ArrayBuffer) => Promise<PickedFile | null>
     }
   | undefined {
   try {
@@ -76,6 +77,57 @@ export function filesBridge():
   } catch {
     return undefined
   }
+}
+
+/** 剪贴板里的文件对象：优先 clipboardData.files，旧内核走 items(kind=file)。 */
+export function clipboardFileList(event: {
+  clipboardData: DataTransfer | null
+}): File[] {
+  const data = event.clipboardData
+  if (!data) return []
+  const direct = Array.from(data.files)
+  if (direct.length > 0) return direct
+  return Array.from(data.items)
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null)
+}
+
+/**
+ * 剪贴板/拖入的 File 对象 → 可附件。
+ *
+ * - 资源管理器复制的文件有本地路径：stat 后直接加；
+ * - 截图/网页复制图片没有路径：把字节交主进程落到 userData/pasted-images；
+ * - 没有路径的非图片（网页 blob、压缩包内文件）无法读取，跳过。
+ */
+export async function filesFromFileList(files: readonly File[]): Promise<PickedFile[]> {
+  const bridge = filesBridge()
+  if (!bridge) return []
+  const picked: PickedFile[] = []
+  const seen = new Set<string>()
+  for (const file of files.slice(0, MAX_ATTACHMENTS * 4)) {
+    const path = bridge.pathFor?.(file) ?? ''
+    if (path) {
+      const item = bridge.stat ? await bridge.stat(path) : null
+      if (item && !seen.has(item.path)) {
+        seen.add(item.path)
+        picked.push(item)
+      }
+      continue
+    }
+    if ((file.type.startsWith('image/') || file.type === '') && bridge.savePastedImage) {
+      try {
+        const item = await bridge.savePastedImage(await file.arrayBuffer())
+        if (item && !seen.has(item.path)) {
+          seen.add(item.path)
+          picked.push(item)
+        }
+      } catch {
+        /* 单张失败不影响其他附件 */
+      }
+    }
+  }
+  return picked
 }
 
 /** 像绝对路径的粘贴内容（Windows 盘符 / UNC / POSIX 绝对路径）；不猜相对路径。 */

@@ -40,7 +40,9 @@ import {
   MAX_ATTACHMENTS,
   SUPPORTED_FILE_HINT,
   attachmentKindOf,
+  clipboardFileList,
   filesBridge,
+  filesFromFileList,
   looksLikeAbsolutePath,
   unsupportedReason
 } from './file-support'
@@ -138,27 +140,12 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
     [notifyUnsupportedFiles]
   )
 
-  /** 拖入的 File → 本地路径 → stat 校验 → 加进待发送附件（与回形针/粘贴共用同一列表）。 */
-  const addDroppedFiles = useCallback(
+  /** 拖入/粘贴的 File 对象 → 附件（有本地路径直接 stat；内存图片落盘后加）。 */
+  const addFileObjects = useCallback(
     async (files: File[]): Promise<void> => {
-      const bridge = filesBridge()
-      if (!bridge?.pathFor || !bridge.stat) {
-        showChatNotice('当前版本不支持拖入文件，请用回形针选择～', 'warn')
-        return
-      }
-      // 一拖可能带进来几十个文件：先截断候选，避免一次触发大量 stat IPC
-      const candidates = files.slice(0, MAX_ATTACHMENTS * 4)
-      const paths = candidates
-        .map((file) => bridge.pathFor?.(file) ?? '')
-        .filter((path) => path.length > 0)
-      if (paths.length === 0) {
-        showChatNotice('没有识别到本地文件（网页里的图片/文件请先保存到本地）～', 'warn')
-        return
-      }
-      const checked = await Promise.all(paths.map((path) => bridge.stat?.(path)))
-      const picked = checked.filter((item): item is PickedFile => item !== null && item !== undefined)
+      const picked = await filesFromFileList(files)
       if (picked.length === 0) {
-        showChatNotice('这些不是可读取的普通文件～', 'warn')
+        showChatNotice('没有识别到可添加的文件（网页里的文件请先保存到本地）～', 'warn')
         return
       }
       const accepted = acceptSupported(picked)
@@ -196,7 +183,7 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
       event.preventDefault()
       setDragActive(false)
       const files = Array.from(event.dataTransfer?.files ?? [])
-      if (files.length > 0) void addDroppedFiles(files)
+      if (files.length > 0) void addFileObjects(files)
     }
     window.addEventListener('dragover', onDragOver)
     window.addEventListener('dragleave', onDragLeave)
@@ -206,7 +193,7 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
       window.removeEventListener('dragleave', onDragLeave)
       window.removeEventListener('drop', onDrop)
     }
-  }, [addDroppedFiles, hidden])
+  }, [addFileObjects, hidden])
 
   const handlePick = useCallback(async (): Promise<void> => {
     const bridge = filesBridge()
@@ -234,9 +221,15 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
     }
   }, [acceptSupported, addAttachments, attachments.length])
 
-  /** 粘贴绝对路径 → 直接变成附件（是文件才拦截；不是文件则按普通文本粘贴）。 */
+  /** 粘贴：文件/图片优先变附件；其次绝对路径；其余按普通文本。 */
   const handlePaste = useCallback(
     async (event: ClipboardEvent<HTMLInputElement>): Promise<void> => {
+      const files = clipboardFileList(event)
+      if (files.length > 0) {
+        event.preventDefault()
+        await addFileObjects(files)
+        return
+      }
       const raw = event.clipboardData.getData('text').trim()
       const bridge = filesBridge()
       if (!bridge?.stat || !looksLikeAbsolutePath(raw)) return
@@ -260,7 +253,7 @@ export default function ChatPanel({ client, containerRef, hidden = false }: Chat
         setInput((prev) => (prev ? `${prev}${raw}` : raw))
       }
     },
-    [acceptSupported, addAttachments, attachments.length]
+    [acceptSupported, addFileObjects, addAttachments, attachments.length]
   )
 
   // 服务端事件订阅（chat 域只关心自己的事件，设计文档 §5.5 分发模式）

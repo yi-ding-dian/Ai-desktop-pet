@@ -33,6 +33,7 @@ import { getPetBridge } from '../../shared/pet-bridge'
 import {
   MAX_ATTACHMENTS,
   filesBridge,
+  filesFromFileList,
   looksLikeAbsolutePath,
   unsupportedReason
 } from '../../modules/chat/file-support'
@@ -344,20 +345,28 @@ export default function TaskPanel({
     setPreviews({})
   }, [])
 
+  /** 拖入/粘贴的 File 对象 → 附件（有本地路径直接 stat；内存图片落盘后加） */
+  const addFileObjects = useCallback(
+    async (files: File[]): Promise<void> => {
+      const picked = await filesFromFileList(files)
+      if (picked.length === 0) {
+        setFileNotice('没有识别到可添加的文件（网页里的文件请先保存到本地）')
+        window.setTimeout(() => setFileNotice(null), 3000)
+        return
+      }
+      addFiles(picked)
+    },
+    [addFiles]
+  )
+
   const handleDropFiles = useCallback(
     (event: ReactDragEvent<HTMLDivElement>): void => {
       event.preventDefault()
-      const bridge = filesBridge()
-      if (!bridge?.pathFor || !bridge.stat) return
-      const paths = Array.from(event.dataTransfer.files)
-        .map((file) => bridge.pathFor?.(file) ?? '')
-        .filter((item) => item.length > 0)
-      if (paths.length === 0) return
-      void Promise.all(paths.map((item) => bridge.stat?.(item))).then((files) => {
-        addFiles(files.filter((file): file is PickedFile => Boolean(file)))
-      })
+      const files = Array.from(event.dataTransfer.files)
+      if (files.length === 0) return
+      void addFileObjects(files)
     },
-    [addFiles]
+    [addFileObjects]
   )
 
   const handlePasteFiles = useCallback(
@@ -1030,6 +1039,7 @@ export default function TaskPanel({
             onDrop={handleDropFiles}
             onRemoveAttachment={removeAttachment}
             onPaste={handlePasteFiles}
+            onPasteFiles={(files) => void addFileObjects(files)}
             onPickFiles={() => void pickFiles()}
             onPickWorkspace={() => void pickWorkspace()}
             onSetDefaultWorkspace={() => void setWorkspaceAsDefault()}
@@ -1219,6 +1229,7 @@ export default function TaskPanel({
               onDrop={handleDropFiles}
               onRemoveAttachment={removeAttachment}
               onPaste={handlePasteFiles}
+              onPasteFiles={(files) => void addFileObjects(files)}
               onPickFiles={() => void pickFiles()}
               onSend={() => void send()}
               onStop={() => {

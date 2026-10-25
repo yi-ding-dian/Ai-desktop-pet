@@ -20,7 +20,9 @@ import { Textarea } from '../shared/ui/components/Textarea'
 import {
   MAX_ATTACHMENTS,
   SUPPORTED_FILE_HINT,
+  clipboardFileList,
   filesBridge,
+  filesFromFileList,
   looksLikeAbsolutePath,
   unsupportedReason
 } from '../modules/chat/file-support'
@@ -141,6 +143,18 @@ export default function Composer({
 
   const handlePaste = useCallback(
     async (event: ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
+      const files = clipboardFileList(event)
+      if (files.length > 0) {
+        // 必须在 await 前 preventDefault，否则图片/文件也会被浏览器塞进输入框
+        event.preventDefault()
+        const picked = await filesFromFileList(files)
+        if (picked.length === 0) {
+          showLocal('没有识别到可添加的文件（网页里的文件请先保存到本地）～')
+          return
+        }
+        addFiles(picked)
+        return
+      }
       const raw = event.clipboardData.getData('text/plain').trim()
       if (!raw || !looksLikeAbsolutePath(raw)) return
       event.preventDefault()
@@ -160,7 +174,7 @@ export default function Composer({
         setInput((previous) => (previous ? `${previous}${raw}` : raw))
       }
     },
-    [addFiles]
+    [addFiles, showLocal]
   )
 
   const handleDrop = useCallback(

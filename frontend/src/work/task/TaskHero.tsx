@@ -2,6 +2,7 @@
 import type { DragEvent as ReactDragEvent, ReactElement } from 'react'
 import type { ExecutionMode, PickedFile } from '../../../electron/ipc/channels'
 import AttachmentStrip from '../message/AttachmentStrip'
+import { clipboardFileList } from '../../modules/chat/file-support'
 import TaskModeSelector, { MODE_HINTS } from './TaskModeSelector'
 
 function PaperclipIcon(): ReactElement {
@@ -35,6 +36,8 @@ export interface TaskHeroProps {
   onRemoveAttachment: (path: string) => void
   /** 粘贴的是本机绝对路径时返回 true（并异步读取文件） */
   onPaste: (text: string) => boolean
+  /** 剪贴板里的文件/图片对象（与拖拽共用附件逻辑） */
+  onPasteFiles: (files: File[]) => void
   onPickFiles: () => void
   onPickWorkspace: () => void
   onSetDefaultWorkspace: () => void
@@ -61,6 +64,7 @@ export default function TaskHero({
   onDrop,
   onRemoveAttachment,
   onPaste,
+  onPasteFiles,
   onPickFiles,
   onPickWorkspace,
   onSetDefaultWorkspace,
@@ -94,6 +98,12 @@ export default function TaskHero({
             }
           }}
           onPaste={(event) => {
+            const files = clipboardFileList(event)
+            if (files.length > 0) {
+              event.preventDefault()
+              onPasteFiles(files)
+              return
+            }
             const text = event.clipboardData.getData('text')
             if (onPaste(text)) event.preventDefault()
           }}

@@ -10,9 +10,10 @@
  * - 选择框筛选项包含文本/代码、.docx、.xlsx/.xlsm、图片；拖拽/粘贴路径不受筛选限制，
  *   最终格式由后端 reader 判定（Word/Excel 正文由后端提取，主进程不解析）。
  */
-import { BrowserWindow, dialog, ipcMain } from 'electron'
-import { statSync } from 'node:fs'
-import { basename } from 'node:path'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { IPC, type PickedFile } from '../ipc/channels'
 
 /** 选择框里的常见文本/代码扩展名（仍允许"所有文件"，由后端做内容判定） */
@@ -65,6 +66,13 @@ const TEXT_EXTENSIONS = [
   'svelte'
 ]
 
+/** 粘贴图片落盘目录（userData 下；任务/对话删除时不保证立刻清理，靠 TTL） */
+const PASTED_IMAGE_DIR = 'pasted-images'
+/** 粘贴图片保留时长（7 天）：会话记录不存路径，只能按时间回收 */
+const PASTED_IMAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** 单张粘贴图片字节上限（下游图片附件上限更小，这里只挡离谱的大文件） */
+const MAX_PASTED_IMAGE_BYTES = 20 * 1024 * 1024
+
 let installed = false
 
 /** 路径 → PickedFile（非普通文件/不存在 → null）；不读正文。 */
@@ -81,10 +89,86 @@ function toPickedFile(rawPath: unknown): PickedFile | null {
   }
 }
 
+function pastedImageDir(): string {
+  return join(app.getPath('userData'), PASTED_IMAGE_DIR)
+}
+
+/** 按文件头判断图片格式；不信任渲染层传的 MIME */
+function imageExtension(bytes: Buffer): 'png' | 'jpg' | 'gif' | 'webp' | null {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes.subarray(1, 4).toString('latin1') === 'PNG') {
+    return 'png'
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'jpg'
+  }
+  if (bytes.length >= 6 && bytes.subarray(0, 3).toString('latin1') === 'GIF') return 'gif'
+  if (
+    bytes.length >= 12 &&
+    bytes.subarray(0, 4).toString('latin1') === 'RIFF' &&
+    bytes.subarray(8, 12).toString('latin1') === 'WEBP'
+  ) {
+    return 'webp'
+  }
+  return null
+}
+
+function pasteStamp(): string {
+  const date = new Date()
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-` +
+    `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  )
+}
+
+/** 清理过期的粘贴图片（目录不存在视为正常） */
+function prunePastedImages(dir: string): void {
+  try {
+    const now = Date.now()
+    for (const name of readdirSync(dir)) {
+      const file = join(dir, name)
+      try {
+        if (now - statSync(file).mtimeMs > PASTED_IMAGE_TTL_MS) unlinkSync(file)
+      } catch {
+        /* 单个文件删不掉：下次再试 */
+      }
+    }
+  } catch {
+    /* 目录还没创建 */
+  }
+}
+
+function bufferFrom(raw: unknown): Buffer | null {
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw)
+  if (ArrayBuffer.isView(raw)) return Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength)
+  return null
+}
+
+/**
+ * 删除任务引用过的粘贴图片（只删 `pasted-images/` 里的，用户原文件绝不动）。
+ *
+ * 由 agent 删除任务时调用；调用方需先排除仍被其他任务引用的路径。
+ */
+export function deletePastedImages(paths: readonly string[]): void {
+  const dir = pastedImageDir()
+  for (const raw of paths) {
+    if (!raw) continue
+    const abs = resolve(raw)
+    const rel = relative(dir, abs)
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) continue
+    try {
+      unlinkSync(abs)
+    } catch {
+      /* 已不存在 */
+    }
+  }
+}
+
 /** 注册文件选择相关 IPC（进程内只注册一次；重复调用幂等）。 */
 export function initFileSelection(): void {
   if (installed) return
   installed = true
+  prunePastedImages(pastedImageDir())
 
   ipcMain.handle(IPC.FILES_PICK, async (event): Promise<PickedFile[]> => {
     const parent = BrowserWindow.fromWebContents(event.sender)
@@ -112,6 +196,26 @@ export function initFileSelection(): void {
   ipcMain.handle(IPC.FILES_STAT, (_event, rawPath: unknown): PickedFile | null => {
     return toPickedFile(rawPath)
   })
+
+  // 剪贴板图片（截图/网页复制）没有本地路径：渲染层把字节交过来，主进程落盘
+  ipcMain.handle(IPC.FILES_SAVE_PASTED_IMAGE, (_event, payload: unknown): PickedFile | null => {
+    try {
+      const data = (payload as { data?: unknown } | null)?.data
+      const bytes = bufferFrom(data)
+      if (!bytes || bytes.length === 0 || bytes.length > MAX_PASTED_IMAGE_BYTES) return null
+      const ext = imageExtension(bytes)
+      if (!ext) return null
+      const dir = pastedImageDir()
+      mkdirSync(dir, { recursive: true })
+      prunePastedImages(dir)
+      const name = `粘贴图片-${pasteStamp()}-${randomBytes(3).toString('hex')}.${ext}`
+      const file = join(dir, name)
+      writeFileSync(file, bytes)
+      return toPickedFile(file)
+    } catch {
+      return null
+    }
+  })
 }
 
 /** 退出清理（进程退出本身也会清理；保留对称的销毁入口，便于测试/热重载）。 */
@@ -120,4 +224,5 @@ export function destroyFileSelection(): void {
   installed = false
   ipcMain.removeHandler(IPC.FILES_PICK)
   ipcMain.removeHandler(IPC.FILES_STAT)
+  ipcMain.removeHandler(IPC.FILES_SAVE_PASTED_IMAGE)
 }

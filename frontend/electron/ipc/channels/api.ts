@@ -236,6 +236,11 @@ export interface PetBridgeApi {
      * 浏览器内生成的文件/无路径对象返回空串）。
      */
     pathFor(file: File): string
+    /**
+     * 把剪贴板里的内存图片写到 userData/pasted-images，返回可附件；
+     * 格式按文件头识别（PNG/JPEG/GIF/WebP），无法识别返回 null。
+     */
+    savePastedImage(data: ArrayBuffer): Promise<PickedFile | null>
   }
   /** 设置窗口（P4 前置）：宠物面请求打开独立设置窗口 */
   settings: {
