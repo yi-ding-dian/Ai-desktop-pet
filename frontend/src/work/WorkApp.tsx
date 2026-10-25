@@ -43,6 +43,8 @@ import { copyTextToClipboard, reasonText } from './conversation/format'
 import MessageNavigator from './MessageNavigator'
 import TaskPanel from './task/TaskPanel'
 import type { NavigatorAnchor } from './navigator'
+import { buildChatHistory } from './message/history'
+import type { ComposerHistoryItem } from './message/history'
 import {
   EMPTY_WORK_STATE,
   navigatorMessages,
@@ -230,6 +232,7 @@ export default function WorkApp(): ReactElement {
   }, [])
 
   const userMessages = useMemo(() => navigatorMessages(state.messages), [state.messages])
+  const chatHistory = useMemo(() => buildChatHistory(state.messages), [state.messages])
   const previews = useMemo(() => {
     const map: Record<string, string> = {}
     for (const item of userMessages) {
@@ -654,13 +657,31 @@ export default function WorkApp(): ReactElement {
     workBridge()?.interrupt(activeConversationRef.current || undefined)
   }, [])
 
-  const handleJump = useCallback((id: string): void => {
-    const node = messageRefs.current.get(id)
-    if (node === undefined) return
-    node.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    setFlashId(id)
-    window.setTimeout(() => setFlashId((current) => (current === id ? null : current)), 700)
-  }, [])
+  const scrollToMessage = useCallback(
+    (id: string, block: ScrollLogicalPosition = 'start'): void => {
+      const node = messageRefs.current.get(id)
+      if (node === undefined) return
+      node.scrollIntoView({ behavior: 'smooth', block })
+      setFlashId(id)
+      window.setTimeout(() => setFlashId((current) => (current === id ? null : current)), 700)
+    },
+    []
+  )
+
+  const handleJump = useCallback(
+    (id: string): void => {
+      scrollToMessage(id)
+    },
+    [scrollToMessage]
+  )
+
+  // 历史时间点击：居中显示，避免目标贴视口边缘被裁掉
+  const locateChatHistoryItem = useCallback(
+    (item: ComposerHistoryItem): void => {
+      scrollToMessage(item.id, 'center')
+    },
+    [scrollToMessage]
+  )
 
   const markCopied = useCallback((id: string): void => {
     setCopiedId(id)
@@ -967,6 +988,9 @@ export default function WorkApp(): ReactElement {
               onStop={handleInterrupt}
               notice={state.notice}
               onDismissNotice={() => dispatch({ type: 'clear-notice' })}
+              history={chatHistory}
+              scopeKey={`${activeConversationId ?? 'draft'}:${taskOpen ? 'task' : 'chat'}`}
+              onLocateHistory={locateChatHistoryItem}
             />
           </div>
         </div>

@@ -1,5 +1,13 @@
 /** 多行输入框：受控 value + 简化的 onValueChange；可选随内容自增高。 */
-import { useLayoutEffect, useRef, type ChangeEvent, type ReactElement, type TextareaHTMLAttributes } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  type ChangeEvent,
+  type MutableRefObject,
+  type ReactElement,
+  type TextareaHTMLAttributes
+} from 'react'
 import { cx } from '../classnames'
 
 export interface TextareaProps
@@ -12,6 +20,8 @@ export interface TextareaProps
   autoGrow?: boolean
   /** 自增高上限（行数，默认 6） */
   maxRows?: number
+  /** 外部需要聚焦/读选区时传入（可选；不传时行为不变） */
+  textareaRef?: MutableRefObject<HTMLTextAreaElement | null>
 }
 
 export function Textarea({
@@ -22,9 +32,17 @@ export function Textarea({
   autoGrow = false,
   maxRows = 6,
   rows = 1,
+  textareaRef,
   ...rest
 }: TextareaProps): ReactElement {
-  const ref = useRef<HTMLTextAreaElement>(null)
+  const ref = useRef<HTMLTextAreaElement | null>(null)
+  const assignRef = useCallback(
+    (node: HTMLTextAreaElement | null) => {
+      ref.current = node
+      if (textareaRef) textareaRef.current = node
+    },
+    [textareaRef]
+  )
 
   useLayoutEffect(() => {
     if (!autoGrow) return
@@ -51,7 +69,7 @@ export function Textarea({
   return (
     <textarea
       {...rest}
-      ref={ref}
+      ref={assignRef}
       rows={rows}
       value={value}
       className={cx('pui-input', 'pui-textarea', className)}

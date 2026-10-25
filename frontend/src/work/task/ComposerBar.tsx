@@ -1,8 +1,14 @@
-/** 任务进行中的输入条：附件、追问、发送/中止。 */
-import type { DragEvent as ReactDragEvent, ReactElement } from 'react'
+/** 任务进行中的输入条：附件、历史、追问、发送/中止。 */
+import { useRef, type DragEvent as ReactDragEvent, type ReactElement } from 'react'
 import type { PickedFile } from '../../../electron/ipc/channels'
 import { Textarea } from '../../shared/ui/components/Textarea'
 import AttachmentStrip from '../message/AttachmentStrip'
+import {
+  ComposerHistoryButton,
+  ComposerHistoryPopover,
+  useComposerHistory
+} from '../message/ComposerHistory'
+import type { ComposerHistoryItem } from '../message/history'
 
 function PaperclipIcon(): ReactElement {
   return (
@@ -38,6 +44,12 @@ export interface ComposerBarProps {
   previews: Record<string, string>
   notice: string | null
   error: string | null
+  /** 当前任务 id：切换任务时清空历史翻阅状态 */
+  taskId: string
+  /** 本任务已发送的消息（最旧在前、最新在后） */
+  history: ComposerHistoryItem[]
+  /** 点击历史条目的时间：定位到消息流里的原文 */
+  onLocateHistory: (item: ComposerHistoryItem) => void
   onValueChange: (value: string) => void
   onDrop: (event: ReactDragEvent<HTMLDivElement>) => void
   onRemoveAttachment: (path: string) => void
@@ -57,6 +69,9 @@ export default function ComposerBar({
   previews,
   notice,
   error,
+  taskId,
+  history,
+  onLocateHistory,
   onValueChange,
   onDrop,
   onRemoveAttachment,
@@ -65,18 +80,37 @@ export default function ComposerBar({
   onSend,
   onStop
 }: ComposerBarProps): ReactElement {
+  const inputDisabled = !resumable || status === 'waiting' || status === 'queued'
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const historyControls = useComposerHistory({
+    value,
+    onValueChange,
+    history,
+    scopeKey: taskId,
+    onLocate: onLocateHistory,
+    textareaRef,
+    fillDisabled: inputDisabled
+  })
+
+  const sendNow = (): void => {
+    historyControls.reset()
+    onSend()
+  }
+
   return (
     <div className="task-composer" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
       <AttachmentStrip files={attachments} previews={previews} onRemove={onRemoveAttachment} />
       {error || notice ? <div className="task-notice">{error ?? notice}</div> : null}
       <div className="work-input-shell">
+        <ComposerHistoryButton controls={historyControls} />
         <Textarea
           className="work-input"
           value={value}
           autoGrow
           maxRows={8}
           rows={1}
-          disabled={!resumable || status === 'waiting' || status === 'queued'}
+          textareaRef={textareaRef}
+          disabled={inputDisabled}
           placeholder={
             status === 'queued'
               ? '任务在排队，开始后可以继续插话'
@@ -91,11 +125,12 @@ export default function ComposerBar({
                       : '接着说点什么…（Enter 发送，Shift+Enter 换行）'
           }
           aria-label="任务输入"
-          onValueChange={onValueChange}
+          onValueChange={historyControls.onInputChange}
           onKeyDown={(event) => {
+            if (historyControls.handleInputKeyDown(event)) return
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault()
-              if (resumable && value.trim()) onSend()
+              if (resumable && value.trim()) sendNow()
             }
           }}
           onPaste={(event) => {
@@ -130,12 +165,14 @@ export default function ComposerBar({
               title="发送（Enter）"
               aria-label="发送"
               disabled={!value.trim() || !resumable}
-              onClick={onSend}
+              onClick={sendNow}
             >
               <SendIcon />
             </button>
           )}
         </div>
+
+        <ComposerHistoryPopover controls={historyControls} />
       </div>
     </div>
   )

@@ -42,6 +42,8 @@ import { useLinkHover } from '../conversation/useLinkHover'
 import AgentFlow from './AgentFlow'
 import ComposerBar from './ComposerBar'
 import HoverCard, { type HoverCardState } from './HoverCard'
+import { buildTaskHistory } from './history'
+import type { ComposerHistoryItem } from '../message/history'
 import TaskHero from './TaskHero'
 import TaskList, { groupTasks } from './TaskList'
 import TaskModeSelector from './TaskModeSelector'
@@ -153,6 +155,9 @@ export default function TaskPanel({
   const handledDraftRef = useRef<string | null>(null)
   /** 处理过草稿后保持 true：压住 getState/状态推送的「切到已有任务」，避免把草稿页藏掉 */
   const draftActiveRef = useRef(false)
+  /** 历史定位后的短暂高亮锚点与定时器 */
+  const [flashId, setFlashId] = useState<string | null>(null)
+  const flashTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     const api = agentBridge()
@@ -478,6 +483,48 @@ export default function TaskPanel({
     setShowJump(false)
   }, [])
 
+  // 切任务/卸载：清掉高亮定时器
+  useEffect(() => {
+    return () => {
+      if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current)
+    }
+  }, [])
+  // 切换任务：清掉上一条历史选中文本、附件和定位高亮
+  useEffect(() => {
+    setFlashId(null)
+    setReply('')
+    clearAttachments()
+    setFileNotice(null)
+    if (flashTimerRef.current !== null) {
+      window.clearTimeout(flashTimerRef.current)
+      flashTimerRef.current = null
+    }
+  }, [state?.id, clearAttachments])
+
+  /** 历史条目的时间点击：滚到消息流里的原文并短暂高亮；同时暂停自动跟到底 */
+  const locateHistoryItem = useCallback((item: ComposerHistoryItem): void => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    const target = scroller.querySelector<HTMLElement>(
+      `[data-step-id="${CSS.escape(item.id)}"]`
+    )
+    if (!target) {
+      setFileNotice('这条消息太久了，已不在当前视图里')
+      window.setTimeout(() => setFileNotice(null), 3_000)
+      return
+    }
+    setFileNotice(null)
+    stickRef.current = false
+    setShowJump(true)
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    setFlashId(item.id)
+    if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current)
+    flashTimerRef.current = window.setTimeout(() => {
+      setFlashId(null)
+      flashTimerRef.current = null
+    }, 1_300)
+  }, [])
+
   const toggleExpanded = useCallback((step: AgentStep): void => {
     setExpanded((current) => {
       const fallback = step.kind === 'thinking' && step.status === 'running'
@@ -639,8 +686,12 @@ export default function TaskPanel({
     }
     setError(null)
     setCompose(false)
+    // 重新选同一个任务时 state.id 不变，也要清掉上次留下的历史选中文本/附件
+    setReply('')
+    clearAttachments()
+    setFileNotice(null)
     stickRef.current = true
-  }, [])
+  }, [clearAttachments])
 
   const approve = useCallback(
     (allow: boolean): void => {
@@ -697,6 +748,7 @@ export default function TaskPanel({
     state?.status === 'waiting'
   const showHero = compose || !state || state.status === 'idle'
   const flow = (state?.steps ?? []).filter((step) => step.kind !== 'todo').slice(-200)
+  const history = useMemo(() => buildTaskHistory(state), [state])
 
   return (
     <div className="task-layout">
@@ -792,6 +844,7 @@ export default function TaskPanel({
                 status={state?.status}
                 mode={state?.mode}
                 canExecutePlan={Boolean(state?.resumable)}
+                flashId={flashId}
                 onAnswer={(id, answer) => void answerQuestion(id, answer)}
                 onExecutePlan={(mode) => void executePlan(mode)}
                 onLinkClick={onLinkClick}
@@ -819,6 +872,9 @@ export default function TaskPanel({
               previews={previews}
               notice={fileNotice}
               error={error}
+              taskId={state?.id ?? ''}
+              history={history}
+              onLocateHistory={locateHistoryItem}
               onValueChange={setReply}
               onDrop={handleDropFiles}
               onRemoveAttachment={removeAttachment}

@@ -590,6 +590,27 @@
   min-width: 0;
 }
 
+/* 历史定位：目标消息短暂高亮，不改变气泡自身圆角 */
+.task-start-line.task-locate-flash,
+.task-msg.task-msg-user.task-locate-flash .task-bubble {
+  animation: task-locate-flash 1.3s ease;
+}
+
+.task-start-line.task-locate-flash {
+  border-radius: 8px;
+}
+
+@keyframes task-locate-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  18%,
+  55% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ui-accent) 45%, transparent);
+  }
+}
+
 .task-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;

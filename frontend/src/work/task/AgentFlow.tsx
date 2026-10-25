@@ -9,6 +9,7 @@ import {
 import { renderMarkdownWithCitations } from '../../board/markdown'
 import type { AgentState, AgentStep, AgentTodoItem } from '../../../electron/ipc/channels'
 import { formatTime, formatTokens, handleMarkdownClick } from '../format'
+import { TASK_START_ID } from './history'
 
 /** 消息底部：时间 · token · 复制（与对话模式一致，时间常显、按钮悬浮浮现） */
 function MessageMeta({
@@ -326,6 +327,8 @@ export interface AgentFlowProps {
   status?: AgentState['status']
   mode?: AgentState['mode']
   canExecutePlan?: boolean
+  /** 历史定位后短暂高亮的锚点 id（TASK_START_ID 或 round 步骤 id） */
+  flashId?: string | null
   onAnswer?: (id: string, answer: string) => void
   onExecutePlan?: (mode: 'standard' | 'auto') => void
   /** 链接点击：与对话模式一致，交由工作窗内嵌浏览器打开 */
@@ -354,6 +357,7 @@ export default function AgentFlow({
   status,
   mode,
   canExecutePlan = false,
+  flashId = null,
   onAnswer,
   onExecutePlan,
   onLinkClick,
@@ -375,7 +379,11 @@ export default function AgentFlow({
   return (
     <div className="task-flow">
       {task ? (
-        <div className="task-start-line" title={workspace}>
+        <div
+          className={`task-start-line${flashId === TASK_START_ID ? ' task-locate-flash' : ''}`}
+          data-step-id={TASK_START_ID}
+          title={workspace}
+        >
           <span className="task-start-mark" aria-hidden="true">
             ✦
           </span>
@@ -389,7 +397,11 @@ export default function AgentFlow({
       {flow.map((step) => {
         if (step.kind === 'round') {
           return (
-            <div className="task-msg task-msg-user" key={step.id}>
+            <div
+              className={`task-msg task-msg-user${flashId === step.id ? ' task-locate-flash' : ''}`}
+              data-step-id={step.id}
+              key={step.id}
+            >
               <div className="task-bubble">{step.title}</div>
               <MessageMeta
                 at={step.startedAt}

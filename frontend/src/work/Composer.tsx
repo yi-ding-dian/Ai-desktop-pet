@@ -8,6 +8,7 @@
  */
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   type ClipboardEvent,
@@ -23,6 +24,12 @@ import {
   looksLikeAbsolutePath,
   unsupportedReason
 } from '../modules/chat/file-support'
+import {
+  ComposerHistoryButton,
+  ComposerHistoryPopover,
+  useComposerHistory
+} from './message/ComposerHistory'
+import type { ComposerHistoryItem } from './message/history'
 import type { WorkNotice } from './store'
 
 export interface ComposerProps {
@@ -33,6 +40,12 @@ export interface ComposerProps {
   onStop: () => void
   notice: WorkNotice | null
   onDismissNotice: () => void
+  /** 当前会话已发送的用户消息（最旧在前） */
+  history: ComposerHistoryItem[]
+  /** 切换会话时重置历史翻阅 */
+  scopeKey: string
+  /** 点击历史条目的时间：定位到消息流 */
+  onLocateHistory: (item: ComposerHistoryItem) => void
 }
 
 export default function Composer({
@@ -42,7 +55,10 @@ export default function Composer({
   onSend,
   onStop,
   notice,
-  onDismissNotice
+  onDismissNotice,
+  history,
+  scopeKey,
+  onLocateHistory
 }: ComposerProps): ReactElement {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<PickedFile[]>([])
@@ -50,6 +66,25 @@ export default function Composer({
   const [dragActive, setDragActive] = useState(false)
   const dragDepth = useRef(0)
   const sendingRef = useRef(false)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const historyControls = useComposerHistory({
+    value: input,
+    onValueChange: setInput,
+    history,
+    scopeKey,
+    onLocate: onLocateHistory,
+    textareaRef
+  })
+
+  // 切换会话 / 对话↔任务标签：清掉本会话的草稿、附件和历史选中文本。
+  // （历史 hook 只重置翻阅游标，输入内容归本组件的本地 state）
+  useEffect(() => {
+    setInput('')
+    setAttachments([])
+    setLocalNotice(null)
+    setDragActive(false)
+    dragDepth.current = 0
+  }, [scopeKey])
 
   const showLocal = useCallback((text: string): void => {
     setLocalNotice(text)
@@ -163,6 +198,7 @@ export default function Composer({
     // 回执最慢可能到 8s（主进程超时）：防连按/连 Enter 重复发送
     if (sendingRef.current) return
     sendingRef.current = true
+    historyControls.reset()
     try {
       const ok = await onSend(text || '帮我看看这个文件', attachments)
       if (!ok) return
@@ -171,7 +207,7 @@ export default function Composer({
     } finally {
       sendingRef.current = false
     }
-  }, [attachments, input, onSend])
+  }, [attachments, historyControls, input, onSend])
 
   const noticeText = localNotice ?? notice?.text ?? null
   const noticeKind = localNotice !== null ? 'warn' : (notice?.kind ?? 'info')
@@ -234,17 +270,20 @@ export default function Composer({
       ) : null}
 
       <div className="work-input-shell">
+        <ComposerHistoryButton controls={historyControls} />
         <Textarea
           className="work-input"
           value={input}
           autoGrow
           maxRows={10}
           rows={1}
+          textareaRef={textareaRef}
           placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"
           aria-label="工作模式输入"
-          onValueChange={setInput}
+          onValueChange={historyControls.onInputChange}
           onPaste={(event) => void handlePaste(event)}
           onKeyDown={(event) => {
+            if (historyControls.handleInputKeyDown(event)) return
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault()
               void submit()
@@ -285,6 +324,8 @@ export default function Composer({
             </button>
           )}
         </div>
+
+        <ComposerHistoryPopover controls={historyControls} />
       </div>
 
       <div className="work-modes">
