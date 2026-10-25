@@ -20,10 +20,10 @@ export const EDGE_RIGHT_MODEL_URL = `${import.meta.env.BASE_URL}models/rabbit-ed
 export const EDGE_HANG_MODEL_URL = `${import.meta.env.BASE_URL}models/rabbit-edge-hang.glb`
 
 /**
- * 底部趴睡模型（2026-10-20）：直接复用浅睡模型（无口水，与睡眠状态同一只）。
- * 按站姿宽度 × SLEEP_WIDTH_RATIO_LIGHT 归一化，与真实睡姿的体量一致。
+ * 底部趴睡模型（2026-10-20）：直接复用睡姿模型（无口水，与睡眠状态同一只）。
+ * 按站姿宽度 × SLEEP_WIDTH_RATIO 归一化，与真实睡姿的体量一致。
  */
-export { SLEEP_LIGHT_MODEL_URL as EDGE_BOTTOM_MODEL_URL } from '../sleep/config'
+export { SLEEP_MODEL_URL as EDGE_BOTTOM_MODEL_URL } from '../sleep/config'
 
 /** 进入/退出过渡时长（秒）：与睡姿一致，切换不突兀 */
 export const EDGE_TRANSITION_SECONDS = 0.36

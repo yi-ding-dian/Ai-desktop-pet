@@ -5,7 +5,7 @@
  * - 单独一个 GLB（压缩后 1.3MB），加载失败不影响站姿渲染；
  * - 按站姿宽度归一化、居中贴地，避免切换前后"突然变小/变宽"；
  * - `setVisible(true/false)` 走 0.36s 缩放/位移过渡；
- * - 腹部呼吸与口水摆动由 motion.ts 的顶点着色器负责。
+ * - 腹部呼吸由 motion.ts 的顶点着色器负责。
  */
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -31,8 +31,6 @@ function smoothstep(t: number): number {
 }
 
 export class SleepModel {
-  /** 日志/调试用：light / deep */
-  private readonly label: string
   private host: SleepModelHost | null = null
   private root: THREE.Group | null = null
   private model: THREE.Object3D | null = null
@@ -45,12 +43,6 @@ export class SleepModel {
   private visible = false
   /** 当前过渡（秒） */
   private transition: { kind: 'enter' | 'exit'; elapsed: number } | null = null
-  /** 口水目标 alpha（模型未就绪时先记住，加载完成后应用，避免一帧闪现） */
-  private droolAlpha = 1
-
-  constructor(label = 'sleep') {
-    this.label = label
-  }
 
   attach(host: SleepModelHost): void {
     this.host = host
@@ -62,7 +54,7 @@ export class SleepModel {
     if (this.root?.parent) this.root.parent.remove(this.root)
   }
 
-  /** 懒加载：站姿模型就绪后调用；standWidth 用于按宽度归一化，widthRatio 区分浅睡/深睡 */
+  /** 懒加载：站姿模型就绪后调用；standWidth 用于按宽度归一化 */
   preload(standWidth: number, url: string, widthRatio: number): void {
     if (this.disposed || this.state !== 'idle') return
     this.state = 'loading'
@@ -81,7 +73,7 @@ export class SleepModel {
       (err) => {
         if (this.disposed || token !== this.token) return
         this.state = 'failed'
-        console.warn(`[pet] 睡姿模型(${this.label})加载失败（回退）：`, url, err)
+        console.warn('[pet] 睡姿模型加载失败（回退站姿）：', url, err)
       }
     )
   }
@@ -114,12 +106,6 @@ export class SleepModel {
     this.visible = false
     this.transition = { kind: 'exit', elapsed: 0 }
     this.root.visible = true
-  }
-
-  /** 口水显隐（深睡模型 0→1 淡入；浅睡模型没有口水顶点，调用无害） */
-  setDroolAlpha(value: number): void {
-    this.droolAlpha = value < 0 ? 0 : value > 1 ? 1 : value
-    this.motion?.setDroolAlpha(this.droolAlpha)
   }
 
   update(dt: number): void {
@@ -224,8 +210,7 @@ export class SleepModel {
     this.model = loaded
 
     // ⑥ 腹部呼吸（只作用于睡姿模型 clone 出来的材质）
-    this.motion = applySleepMotion(loaded, { droolAlpha: this.label === 'deep' })
-    this.motion?.setDroolAlpha(this.droolAlpha)
+    this.motion = applySleepMotion(loaded)
 
     this.state = 'ready'
     this.host?.scene.add(root)

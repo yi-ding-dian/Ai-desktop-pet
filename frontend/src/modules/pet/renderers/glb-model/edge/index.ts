@@ -13,7 +13,7 @@
  */
 import type * as THREE from 'three'
 import type { PetWindowEdge } from '../../../../../../electron/ipc/channels'
-import { SLEEP_WIDTH_RATIO_LIGHT } from '../sleep/config'
+import { SLEEP_WIDTH_RATIO } from '../sleep/config'
 import { SleepZzzOverlay } from '../sleep/zzz'
 import {
   EDGE_BOTTOM_MODEL_URL,
@@ -75,7 +75,7 @@ export class EdgeController {
 
   /** 站姿模型就绪后调用：三个边缘模型并行懒加载；底部睡姿按站姿宽度归一化 */
   preload(standWidth: number): void {
-    this.models.bottom.setTargetWidth(standWidth * SLEEP_WIDTH_RATIO_LIGHT)
+    this.models.bottom.setTargetWidth(standWidth * SLEEP_WIDTH_RATIO)
     for (const kind of KINDS) this.models[kind].preload()
   }
 
