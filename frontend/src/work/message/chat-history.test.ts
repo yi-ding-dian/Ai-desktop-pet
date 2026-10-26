@@ -1,7 +1,7 @@
 /** 对话模式「已发送消息」派生纯函数离线自测（npm run test:work-history）。 */
 import assert from 'node:assert/strict'
 import type { WorkMessage } from '../store'
-import { buildChatHistory } from './history'
+import { buildChatHistory } from './chat-history'
 
 function message(overrides: Partial<WorkMessage> & Pick<WorkMessage, 'id' | 'role'>): WorkMessage {
   return {
@@ -57,4 +57,4 @@ check('缺失时间置 null，空会话返回空数组', () => {
   assert.deepEqual(buildChatHistory([]), [])
 })
 
-console.log('message/history.test 全部通过')
+console.log('message/chat-history.test 全部通过')

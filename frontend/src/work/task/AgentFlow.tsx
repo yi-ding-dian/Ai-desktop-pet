@@ -8,8 +8,10 @@ import {
 } from 'react'
 import { renderMarkdownWithCitations } from '../../board/markdown'
 import type { AgentState, AgentStep, AgentTodoItem } from '../../../electron/ipc/channels'
-import { formatCost, formatTime, formatTokens, handleMarkdownClick } from '../format'
-import { TASK_START_ID } from './history'
+import { formatCost, formatTokens } from '../shared/format-value'
+import { formatClockTime } from '../shared/time'
+import { handleMarkdownClick } from '../shared/link'
+import { TASK_START_ID } from './input-history'
 
 /** 消息底部：时间 · token · 复制（与对话模式一致，时间常显、按钮悬浮浮现） */
 function MessageMeta({
@@ -25,7 +27,7 @@ function MessageMeta({
 }): ReactElement {
   return (
     <div className="work-meta task-meta">
-      <span className="work-time">{formatTime(at)}</span>
+      <span className="work-time">{formatClockTime(at)}</span>
       {outputTokens !== undefined ? (
         <span className="task-meta-tokens">
           输出 {outputTokens < 0 ? '—' : formatTokens(outputTokens)} tokens

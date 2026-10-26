@@ -10,6 +10,7 @@ import {
   type ReactElement
 } from 'react'
 import type { WorkConversationSummary } from '../../../electron/ipc/channels'
+import { groupByTime, relativeTime, type TimeGroup } from '../shared/time'
 
 const WIDTH_KEY = 'pet.work.convSidebarWidth'
 const COLLAPSED_KEY = 'pet.work.convSidebarCollapsed'
@@ -17,48 +18,6 @@ const DEFAULT_WIDTH = 216
 const MIN_WIDTH = 150
 const MAX_WIDTH = 360
 const COLLAPSED_WIDTH = 36
-
-interface Group {
-  label: string
-  items: WorkConversationSummary[]
-}
-
-function groupConversations(items: WorkConversationSummary[]): Group[] {
-  const now = new Date()
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const startOfYesterday = startOfToday - 86_400_000
-  const week = startOfToday - 6 * 86_400_000
-  const buckets: Group[] = [
-    { label: '今天', items: [] },
-    { label: '昨天', items: [] },
-    { label: '7 天内', items: [] },
-    { label: '更早', items: [] }
-  ]
-  for (const item of items) {
-    const at = item.updatedAt || item.createdAt
-    const index = at >= startOfToday ? 0 : at >= startOfYesterday ? 1 : at >= week ? 2 : 3
-    buckets[index].items.push(item)
-  }
-  return buckets.filter((bucket) => bucket.items.length > 0)
-}
-
-function relativeTime(ms: number, now: number): string {
-  const date = new Date(ms)
-  const current = new Date(now)
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  // 不是当天就显示月-日（跨天只给时分分不清是哪天；用户 2026-10-26 定）
-  if (
-    date.getFullYear() !== current.getFullYear() ||
-    date.getMonth() !== current.getMonth() ||
-    date.getDate() !== current.getDate()
-  ) {
-    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-  }
-  const diff = Math.max(0, now - ms)
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
 
 export interface ConversationSidebarProps {
   items: WorkConversationSummary[]
@@ -130,7 +89,11 @@ export default function ConversationSidebar({
 
   const pet = useMemo(() => items.find((item) => item.kind === 'pet'), [items])
   const groups = useMemo(
-    () => groupConversations(items.filter((item) => item.kind !== 'pet')),
+    () =>
+      groupByTime(
+        items.filter((item) => item.kind !== 'pet'),
+        (item) => item.updatedAt || item.createdAt
+      ),
     [items]
   )
 
@@ -181,7 +144,7 @@ export default function ConversationSidebar({
     })
   }
 
-  const toggleGroup = (group: Group): void => {
+  const toggleGroup = (group: TimeGroup<WorkConversationSummary>): void => {
     const ids = group.items.map((item) => item.id).filter((id) => selectableIds.has(id))
     const allSelected = ids.length > 0 && ids.every((id) => selected.has(id))
     setSelected((prev) => {

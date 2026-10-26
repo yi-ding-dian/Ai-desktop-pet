@@ -18,8 +18,8 @@ import {
   type MutableRefObject,
   type ReactElement
 } from 'react'
-import { formatTime } from '../format'
-import type { ComposerHistoryItem } from './history'
+import { formatClockTime } from '../shared/time'
+import type { ComposerHistoryItem } from './chat-history'
 
 export interface ComposerHistoryControls {
   open: boolean
@@ -355,7 +355,7 @@ export function ComposerHistoryPopover({
                 if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
               }}
             >
-              {item.at === null ? '--:--' : formatTime(item.at)}
+              {item.at === null ? '--:--' : formatClockTime(item.at)}
             </button>
             <span className="composer-history-text">{item.text}</span>
           </div>

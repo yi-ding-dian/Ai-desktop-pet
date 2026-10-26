@@ -43,8 +43,8 @@ import { copyTextToClipboard, reasonText } from './conversation/format'
 import MessageNavigator from './MessageNavigator'
 import TaskPanel from './task/TaskPanel'
 import type { NavigatorAnchor } from './navigator'
-import { buildChatHistory } from './message/history'
-import type { ComposerHistoryItem } from './message/history'
+import { buildChatHistory } from './message/chat-history'
+import type { ComposerHistoryItem } from './message/chat-history'
 import {
   EMPTY_WORK_STATE,
   navigatorMessages,

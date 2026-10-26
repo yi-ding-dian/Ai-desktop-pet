@@ -8,11 +8,7 @@ import {
 } from 'react'
 import type { AgentTaskSummary } from '../../../electron/ipc/channels'
 import { MODE_LABELS } from './TaskModeSelector'
-
-export interface TaskGroup {
-  label: string
-  items: AgentTaskSummary[]
-}
+import { relativeTime, type TimeGroup } from '../shared/time'
 
 /** 还在跑/排队的任务：删除会中止它，管理模式下不允许勾选（与对话页「回复中不可删」一致） */
 function isActiveTask(status: AgentTaskSummary['status']): boolean {
@@ -25,28 +21,8 @@ function isActiveTask(status: AgentTaskSummary['status']): boolean {
   )
 }
 
-/** 任务列表按时间分组：今天 / 昨天 / 7 天内 / 更早 */
-export function groupTasks(tasks: AgentTaskSummary[]): TaskGroup[] {
-  const now = new Date()
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const startOfYesterday = startOfToday - 86_400_000
-  const week = startOfToday - 6 * 86_400_000
-  const buckets: TaskGroup[] = [
-    { label: '今天', items: [] },
-    { label: '昨天', items: [] },
-    { label: '7 天内', items: [] },
-    { label: '更早', items: [] }
-  ]
-  for (const task of tasks) {
-    const at = task.updatedAt || task.createdAt
-    const index = at >= startOfToday ? 0 : at >= startOfYesterday ? 1 : at >= week ? 2 : 3
-    buckets[index].items.push(task)
-  }
-  return buckets.filter((bucket) => bucket.items.length > 0)
-}
-
 export interface TaskListProps {
-  groups: TaskGroup[]
+  groups: TimeGroup<AgentTaskSummary>[]
   collapsed: boolean
   /** 展开态的宽度（折叠态由本组件用固定窄条宽度） */
   width: number
@@ -63,25 +39,6 @@ export interface TaskListProps {
 
 /** 折叠后的窄条宽度 */
 const COLLAPSED_WIDTH = 36
-
-/** 任务项右侧时间：当天刚刚 / n 分钟前 / HH:MM；跨天一律 MM-DD */
-function relativeTime(ms: number, now: number): string {
-  const date = new Date(ms)
-  const current = new Date(now)
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  // 不是当天就显示月-日（跨天只给时分分不清是哪天；用户 2026-10-26 定）
-  if (
-    date.getFullYear() !== current.getFullYear() ||
-    date.getMonth() !== current.getMonth() ||
-    date.getDate() !== current.getDate()
-  ) {
-    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-  }
-  const diff = Math.max(0, now - ms)
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
 
 export default function TaskList({
   groups,
@@ -150,7 +107,7 @@ export default function TaskList({
     })
   }
 
-  const toggleGroup = (group: TaskGroup): void => {
+  const toggleGroup = (group: TimeGroup<AgentTaskSummary>): void => {
     const ids = group.items.map((item) => item.id).filter((id) => selectableIds.has(id))
     const allSelected = ids.length > 0 && ids.every((id) => selected.has(id))
     setSelected((prev) => {

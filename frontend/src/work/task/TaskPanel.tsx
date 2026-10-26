@@ -37,17 +37,19 @@ import {
   looksLikeAbsolutePath,
   unsupportedReason
 } from '../../modules/chat/file-support'
-import { copyText, formatCost, formatMoney, formatWorkspacePath } from '../format'
+import { copyText } from '../shared/clipboard'
+import { formatCost, formatMoney, formatWorkspacePath } from '../shared/format-value'
+import { groupByTime } from '../shared/time'
 import { attachmentKind } from '../message/AttachmentStrip'
 import LinkPreviewCard from '../conversation/LinkPreviewCard'
 import { useLinkHover } from '../conversation/useLinkHover'
 import AgentFlow from './AgentFlow'
 import ComposerBar from './ComposerBar'
 import HoverCard, { type HoverCardState } from './HoverCard'
-import { buildTaskHistory } from './history'
-import type { ComposerHistoryItem } from '../message/history'
+import { buildTaskHistory } from './input-history'
+import type { ComposerHistoryItem } from '../message/chat-history'
 import TaskHero from './TaskHero'
-import TaskList, { groupTasks } from './TaskList'
+import TaskList from './TaskList'
 import TaskModeSelector from './TaskModeSelector'
 
 /** 左侧任务列表宽度（可拖动） */
@@ -894,7 +896,10 @@ export default function TaskPanel({
     void selectTask(focusTaskId).then(() => onFocusHandled?.())
   }, [focusTaskId, onFocusHandled, selectTask])
 
-  const groups = useMemo(() => groupTasks(tasks), [tasks])
+  const groups = useMemo(
+    () => groupByTime(tasks, (task) => task.updatedAt || task.createdAt),
+    [tasks]
+  )
   const approval = state?.approval
   const remaining = approval ? Math.max(0, Math.ceil((approval.expiresAt - now) / 1000)) : 0
   const busy =

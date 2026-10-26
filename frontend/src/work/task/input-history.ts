@@ -7,7 +7,7 @@
  * 只收用户消息，助手回复/工具步骤不进历史；顺序按发送顺序，最旧在前、最新在后。
  */
 import type { AgentState } from '../../../electron/ipc/channels'
-import type { ComposerHistoryItem } from '../message/history'
+import type { ComposerHistoryItem } from '../message/chat-history'
 
 /** 初始任务在消息流里的锚点 id（AgentFlow 的起始行） */
 export const TASK_START_ID = 'task-start'

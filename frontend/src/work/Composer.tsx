@@ -31,7 +31,7 @@ import {
   ComposerHistoryPopover,
   useComposerHistory
 } from './message/ComposerHistory'
-import type { ComposerHistoryItem } from './message/history'
+import type { ComposerHistoryItem } from './message/chat-history'
 import type { WorkNotice } from './store'
 
 export interface ComposerProps {

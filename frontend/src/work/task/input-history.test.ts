@@ -3,7 +3,7 @@
  */
 import assert from 'node:assert/strict'
 import type { AgentState, AgentStep } from '../../../electron/ipc/channels'
-import { TASK_START_ID, buildTaskHistory } from './history'
+import { TASK_START_ID, buildTaskHistory } from './input-history'
 
 function step(overrides: Partial<AgentStep> & Pick<AgentStep, 'id' | 'kind' | 'title'>): AgentStep {
   return { status: 'done', startedAt: 0, ...overrides }

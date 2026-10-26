@@ -9,7 +9,7 @@ import {
   ComposerHistoryPopover,
   useComposerHistory
 } from '../message/ComposerHistory'
-import type { ComposerHistoryItem } from '../message/history'
+import type { ComposerHistoryItem } from '../message/chat-history'
 
 function PaperclipIcon(): ReactElement {
   return (
