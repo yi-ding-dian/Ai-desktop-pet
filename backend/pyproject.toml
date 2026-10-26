@@ -32,34 +32,16 @@ dev = [
 ]
 
 # 包名 backend 映射到本目录（项目根下 `python -m backend.main` 可运行）
+# packages 交给 setuptools 自动发现，不再手写列表：
+# 手写列表曾漏登记新增的 memory_book、又留着已删除的 notebook，导致 pip install -e 直接失败。
+# where 相对 pyproject 目录（本目录）→ ".." 即项目根；include 只收 backend 树，不扫 frontend。
 [tool.setuptools]
 package-dir = { backend = "." }
-packages = [
-    "backend",
-    "backend.application",
-    "backend.application.chat_pipeline",
-    "backend.interfaces",
-    "backend.interfaces.ws",
-    "backend.interfaces.ws.handlers",
-    "backend.modules",
-    "backend.modules.behavior",
-    "backend.modules.chat",
-    "backend.modules.disk",
-    "backend.modules.disk.report",
-    "backend.modules.files",
-    "backend.modules.llm",
-    "backend.modules.llm.prompts",
-    "backend.modules.memory",
-    "backend.modules.notebook",
-    "backend.modules.reminders",
-    "backend.modules.search",
-    "backend.modules.system",
-    "backend.modules.tools",
-    "backend.modules.tools.builtin",
-    "backend.modules.voice",
-    "backend.modules.voice.tts",
-    "backend.shared",
-]
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["backend*"]
+exclude = ["backend.tests*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

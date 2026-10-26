@@ -8,5 +8,6 @@ deploy/.pyinstaller-build/
 
 # 杂项
 *.log
+*.egg-info/
 .DS_Store
 .idea/

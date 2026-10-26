@@ -33,16 +33,30 @@ fi
 echo "· node $(node -v)"
 
 echo "== 2/3 前端依赖 =="
+# 依赖探针：node_modules 在但关键包缺失（比如同步了新 package.json 没 npm install）也要补装。
+# 只判断目录存在是不够的——曾因漏装 @earendil-works/pi-agent-core 导致 vite 构建直接失败。
+# 用「package.json 文件存在」判断，不用 require.resolve：pi-agent-core/pi-ai 是 ESM-only
+# （exports 没有 CommonJS 入口），CJS 的 require.resolve 永远解析不到，会误判成没装。
+# 新增 package.json 依赖时记得同步加到这里（尤其 Electron 主进程会 import 的包）。
+FRONTEND_PROBE='const fs=require("fs"),path=require("path");for(const p of ["@earendil-works/pi-agent-core","@earendil-works/pi-ai","electron","vite"])fs.accessSync(path.join("node_modules",p,"package.json"))'
+INSTALL_DEPS=0
 if [ ! -d frontend/node_modules ]; then
   echo "· 首次运行：npm install（含 Electron 运行时下载，首次较慢）…"
+  INSTALL_DEPS=1
+elif ! (cd frontend && node -e "$FRONTEND_PROBE") >/dev/null 2>&1; then
+  echo "· 检测到依赖缺失（node_modules 不完整），执行 npm install…"
+  INSTALL_DEPS=1
+else
+  echo "· 已存在，跳过"
+fi
+
+if [ "$INSTALL_DEPS" = "1" ]; then
   # 国内网络下 Electron 二进制要走镜像，否则会长时间静默卡住；已自行设置则不覆盖
   export ELECTRON_MIRROR="${ELECTRON_MIRROR:-https://npmmirror.com/mirrors/electron/}"
   if ! (cd frontend && npm install); then
     echo "[失败] npm install 失败，检查网络后重试。" >&2
     exit 1
   fi
-else
-  echo "· 已存在，跳过"
 fi
 
 echo "== 3/3 后端虚拟环境 =="
@@ -67,8 +81,10 @@ if [ ! -x "$PY" ]; then
 fi
 
 # 依赖探针：venv 在但依赖不全（比如上次装到一半、新增依赖没装）也走安装分支。
-# 新增 pyproject 依赖时记得同步加到这里（曾因只查 fastapi/openai 漏掉 python-docx 导致后端启动即崩）。
-if "$PY" -c "import fastapi, openai, docx, keyring, httpx, openpyxl" >/dev/null 2>&1; then
+# 探针要覆盖 pyproject 的全部 dependencies（外加未写进 pyproject 的 openai/keyring），
+# 漏一个就会「venv 在 → 跳过安装 → 后端启动 import 即崩」。
+# 曾踩坑：只查 fastapi/openai 漏掉 python-docx；只查 docx 漏掉 pypdf。
+if "$PY" -c "import fastapi, uvicorn, pydantic, loguru, edge_tts, tomlkit, docx, openpyxl, pypdf, httpx, openai, keyring" >/dev/null 2>&1; then
   echo "· 已存在，跳过"
 else
   echo "· 安装后端依赖（清华镜像）…"
