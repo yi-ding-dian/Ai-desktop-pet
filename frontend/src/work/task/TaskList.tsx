@@ -1,6 +1,7 @@
 /** 任务页左侧列表：按时间分组、可拖动宽度、可吸附折叠。 */
 import {
   useEffect,
+  useMemo,
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactElement
@@ -11,6 +12,17 @@ import { MODE_LABELS } from './TaskModeSelector'
 export interface TaskGroup {
   label: string
   items: AgentTaskSummary[]
+}
+
+/** 还在跑/排队的任务：删除会中止它，管理模式下不允许勾选（与对话页「回复中不可删」一致） */
+function isActiveTask(status: AgentTaskSummary['status']): boolean {
+  return (
+    status === 'queued' ||
+    status === 'preparing' ||
+    status === 'running' ||
+    status === 'waiting' ||
+    status === 'planned'
+  )
 }
 
 /** 任务列表按时间分组：今天 / 昨天 / 7 天内 / 更早 */
@@ -44,19 +56,30 @@ export interface TaskListProps {
   onExpand: () => void
   onSelect: (id: string) => void
   onContextMenu: (id: string, x: number, y: number) => void
+  /** 管理模式：批量删除（父级负责确认与刷新，逐条复用单条删除接口） */
+  onDeleteMany: (ids: string[]) => void
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void
 }
 
 /** 折叠后的窄条宽度 */
 const COLLAPSED_WIDTH = 36
 
-/** 任务项右侧时间：刚刚 / n 分钟前 / 超过 1 小时显示 HH:MM */
+/** 任务项右侧时间：当天刚刚 / n 分钟前 / HH:MM；跨天一律 MM-DD */
 function relativeTime(ms: number, now: number): string {
+  const date = new Date(ms)
+  const current = new Date(now)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  // 不是当天就显示月-日（跨天只给时分分不清是哪天；用户 2026-10-26 定）
+  if (
+    date.getFullYear() !== current.getFullYear() ||
+    date.getMonth() !== current.getMonth() ||
+    date.getDate() !== current.getDate()
+  ) {
+    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  }
   const diff = Math.max(0, now - ms)
   if (diff < 60_000) return '刚刚'
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`
-  const date = new Date(ms)
-  const pad = (value: number): string => String(value).padStart(2, '0')
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
@@ -70,6 +93,7 @@ export default function TaskList({
   onExpand,
   onSelect,
   onContextMenu,
+  onDeleteMany,
   onResizeStart
 }: TaskListProps): ReactElement {
   // 相对时间需要随时间推进刷新（"刚刚" → "n 分钟前" → "HH:MM"）
@@ -78,6 +102,72 @@ export default function TaskList({
     const timer = window.setInterval(() => setNow(Date.now()), 30_000)
     return () => window.clearInterval(timer)
   }, [])
+
+  // 管理模式（2026-10-26，与对话左栏同款）：运行中的任务不可选；列表推送刷新后剔除失效项
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(() => new Set())
+  const selectableIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const group of groups) {
+      for (const item of group.items) {
+        if (!isActiveTask(item.status)) ids.add(item.id)
+      }
+    }
+    return ids
+  }, [groups])
+
+  useEffect(() => {
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((id) => selectableIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [selectableIds])
+
+  useEffect(() => {
+    if (!selectMode) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setSelectMode(false)
+        setSelected(new Set())
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectMode])
+
+  const exitSelectMode = (): void => {
+    setSelectMode(false)
+    setSelected(new Set())
+  }
+
+  const toggleItem = (id: string): void => {
+    if (!selectableIds.has(id)) return
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleGroup = (group: TaskGroup): void => {
+    const ids = group.items.map((item) => item.id).filter((id) => selectableIds.has(id))
+    const allSelected = ids.length > 0 && ids.every((id) => selected.has(id))
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const id of ids) {
+        if (allSelected) next.delete(id)
+        else next.add(id)
+      }
+      return next
+    })
+  }
+
+  const toggleAll = (): void => {
+    const ids = [...selectableIds]
+    const allSelected = ids.length > 0 && ids.every((id) => selected.has(id))
+    setSelected(allSelected ? new Set() : new Set(ids))
+  }
 
   return (
     <aside
@@ -96,61 +186,142 @@ export default function TaskList({
         </button>
       ) : (
         <>
-          <button
-            type="button"
-            className={`task-new${compose ? ' task-new-active' : ''}`}
-            onClick={onNew}
-          >
-            <span aria-hidden="true">＋</span> 新任务
-          </button>
+          <div className="conv-sidebar-top">
+            <button
+              type="button"
+              className={`task-new${compose ? ' task-new-active' : ''}`}
+              onClick={onNew}
+            >
+              <span aria-hidden="true">＋</span> 新任务
+            </button>
+            <button
+              type="button"
+              className={`conv-batch-toggle${selectMode ? ' conv-batch-toggle-on' : ''}`}
+              title={selectMode ? '退出管理' : '任务管理'}
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            >
+              管理
+            </button>
+          </div>
           <div className="task-list pui-scroll">
             {groups.length === 0 ? (
               <div className="task-list-empty">还没有任务</div>
             ) : (
-              groups.map((group) => (
-                <div className="task-group" key={group.label}>
-                  <div className="task-group-label">{group.label}</div>
-                  {group.items.map((item) => (
-                    <button
-                      type="button"
-                      key={item.id}
-                      className={`task-item${
-                        !compose && activeId === item.id ? ' task-item-active' : ''
-                      }${item.hasUpdate ? ' task-item-unread' : ''}`}
-                      title={`${item.task}\n${MODE_LABELS[item.mode]} · ${item.workspace}`}
-                      onClick={() => onSelect(item.id)}
-                      onContextMenu={(event) => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        onContextMenu(item.id, event.clientX, event.clientY)
-                      }}
-                    >
-                      <span className={`task-item-dot task-item-dot-${item.status}`} />
-                      <span className="task-item-text">{item.task}</span>
-                      {item.waitingFor ? (
-                        <span
-                          className={`task-item-badge task-item-badge-${item.waitingFor}`}
+              groups.map((group) => {
+                const groupIds = group.items
+                  .map((item) => item.id)
+                  .filter((id) => selectableIds.has(id))
+                const groupAllSelected =
+                  groupIds.length > 0 && groupIds.every((id) => selected.has(id))
+                return (
+                  <div className="task-group" key={group.label}>
+                    <div className="task-group-label">
+                      <span>{group.label}</span>
+                      {selectMode && groupIds.length > 0 ? (
+                        <button
+                          type="button"
+                          className="conv-group-select"
+                          title={groupAllSelected ? '取消本组选择' : '选中本组全部'}
+                          onClick={() => toggleGroup(group)}
                         >
-                          {item.waitingFor === 'question' ? '待回答' : '待确认'}
-                        </span>
-                      ) : item.queuePosition !== undefined ? (
-                        <span className="task-item-badge">排队 {item.queuePosition}</span>
+                          {groupAllSelected ? '取消' : '全选'}
+                        </button>
                       ) : null}
-                      <span className="task-item-time">
-                        {relativeTime(item.updatedAt || item.createdAt, now)}
-                      </span>
-                      {item.hasUpdate ? (
-                        <span
-                          className="task-item-unread-dot"
-                          aria-label="任务已完成，点击查看"
-                        />
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
-              ))
+                    </div>
+                    {group.items.map((item) => {
+                      const selectable = selectableIds.has(item.id)
+                      const checked = selected.has(item.id)
+                      return (
+                        <button
+                          type="button"
+                          key={item.id}
+                          className={`task-item${
+                            !compose && !selectMode && activeId === item.id
+                              ? ' task-item-active'
+                              : ''
+                          }${item.hasUpdate ? ' task-item-unread' : ''}${
+                            selectMode ? ' conv-select-mode' : ''
+                          }${selectMode && checked ? ' conv-item-selected' : ''}${
+                            selectMode && !selectable ? ' conv-item-disabled' : ''
+                          }`}
+                          title={
+                            selectMode
+                              ? selectable
+                                ? `${item.task}\n点击选择/取消`
+                                : `${item.task}\n运行中，暂不能删除`
+                              : `${item.task}\n${MODE_LABELS[item.mode]} · ${item.workspace}`
+                          }
+                          onClick={() => {
+                            if (selectMode) toggleItem(item.id)
+                            else onSelect(item.id)
+                          }}
+                          onContextMenu={(event) => {
+                            event.preventDefault()
+                            if (selectMode) return
+                            event.stopPropagation()
+                            onContextMenu(item.id, event.clientX, event.clientY)
+                          }}
+                        >
+                          {selectMode ? (
+                            <span
+                              className={`conv-check${checked ? ' conv-check-on' : ''}`}
+                              aria-hidden="true"
+                            >
+                              {checked ? '✓' : ''}
+                            </span>
+                          ) : (
+                            <span className={`task-item-dot task-item-dot-${item.status}`} />
+                          )}
+                          <span className="task-item-text">{item.task}</span>
+                          {item.waitingFor ? (
+                            <span
+                              className={`task-item-badge task-item-badge-${item.waitingFor}`}
+                            >
+                              {item.waitingFor === 'question' ? '待回答' : '待确认'}
+                            </span>
+                          ) : item.queuePosition !== undefined ? (
+                            <span className="task-item-badge">排队 {item.queuePosition}</span>
+                          ) : null}
+                          <span className="task-item-time">
+                            {relativeTime(item.updatedAt || item.createdAt, now)}
+                          </span>
+                          {item.hasUpdate ? (
+                            <span
+                              className="task-item-unread-dot"
+                              aria-label="任务已完成，点击查看"
+                            />
+                          ) : null}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )
+              })
             )}
           </div>
+          {selectMode ? (
+            <div className="conv-batch-bar">
+              <span className="conv-batch-count">已选 {selected.size} 项</span>
+              <div className="conv-batch-actions">
+                <button type="button" className="conv-batch-btn" onClick={toggleAll}>
+                  {selected.size > 0 && selected.size === selectableIds.size
+                    ? '取消全选'
+                    : '全选'}
+                </button>
+                <button
+                  type="button"
+                  className="conv-batch-btn conv-batch-btn-danger"
+                  disabled={selected.size === 0}
+                  onClick={() => onDeleteMany([...selected])}
+                >
+                  删除{selected.size > 0 ? `（${selected.size}）` : ''}
+                </button>
+                <button type="button" className="conv-batch-btn" onClick={exitSelectMode}>
+                  完成
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div
             className="task-sidebar-resizer"
             role="separator"

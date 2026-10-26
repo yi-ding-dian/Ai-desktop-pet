@@ -43,11 +43,20 @@ function groupConversations(items: WorkConversationSummary[]): Group[] {
 }
 
 function relativeTime(ms: number, now: number): string {
+  const date = new Date(ms)
+  const current = new Date(now)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  // 不是当天就显示月-日（跨天只给时分分不清是哪天；用户 2026-10-26 定）
+  if (
+    date.getFullYear() !== current.getFullYear() ||
+    date.getMonth() !== current.getMonth() ||
+    date.getDate() !== current.getDate()
+  ) {
+    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  }
   const diff = Math.max(0, now - ms)
   if (diff < 60_000) return '刚刚'
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`
-  const date = new Date(ms)
-  const pad = (value: number): string => String(value).padStart(2, '0')
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
@@ -62,6 +71,8 @@ export interface ConversationSidebarProps {
   onSelect: (id: string) => void
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
+  /** 批量删除（父级负责确认与刷新，逐条复用单条删除接口） */
+  onDeleteMany: (ids: string[]) => void
 }
 
 export default function ConversationSidebar({
@@ -73,7 +84,8 @@ export default function ConversationSidebar({
   onNew,
   onSelect,
   onRename,
-  onDelete
+  onDelete,
+  onDeleteMany
 }: ConversationSidebarProps): ReactElement {
   const [width, setWidth] = useState<number>(() => {
     try {
@@ -121,6 +133,72 @@ export default function ConversationSidebar({
     () => groupConversations(items.filter((item) => item.kind !== 'pet')),
     [items]
   )
+
+  // 批量管理（2026-10-26）：宠物会话固定不可删，正在回复的对话后端会拒绝删除——两者都不可选
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(() => new Set())
+  const selectableIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const item of items) {
+      if (item.kind !== 'pet' && !streaming.has(item.id)) ids.add(item.id)
+    }
+    return ids
+  }, [items, streaming])
+
+  // 列表刷新后剔除已消失/已变得不可选的 id（删除成功、对话开始回复等）
+  useEffect(() => {
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((id) => selectableIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [selectableIds])
+
+  // 批量模式下 Esc 退出
+  useEffect(() => {
+    if (!selectMode) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setSelectMode(false)
+        setSelected(new Set())
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectMode])
+
+  const exitSelectMode = (): void => {
+    setSelectMode(false)
+    setSelected(new Set())
+  }
+
+  const toggleItem = (id: string): void => {
+    if (!selectableIds.has(id)) return
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleGroup = (group: Group): void => {
+    const ids = group.items.map((item) => item.id).filter((id) => selectableIds.has(id))
+    const allSelected = ids.length > 0 && ids.every((id) => selected.has(id))
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const id of ids) {
+        if (allSelected) next.delete(id)
+        else next.add(id)
+      }
+      return next
+    })
+  }
+
+  const toggleAll = (): void => {
+    const ids = [...selectableIds]
+    const allSelected = ids.length > 0 && ids.every((id) => selected.has(id))
+    setSelected(allSelected ? new Set() : new Set(ids))
+  }
 
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>): void => {
     event.preventDefault()
@@ -172,9 +250,19 @@ export default function ConversationSidebar({
 
   return (
     <aside className="task-sidebar" style={{ width }}>
-      <button type="button" className="task-new" onClick={onNew}>
-        <span aria-hidden="true">＋</span> 新对话
-      </button>
+      <div className="conv-sidebar-top">
+        <button type="button" className="task-new" onClick={onNew}>
+          <span aria-hidden="true">＋</span> 新对话
+        </button>
+        <button
+          type="button"
+          className={`conv-batch-toggle${selectMode ? ' conv-batch-toggle-on' : ''}`}
+          title={selectMode ? '退出管理' : '会话管理'}
+          onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+        >
+          管理
+        </button>
+      </div>
       <div className="task-list pui-scroll">
         {pet ? (
           <button
@@ -207,92 +295,163 @@ export default function ConversationSidebar({
         {groups.length === 0 && !draft && !pet ? (
           <div className="task-list-empty">还没有对话</div>
         ) : (
-          groups.map((group) => (
-            <div className="task-group" key={group.label}>
-              <div className="task-group-label">{group.label}</div>
-              {group.items.map((item) => (
-                <div
-                  key={item.id}
-                  className={`task-item${activeId === item.id && !draft ? ' task-item-active' : ''}${
-                    unread.has(item.id) ? ' task-item-unread' : ''
-                  }`}
-                  role="button"
-                  tabIndex={0}
-                  title={`${item.title}\n${item.messageCount} 条消息`}
-                  onClick={() => onSelect(item.id)}
-                  onKeyDown={(event) => {
-                    // 子输入框（改名）里的按键不触发整行选中
-                    if (editingId === item.id) return
-                    if (event.target !== event.currentTarget) return
-                    if (event.key === 'Enter' || event.key === ' ') onSelect(item.id)
-                  }}
-                >
-                  <span
-                    className={`task-item-dot ${
-                      streaming.has(item.id) ? 'task-item-dot-running' : 'task-item-dot-done'
-                    }`}
-                  />
-                  {editingId === item.id ? (
-                    <input
-                      className="conv-rename-input"
-                      value={editingTitle}
-                      autoFocus
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={(event) => setEditingTitle(event.target.value)}
-                      onKeyDown={(event) => {
-                        // 阻止冒泡到整行：Enter 只提交改名，不切换对话
-                        event.stopPropagation()
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          submitRename(item.id)
-                        }
-                        if (event.key === 'Escape') {
-                          setEditingTitle('')
-                          setEditingId(null)
-                        }
-                      }}
-                      onBlur={() => submitRename(item.id)}
-                    />
-                  ) : (
-                    <span className="task-item-text">{item.title}</span>
-                  )}
-                  <span className="task-item-time">
-                    {relativeTime(item.updatedAt || item.createdAt, now)}
-                  </span>
-                  {unread.has(item.id) ? (
-                    <span className="task-item-unread-dot" aria-label="有新回复" />
+          groups.map((group) => {
+            const groupIds = group.items
+              .map((item) => item.id)
+              .filter((id) => selectableIds.has(id))
+            const groupAllSelected =
+              groupIds.length > 0 && groupIds.every((id) => selected.has(id))
+            return (
+              <div className="task-group" key={group.label}>
+                <div className="task-group-label">
+                  <span>{group.label}</span>
+                  {selectMode && groupIds.length > 0 ? (
+                    <button
+                      type="button"
+                      className="conv-group-select"
+                      title={groupAllSelected ? '取消本组选择' : '选中本组全部'}
+                      onClick={() => toggleGroup(group)}
+                    >
+                      {groupAllSelected ? '取消' : '全选'}
+                    </button>
                   ) : null}
-                  <span className="conv-item-actions">
-                    <button
-                      type="button"
-                      className="conv-item-action"
-                      title="重命名"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setEditingId(item.id)
-                        setEditingTitle(item.title)
-                      }}
-                    >
-                      ✎
-                    </button>
-                    <button
-                      type="button"
-                      className="conv-item-action"
-                      title="删除对话"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onDelete(item.id)
-                      }}
-                    >
-                      ×
-                    </button>
-                  </span>
                 </div>
-              ))}
-            </div>
-          ))
+                {group.items.map((item) => {
+                  const selectable = selectableIds.has(item.id)
+                  const checked = selected.has(item.id)
+                  return (
+                    <div
+                      key={item.id}
+                      className={`task-item${activeId === item.id && !draft ? ' task-item-active' : ''}${
+                        unread.has(item.id) ? ' task-item-unread' : ''
+                      }${selectMode ? ' conv-select-mode' : ''}${
+                        selectMode && checked ? ' conv-item-selected' : ''
+                      }${selectMode && !selectable ? ' conv-item-disabled' : ''}`}
+                      role="button"
+                      tabIndex={0}
+                      title={
+                        selectMode
+                          ? selectable
+                            ? `${item.title}\n点击选择/取消`
+                            : `${item.title}\n正在回复中，暂不能删除`
+                          : `${item.title}\n${item.messageCount} 条消息`
+                      }
+                      onClick={() => {
+                        if (selectMode) toggleItem(item.id)
+                        else onSelect(item.id)
+                      }}
+                      onKeyDown={(event) => {
+                        // 子输入框（改名）里的按键不触发整行选中
+                        if (editingId === item.id) return
+                        if (event.target !== event.currentTarget) return
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          if (selectMode) toggleItem(item.id)
+                          else onSelect(item.id)
+                        }
+                      }}
+                    >
+                      {selectMode ? (
+                        <span
+                          className={`conv-check${checked ? ' conv-check-on' : ''}`}
+                          aria-hidden="true"
+                        >
+                          {checked ? '✓' : ''}
+                        </span>
+                      ) : (
+                        <span
+                          className={`task-item-dot ${
+                            streaming.has(item.id)
+                              ? 'task-item-dot-running'
+                              : 'task-item-dot-done'
+                          }`}
+                        />
+                      )}
+                      {editingId === item.id ? (
+                        <input
+                          className="conv-rename-input"
+                          value={editingTitle}
+                          autoFocus
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) => setEditingTitle(event.target.value)}
+                          onKeyDown={(event) => {
+                            // 阻止冒泡到整行：Enter 只提交改名，不切换对话
+                            event.stopPropagation()
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              submitRename(item.id)
+                            }
+                            if (event.key === 'Escape') {
+                              setEditingTitle('')
+                              setEditingId(null)
+                            }
+                          }}
+                          onBlur={() => submitRename(item.id)}
+                        />
+                      ) : (
+                        <span className="task-item-text">{item.title}</span>
+                      )}
+                      <span className="task-item-time">
+                        {relativeTime(item.updatedAt || item.createdAt, now)}
+                      </span>
+                      {unread.has(item.id) ? (
+                        <span className="task-item-unread-dot" aria-label="有新回复" />
+                      ) : null}
+                      {selectMode ? null : (
+                        <span className="conv-item-actions">
+                          <button
+                            type="button"
+                            className="conv-item-action"
+                            title="重命名"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setEditingId(item.id)
+                              setEditingTitle(item.title)
+                            }}
+                          >
+                            ✎
+                          </button>
+                          <button
+                            type="button"
+                            className="conv-item-action"
+                            title="删除对话"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onDelete(item.id)
+                            }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })
         )}
       </div>
+      {selectMode ? (
+        <div className="conv-batch-bar">
+          <span className="conv-batch-count">已选 {selected.size} 项</span>
+          <div className="conv-batch-actions">
+            <button type="button" className="conv-batch-btn" onClick={toggleAll}>
+              {selected.size > 0 && selected.size === selectableIds.size ? '取消全选' : '全选'}
+            </button>
+            <button
+              type="button"
+              className="conv-batch-btn conv-batch-btn-danger"
+              disabled={selected.size === 0}
+              onClick={() => onDeleteMany([...selected])}
+            >
+              删除{selected.size > 0 ? `（${selected.size}）` : ''}
+            </button>
+            <button type="button" className="conv-batch-btn" onClick={exitSelectMode}>
+              完成
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div
         className="task-sidebar-resizer"
         role="separator"

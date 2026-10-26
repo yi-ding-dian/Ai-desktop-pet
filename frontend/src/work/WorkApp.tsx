@@ -471,6 +471,65 @@ export default function WorkApp(): ReactElement {
     [activateConversation, conversations, newConversation, requestHistory]
   )
 
+  // 批量删除（2026-10-26）：复用单条接口逐条串行删——后端对「正在回复中」的对话会拒绝，
+  // 串行而非并发：一次只发一个请求，避免几十个请求同时挤压后端/WS。
+  // 结果按条统计，失败项汇总提示，不让一条失败挡住其余删除。
+  const deleteConversations = useCallback(
+    async (ids: string[]): Promise<void> => {
+      if (ids.length === 0) return
+      if (!window.confirm(`删除选中的 ${ids.length} 个对话及全部消息？`)) return
+      const api = workBridge()
+      if (!api?.deleteConversation) return
+      const deleted = new Set<string>()
+      let failed = 0
+      for (const id of ids) {
+        try {
+          const result = await api.deleteConversation({ requestId: makeRequestId(), id })
+          if (result.ok) deleted.add(id)
+          else failed += 1
+        } catch {
+          failed += 1
+        }
+      }
+      if (deleted.size === 0) {
+        dispatch({
+          type: 'mirror',
+          event: {
+            kind: 'notice',
+            code: 'delete_failed',
+            message: '删除失败：选中的对话可能正在回复中～',
+            level: 'warn'
+          }
+        })
+        return
+      }
+      const remaining = conversations.filter((item) => !deleted.has(item.id))
+      setConversations(remaining)
+      if (activeConversationRef.current && deleted.has(activeConversationRef.current)) {
+        const next = remaining[0]?.id
+        if (next) {
+          activateConversation(next)
+          dispatch({ type: 'reset' })
+          await requestHistory(next)
+        } else {
+          newConversation()
+        }
+      }
+      if (failed > 0) {
+        dispatch({
+          type: 'mirror',
+          event: {
+            kind: 'notice',
+            code: 'delete_failed',
+            message: `已删除 ${deleted.size} 个，${failed} 个失败（可能正在回复中）～`,
+            level: 'warn'
+          }
+        })
+      }
+    },
+    [activateConversation, conversations, newConversation, requestHistory]
+  )
+
   // 订阅镜像 + 就绪握手 + 首次历史回填
   useEffect(() => {
     const api = workBridge()
@@ -963,6 +1022,7 @@ export default function WorkApp(): ReactElement {
             onSelect={(id) => void switchConversation(id)}
             onRename={(id, title) => void renameConversation(id, title)}
             onDelete={(id) => void deleteConversation(id)}
+            onDeleteMany={(ids) => void deleteConversations(ids)}
           />
           <div className="conv-main">
             <header className="task-head task-head-slim">

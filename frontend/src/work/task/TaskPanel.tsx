@@ -443,6 +443,25 @@ export default function TaskPanel({
     }
   }, [])
 
+  // 批量删除（2026-10-26，与对话左栏同款）：逐条调用现有接口，列表由主进程 pushTasks 刷新。
+  // 串行执行，避免几十个删除同时挤压主进程；失败的条数汇总提示。
+  const deleteTasks = useCallback(async (ids: string[]): Promise<void> => {
+    if (ids.length === 0) return
+    if (!window.confirm(`删除选中的 ${ids.length} 个任务？`)) return
+    const api = agentBridge()
+    if (!api) return
+    let failed = 0
+    for (const id of ids) {
+      try {
+        const result = await api.deleteTask(id)
+        if (!result.ok) failed += 1
+      } catch {
+        failed += 1
+      }
+    }
+    if (failed > 0) setError(`有 ${failed} 个任务删除失败`)
+  }, [])
+
   const markCopied = useCallback((id: string): void => {
     setCopiedId(id)
     window.setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 1500)
@@ -1012,6 +1031,7 @@ export default function TaskPanel({
         onExpand={expandSidebar}
         onSelect={(id) => void selectTask(id)}
         onContextMenu={(taskId, x, y) => setMenu({ kind: 'task', taskId, x, y })}
+        onDeleteMany={(ids) => void deleteTasks(ids)}
         onResizeStart={onSidebarResizeStart}
       />
 
