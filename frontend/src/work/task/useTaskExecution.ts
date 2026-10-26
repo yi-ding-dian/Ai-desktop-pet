@@ -11,7 +11,7 @@ import type {
   ExecutionMode,
   PickedFile
 } from '../../../electron/ipc/channels'
-import { attachmentKind } from '../message/AttachmentStrip'
+import { attachmentKind } from '../input/AttachmentStrip'
 import { agentBridge } from './agent-bridge'
 import { errorText } from './error-text'
 

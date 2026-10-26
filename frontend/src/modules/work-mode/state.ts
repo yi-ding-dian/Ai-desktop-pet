@@ -6,7 +6,7 @@
  * - App 据此隐藏宠物输入框、抑制对话回复气泡；
  * - 不表示窗口是否存在（存在性用于对话镜像，隐藏时仍需继续同步）。
  *
- * 放在独立文件是为了避免 `modules/work/index` → `pet/behavior` → `modules/work`
+ * 放在独立文件是为了避免 `modules/work-mode/index` → `pet/behavior` → `modules/work-mode`
  * 的循环依赖（与 teaching/state.ts 同因）。
  */
 

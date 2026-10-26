@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs'
 import { relative } from 'node:path'
 import { Type } from 'typebox'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { protectedPathReason } from '../../system/path-safety'
+import { protectedPathReason } from '../../safety/path-safety'
 import { isInsideRoot, resolveDeletionTarget } from '../workspace'
 import { ok, type ToolContext } from './common'
 

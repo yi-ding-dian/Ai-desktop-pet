@@ -21,7 +21,7 @@ import { playPetReaction, setPetState } from '../controller'
 // 教学模式本地镜像（P5 §7.5；放在零依赖的 state.ts，避免 pet ↔ teaching 循环依赖）
 import { isTeachingMode } from '../../teaching/state'
 // 工作模式本地镜像（2026-10-18；同样零依赖，避免 pet ↔ work 循环依赖）
-import { isWorkModeActive } from '../../work/state'
+import { isWorkModeActive } from '../../work-mode/state'
 // 贴边吸附保持（2026-10-20）：吸附后不执行自主行为，避免被 walk 带走
 import { isPetEdgeSnapLocked } from '../edge-state'
 

@@ -32,7 +32,7 @@ import { sendUserMessage } from '../teaching'
 import {
   isForegroundSession,
   setActiveConversationId
-} from '../work/active-conversation'
+} from '../work-mode/active-conversation'
 import { notifyUserMessage } from './name-onboarding'
 import { clearChatNotice, showChatNotice, subscribeChatNotice, type ChatNotice } from './notice'
 import { speakLocalNotice } from './speech'

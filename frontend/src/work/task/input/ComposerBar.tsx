@@ -3,13 +3,13 @@ import { useRef, type DragEvent as ReactDragEvent, type ReactElement } from 'rea
 import type { PickedFile } from '../../../../electron/ipc/channels'
 import { Textarea } from '../../../shared/ui/components/Textarea'
 import { clipboardFileList } from '../../../modules/chat/file-support'
-import AttachmentStrip from '../../message/AttachmentStrip'
+import AttachmentStrip from '../../input/AttachmentStrip'
 import {
   ComposerHistoryButton,
   ComposerHistoryPopover,
   useComposerHistory
-} from '../../message/ComposerHistory'
-import type { ComposerHistoryItem } from '../../message/chat-history'
+} from '../../input/ComposerHistory'
+import type { ComposerHistoryItem } from '../../input/chat-history'
 
 function PaperclipIcon(): ReactElement {
   return (

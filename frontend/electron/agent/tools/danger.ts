@@ -39,7 +39,7 @@ const DANGEROUS_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\b(powershell|pwsh)\b.*\s-(e|enc|encodedcommand)\b/i, label: '编码命令（无法审查内容）' }
 ]
 
-/** 受保护路径的特征串（与 system/path-safety.ts 的口径一致，命中后再看有没有写/删动作） */
+/** 受保护路径的特征串（与 safety/path-safety.ts 的口径一致，命中后再看有没有写/删动作） */
 const PROTECTED_HINT = new RegExp(
   [
     'system32',

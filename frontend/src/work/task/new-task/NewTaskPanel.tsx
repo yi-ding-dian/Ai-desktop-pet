@@ -1,7 +1,7 @@
 /** 新任务页：任务输入、附件、工作区、执行模式与开始按钮。 */
 import type { DragEvent as ReactDragEvent, ReactElement } from 'react'
 import type { ExecutionMode, PickedFile } from '../../../../electron/ipc/channels'
-import AttachmentStrip from '../../message/AttachmentStrip'
+import AttachmentStrip from '../../input/AttachmentStrip'
 import { clipboardFileList } from '../../../modules/chat/file-support'
 import TaskModeSelector, { MODE_HINTS } from './TaskModeSelector'
 

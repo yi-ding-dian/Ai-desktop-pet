@@ -8,7 +8,7 @@
  *   亲手添加）免确认，否则弹宠物确认气泡，用户点「运行」才 spawn；
  * - 永远 `shell:false`、参数数组；每 sender 每分钟 10 次限流。
  *
- * 与 `system/path-safety.ts` 的"打开文件拒绝可执行"语义相反，二者不共用判定。
+ * 与 `safety/path-safety.ts` 的"打开文件拒绝可执行"语义相反，二者不共用判定。
  */
 
 import { app, ipcMain, type BrowserWindow, type WebContents } from 'electron'

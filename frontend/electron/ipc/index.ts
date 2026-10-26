@@ -38,7 +38,7 @@ import {
   protectedPathReason,
   resolveExistingPath,
   type ExtraProtectedRoot
-} from '../system/path-safety'
+} from '../safety/path-safety'
 import {
   formatBytes,
   measureCleanTargets,
@@ -46,7 +46,7 @@ import {
   restoreStaged,
   stageCleanTarget,
   type StagedDirectory
-} from '../system/clean-paths'
+} from '../safety/clean-paths'
 import type { Point, Rect, WindowCapability } from '../window'
 
 /** 窗口几何推送的 debounce 时长（ms）：拖拽/缓动期间大量 move 事件只推一次最终值 */

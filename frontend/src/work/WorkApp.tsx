@@ -2,7 +2,7 @@
  * 工作模式窗口（2026-10-18）：完整对话记录 + 右侧消息导航 + 单轮开关。
  *
  * 数据链路：宠物窗持有唯一 WS；本窗口的发送/历史/打断经主进程中继，
- * 对话镜像由宠物窗回报（见 electron/work + src/modules/work）。
+ * 对话镜像由宠物窗回报（见 electron/work + src/modules/work-mode）。
  * 本组件只维护展示状态，不直接连 WS。
  */
 import {
@@ -43,8 +43,8 @@ import { copyTextToClipboard, reasonText } from './conversation/format'
 import MessageNavigator from './MessageNavigator'
 import TaskPanel from './task/TaskPanel'
 import type { NavigatorAnchor } from './navigator'
-import { buildChatHistory } from './message/chat-history'
-import type { ComposerHistoryItem } from './message/chat-history'
+import { buildChatHistory } from './input/chat-history'
+import type { ComposerHistoryItem } from './input/chat-history'
 import {
   EMPTY_WORK_STATE,
   navigatorMessages,

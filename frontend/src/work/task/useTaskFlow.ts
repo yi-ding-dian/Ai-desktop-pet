@@ -8,10 +8,10 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouse
 import { getPetBridge } from '../../shared/pet-bridge'
 import { looksLikeAbsolutePath } from '../../modules/chat/file-support'
 import type { AgentStep } from '../../../electron/ipc/channels'
-import type { ComposerHistoryItem } from '../message/chat-history'
+import type { ComposerHistoryItem } from '../input/chat-history'
 import { copyText } from '../shared/clipboard'
 import { useLinkHover } from '../conversation/useLinkHover'
-import type { HoverCardState } from './flow/HoverCard'
+import type { HoverCardState } from './agent-flow/HoverCard'
 
 type LinkHoverControls = ReturnType<typeof useLinkHover>
 

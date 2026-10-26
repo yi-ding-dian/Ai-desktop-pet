@@ -30,8 +30,8 @@ import {
   ComposerHistoryButton,
   ComposerHistoryPopover,
   useComposerHistory
-} from './message/ComposerHistory'
-import type { ComposerHistoryItem } from './message/chat-history'
+} from './input/ComposerHistory'
+import type { ComposerHistoryItem } from './input/chat-history'
 import type { WorkNotice } from './store'
 
 export interface ComposerProps {

@@ -13,7 +13,7 @@ import {
   looksLikeAbsolutePath,
   unsupportedReason
 } from '../../modules/chat/file-support'
-import { attachmentKind } from '../message/AttachmentStrip'
+import { attachmentKind } from '../input/AttachmentStrip'
 import { agentBridge } from './agent-bridge'
 
 export interface TaskAttachmentControls {

@@ -44,7 +44,7 @@ import { buildPrompt, normalizeAttachments } from './attachments'
 import { AgentEventTranslator } from './events'
 import { fetchLlmKey } from './llm-key'
 import { callInternal, callInternalGet } from './internal-api'
-import { deletePastedImages } from '../files'
+import { deletePastedImages } from '../file-picker'
 import { buildModeInstruction } from './prompt'
 import {
   APPROVAL_TIMEOUT_MS,

@@ -9,10 +9,10 @@
  * - 计划：写/改/删/命令一律拒绝（只读）。
  *
  * 系统目录/盘符根/应用目录等受保护路径 **所有模式永久拒绝**，
- * 复用 system/path-safety.ts 的 protectedPathReason。
+ * 复用 safety/path-safety.ts 的 protectedPathReason。
  */
 import { relative } from 'node:path'
-import { protectedPathReason } from '../system/path-safety'
+import { protectedPathReason } from '../safety/path-safety'
 import { resolveDeletionTarget, resolveMutationTarget } from './workspace'
 import { classifyBashCommand } from './tools/danger'
 import type { ExecutionMode } from './types'

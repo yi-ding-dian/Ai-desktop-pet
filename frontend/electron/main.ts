@@ -27,7 +27,7 @@ import { destroySettings, initSettings, onPetScaleChanged } from './settings'
 import { destroyBubble, initBubble } from './bubble'
 import { destroyReminderList, initReminderList } from './reminder-list'
 import { destroyWork, initWork, workWindowActive, workWindowMaximized } from './work'
-import { destroyFileSelection, initFileSelection } from './files'
+import { destroyFileSelection, initFileSelection } from './file-picker'
 import { destroyLauncher, initLauncher } from './launcher'
 import { applyWindowsAppIdentity } from './platform'
 import {

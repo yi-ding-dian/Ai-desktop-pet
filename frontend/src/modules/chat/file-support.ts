@@ -3,7 +3,7 @@
  *
  * 宠物胶囊与工作模式窗口共用：只按扩展名/常见无扩展名文件做「别把明显不支持
  * 的类型加进列表」的前置判断；真正的正文校验仍由后端 reader 完成。
- * 修改时同步 electron/files/index.ts 的 TEXT_EXTENSIONS 与后端 reader。
+ * 修改时同步 electron/file-picker/index.ts 的 TEXT_EXTENSIONS 与后端 reader。
  */
 import { getPetBridge } from '../../shared/pet-bridge'
 import type { PickedFile } from '../../../electron/ipc/channels'
@@ -12,7 +12,7 @@ import type { PickedFile } from '../../../electron/ipc/channels'
 export const MAX_ATTACHMENTS = 3
 
 /**
- * 前端可快速判定的支持类型（与 electron/files 的筛选、后端 reader 对齐）：
+ * 前端可快速判定的支持类型（与 electron/file-picker 的筛选、后端 reader 对齐）：
  * 后端仍会做内容级校验；这里只负责"上传时就别把明显不支持的类型加进列表"。
  */
 const TEXT_EXTENSIONS = new Set([

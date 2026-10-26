@@ -59,8 +59,8 @@ import {
   type TeachingBubbleItem
 } from './modules/teaching'
 import { setupToolExecutor } from './modules/tools'
-import { setupWorkPetSide } from './modules/work'
-import { isWorkModeActive, subscribeWorkActive } from './modules/work/state'
+import { setupWorkPetSide } from './modules/work-mode'
+import { isWorkModeActive, subscribeWorkActive } from './modules/work-mode/state'
 import { setupReminders } from './modules/reminders'
 import {
   setupSettingsGuidePetSide,
