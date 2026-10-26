@@ -4,11 +4,17 @@
  * 数据链路：宠物窗持有唯一 WS；本窗口的发送/历史/打断经主进程中继，
  * 对话镜像由宠物窗回报（见 electron/work + src/modules/work-mode）。
  * 本组件只维护展示状态，不直接连 WS。
+ *
+ * 体量说明（2026-10-26，按《代码组织规范》审视过）：
+ * 已拆出会话管理（sessions/）、消息操作与发送（messages/）、滚动导航（scroll/）、
+ * 浏览器标签（browser/）。剩余约 640 行主要是**工作窗生命周期编排**：
+ * 镜像事件订阅、后台快照路由、启动握手、持久化——这些 effect 与状态机深度耦合，
+ * 拆出去需要把 10+ 个 ref/state 作为参数传入，反而更难追踪；职责仍是单一的
+ * 「把主进程事件路由进本地状态机」，故保留并在此说明。
  */
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -18,7 +24,6 @@ import {
 } from 'react'
 import type {
   AgentTaskDraftPayload,
-  PickedFile,
   WorkBrowserAction,
   WorkBrowserState,
   WorkConversationSummary,
@@ -36,13 +41,12 @@ import {
 import Composer from './Composer'
 import BrowserBar from './conversation/BrowserBar'
 import ConversationSidebar from './conversation/ConversationSidebar'
-import MessageContextMenu, { type ContextMenuState } from './conversation/MessageContextMenu'
+import MessageContextMenu from './conversation/MessageContextMenu'
 import MessageList from './conversation/MessageList'
 import WindowTabs from './conversation/WindowTabs'
-import { copyTextToClipboard, reasonText } from './conversation/format'
+import { copyTextToClipboard } from './conversation/format'
 import MessageNavigator from './MessageNavigator'
 import TaskPanel from './task/TaskPanel'
-import type { NavigatorAnchor } from './navigator'
 import { buildChatHistory } from './input/chat-history'
 import type { ComposerHistoryItem } from './input/chat-history'
 import {
@@ -53,26 +57,15 @@ import {
   type WorkState
 } from './store'
 
-/** 惰性取 work 段：旧 preload（主进程未重启）时返回 undefined，全部调用静默降级 */
-function workBridge(): ReturnType<typeof getPetBridge>['work'] | undefined {
-  try {
-    return getPetBridge().work
-  } catch {
-    return undefined
-  }
-}
+import { workBridge } from './work-bridge'
+import { useWorkScroll } from './conversation/scroll/useWorkScroll'
+import { useWorkMessages } from './conversation/messages/useWorkMessages'
+import { useWorkConversations } from './conversation/sessions/useWorkConversations'
+import { useWorkSend } from './conversation/messages/useWorkSend'
+import { useWorkBrowserTabs } from './conversation/browser/useWorkBrowserTabs'
 
-function makeRequestId(): string {
-  const uuid = globalThis.crypto?.randomUUID?.()
-  return uuid ?? `w_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
-}
 
-const EMPTY_BROWSER_STATE: WorkBrowserState = {
-  tabs: [],
-  activeId: null,
-  canGoBack: false,
-  canGoForward: false
-}
+
 
 export default function WorkApp(): ReactElement {
   const [state, dispatch] = useReducer(workReducer, EMPTY_WORK_STATE)
@@ -84,21 +77,23 @@ export default function WorkApp(): ReactElement {
     }
   })
 
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const messageRefs = useRef(new Map<string, HTMLElement>())
   const historyLoading = useRef(false)
-  const nearBottom = useRef(true)
-  const metricsKey = useRef('')
 
-  const [scrollTop, setScrollTop] = useState(0)
-  const [anchors, setAnchors] = useState<NavigatorAnchor[]>([])
-  const [contentHeight, setContentHeight] = useState(0)
-  const [viewportHeight, setViewportHeight] = useState(0)
-  const [flashId, setFlashId] = useState<string | null>(null)
-  const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [browser, setBrowser] = useState<WorkBrowserState>(EMPTY_BROWSER_STATE)
-  const [tabsMenuOpen, setTabsMenuOpen] = useState(false)
+  /** 内置浏览器标签（2026-10-26 抽到 useWorkBrowserTabs） */
+  const {
+    browser,
+    browsing,
+    activeTab,
+    visibleTabs,
+    hiddenTabs,
+    tabsMenuOpen,
+    setTabsMenuOpen,
+    open: browserOpen,
+    close: browserClose,
+    activate: browserActivate,
+    action: browserAction,
+    handleContentClick: handleMarkdownClick
+  } = useWorkBrowserTabs()
   /** 任务标签是否在前（2026-10-23）：与对话/网页标签互斥，对话模式行为完全不变 */
   const [taskOpen, setTaskOpen] = useState(false)
   /** 通知点击要聚焦的任务（传给 TaskPanel 选中后清空） */
@@ -119,6 +114,16 @@ export default function WorkApp(): ReactElement {
   const [activeConversationId, setActiveConversationId] = useState('')
   const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set())
   const activeConversationRef = useRef('')
+  /** 消息操作与右键菜单（2026-10-26 抽到 useWorkMessages） */
+  const {
+    copiedId,
+    contextMenu,
+    setContextMenu,
+    copyMessage,
+    copySelection,
+    deleteMessage,
+    openContextMenu
+  } = useWorkMessages({ activeConversationRef })
   const stateRef = useRef(state)
   /** 切走时仍在流式的对话快照（后台继续收事件；支持多个对话同时回复） */
   const backgroundStatesRef = useRef<Map<string, WorkState>>(new Map())
@@ -259,6 +264,54 @@ export default function WorkApp(): ReactElement {
 
   const userMessages = useMemo(() => navigatorMessages(state.messages), [state.messages])
   const chatHistory = useMemo(() => buildChatHistory(state.messages), [state.messages])
+  /** 滚动/测量/导航/历史定位（2026-10-26 抽到 useWorkScroll） */
+  const {
+    scrollRef,
+    messageRefs,
+    scrollTop,
+    anchors,
+    contentHeight,
+    viewportHeight,
+    flashId,
+    handleScroll,
+    handleJump,
+    locateHistoryItem,
+    stickToBottom
+  } = useWorkScroll({ messages: state.messages, userMessages })
+
+  /** 会话管理：拉历史/列表、切换/新建/改名/删除（2026-10-26 抽到 useWorkConversations） */
+  const {
+    requestHistory,
+    requestConversations,
+    refreshConversations,
+    activateConversation,
+    stashActiveState,
+    switchConversation,
+    newConversation,
+    renameConversation,
+    deleteConversation,
+    deleteConversations
+  } = useWorkConversations({
+    dispatch,
+    stateRef,
+    backgroundStatesRef,
+    activeConversationRef,
+    historyLoading,
+    conversations,
+    setConversations,
+    setActiveConversationId,
+    setUnreadIds,
+    stickToBottom
+  })
+
+  /** 发送与打断（2026-10-26 抽到 useWorkSend） */
+  const { handleSend, handleInterrupt } = useWorkSend({
+    search,
+    streamingIdsRef,
+    activeConversationRef,
+    dispatch,
+    stickToBottom
+  })
   const previews = useMemo(() => {
     const map: Record<string, string> = {}
     for (const item of userMessages) {
@@ -271,264 +324,6 @@ export default function WorkApp(): ReactElement {
   const activeConversation = conversations.find((item) => item.id === activeConversationId)
   const activeTitle = activeConversation?.title ?? '新对话'
   const draftConversation = activeConversation === undefined
-
-  const requestHistory = useCallback(async (sessionId?: string): Promise<void> => {
-    const api = workBridge()
-    if (!api?.requestHistory) {
-      dispatch({
-        type: 'mirror',
-        event: {
-          kind: 'notice',
-          code: 'work_unavailable',
-          message: '当前版本不支持工作模式，请重启应用后再试～',
-          level: 'warn'
-        }
-      })
-      return
-    }
-    historyLoading.current = true
-    try {
-      // 后端连接/宠物面接线可能晚于窗口打开：短重试，避免刚启动时显示空会话
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const payload = await api.requestHistory({
-          requestId: makeRequestId(),
-          limit: 200,
-          ...(sessionId ? { sessionId } : {})
-        })
-        if (payload.ok) {
-          // 返回的会话与请求不一致（切换竞态）时丢弃
-          if (sessionId && payload.sessionId && payload.sessionId !== sessionId) return
-          if (sessionId && sessionId !== activeConversationRef.current) return
-          dispatch({
-            type: 'history',
-            messages: payload.messages,
-            bufferedEvents: payload.bufferedEvents,
-            live: payload.live
-          })
-          return
-        }
-        if (payload.reason === 'pet-unavailable' || payload.reason === 'bad-request') {
-          break
-        }
-        if (attempt < 2) {
-          await new Promise((resolve) => window.setTimeout(resolve, 400))
-        }
-      }
-      dispatch({
-        type: 'mirror',
-        event: {
-          kind: 'notice',
-          code: 'history_failed',
-          message: '历史记录没拉下来，稍后再试～',
-          level: 'warn'
-        }
-      })
-    } catch (err) {
-      console.warn('[work] 拉取历史失败：', err)
-    } finally {
-      historyLoading.current = false
-    }
-  }, [])
-
-  /** 请求对话列表（失败返回 null，交给调用方决定是否保留旧列表） */
-  const requestConversations = useCallback(async (): Promise<WorkConversationSummary[] | null> => {
-    const api = workBridge()
-    if (!api?.requestConversations) return null
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        const payload = await api.requestConversations({ requestId: makeRequestId() })
-        if (payload.ok) return payload.items
-        if (payload.reason === 'pet-unavailable' || payload.reason === 'bad-request') break
-      } catch (err) {
-        console.warn('[work] 拉取对话列表失败：', err)
-      }
-      if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 400))
-    }
-    return null
-  }, [])
-
-  /** 刷新列表但不改变当前对话 */
-  const refreshConversations = useCallback(async (): Promise<void> => {
-    const items = await requestConversations()
-    if (items !== null) setConversations(items)
-  }, [requestConversations])
-
-  const activateConversation = useCallback((id: string): void => {
-    activeConversationRef.current = id
-    setActiveConversationId(id)
-    try {
-      localStorage.setItem('pet.work.conversation', id)
-    } catch {
-      /* 忽略 */
-    }
-    setUnreadIds((prev) => {
-      if (!prev.has(id)) return prev
-      const next = new Set(prev)
-      next.delete(id)
-      return next
-    })
-    // 告诉主进程/后端谁在前台（宠物气泡/语音/表情只跟它走）
-    workBridge()?.focusConversation?.(id)
-  }, [])
-
-  /** 把当前对话的界面状态存进后台快照（有内容就存，避免快速切换丢用户消息） */
-  const stashActiveState = useCallback((): void => {
-    const id = activeConversationRef.current
-    if (!id) return
-    const current = stateRef.current
-    if (current.messages.length === 0 && !current.streamingId) return
-    const cache = backgroundStatesRef.current
-    cache.delete(id)
-    cache.set(id, current)
-    // 只保留最近 8 个快照，避免长时间使用后无限增长
-    while (cache.size > 8) {
-      const oldest = cache.keys().next().value
-      if (oldest === undefined) break
-      cache.delete(oldest)
-    }
-  }, [])
-
-  /** 切换对话：优先用后台流式快照，否则重置并拉历史 */
-  const switchConversation = useCallback(
-    async (id: string): Promise<void> => {
-      if (!id || id === activeConversationRef.current) return
-      stashActiveState()
-      activateConversation(id)
-      const background = backgroundStatesRef.current.get(id)
-      if (background) {
-        dispatch({ type: 'restore', state: background })
-        backgroundStatesRef.current.delete(id)
-        return
-      }
-      dispatch({ type: 'reset' })
-      await requestHistory(id)
-    },
-    [activateConversation, requestHistory, stashActiveState]
-  )
-
-  /** 新建对话（草稿，发第一条消息时后端落库） */
-  const newConversation = useCallback((): void => {
-    stashActiveState()
-    const id = globalThis.crypto?.randomUUID?.() ?? `c_${Date.now().toString(36)}`
-    activateConversation(id)
-    dispatch({ type: 'reset' })
-    nearBottom.current = true
-  }, [activateConversation, stashActiveState])
-
-  const renameConversation = useCallback(
-    async (id: string, title: string): Promise<void> => {
-      const api = workBridge()
-      if (!api?.renameConversation) return
-      const result = await api.renameConversation({ requestId: makeRequestId(), id, title })
-      if (!result.ok) {
-        dispatch({
-          type: 'mirror',
-          event: {
-            kind: 'notice',
-            code: 'rename_failed',
-            message: '改名没成功，稍后再试～',
-            level: 'warn'
-          }
-        })
-        return
-      }
-      void refreshConversations()
-    },
-    [refreshConversations]
-  )
-
-  const deleteConversation = useCallback(
-    async (id: string): Promise<void> => {
-      if (!window.confirm('删除这个对话及全部消息？')) return
-      const api = workBridge()
-      if (!api?.deleteConversation) return
-      const result = await api.deleteConversation({ requestId: makeRequestId(), id })
-      if (!result.ok) {
-        dispatch({
-          type: 'mirror',
-          event: {
-            kind: 'notice',
-            code: 'delete_failed',
-            message: '删除失败：对话可能正在回复中～',
-            level: 'warn'
-          }
-        })
-        return
-      }
-      const remaining = conversations.filter((item) => item.id !== id)
-      setConversations(remaining)
-      if (id === activeConversationRef.current) {
-        const next = remaining[0]?.id
-        if (next) {
-          activateConversation(next)
-          dispatch({ type: 'reset' })
-          await requestHistory(next)
-        } else {
-          newConversation()
-        }
-      }
-    },
-    [activateConversation, conversations, newConversation, requestHistory]
-  )
-
-  // 批量删除（2026-10-26）：复用单条接口逐条串行删——后端对「正在回复中」的对话会拒绝，
-  // 串行而非并发：一次只发一个请求，避免几十个请求同时挤压后端/WS。
-  // 结果按条统计，失败项汇总提示，不让一条失败挡住其余删除。
-  const deleteConversations = useCallback(
-    async (ids: string[]): Promise<void> => {
-      if (ids.length === 0) return
-      if (!window.confirm(`删除选中的 ${ids.length} 个对话及全部消息？`)) return
-      const api = workBridge()
-      if (!api?.deleteConversation) return
-      const deleted = new Set<string>()
-      let failed = 0
-      for (const id of ids) {
-        try {
-          const result = await api.deleteConversation({ requestId: makeRequestId(), id })
-          if (result.ok) deleted.add(id)
-          else failed += 1
-        } catch {
-          failed += 1
-        }
-      }
-      if (deleted.size === 0) {
-        dispatch({
-          type: 'mirror',
-          event: {
-            kind: 'notice',
-            code: 'delete_failed',
-            message: '删除失败：选中的对话可能正在回复中～',
-            level: 'warn'
-          }
-        })
-        return
-      }
-      const remaining = conversations.filter((item) => !deleted.has(item.id))
-      setConversations(remaining)
-      if (activeConversationRef.current && deleted.has(activeConversationRef.current)) {
-        const next = remaining[0]?.id
-        if (next) {
-          activateConversation(next)
-          dispatch({ type: 'reset' })
-          await requestHistory(next)
-        } else {
-          newConversation()
-        }
-      }
-      if (failed > 0) {
-        dispatch({
-          type: 'mirror',
-          event: {
-            kind: 'notice',
-            code: 'delete_failed',
-            message: `已删除 ${deleted.size} 个，${failed} 个失败（可能正在回复中）～`,
-            level: 'warn'
-          }
-        })
-      }
-    },
-    [activateConversation, conversations, newConversation, requestHistory]
-  )
 
   // 订阅镜像 + 就绪握手 + 首次历史回填
   useEffect(() => {
@@ -565,7 +360,6 @@ export default function WorkApp(): ReactElement {
       dispatch({ type: 'reset' })
       void refreshConversations().then(() => requestHistory(activeConversationRef.current))
     })
-    const offBrowser = api.onBrowserState?.((next) => setBrowser(next))
     api.ready()
 
     const boot = async (): Promise<void> => {
@@ -596,7 +390,6 @@ export default function WorkApp(): ReactElement {
     return () => {
       offEvent()
       offPetReady()
-      offBrowser?.()
     }
   }, [
     activateConversation,
@@ -622,281 +415,6 @@ export default function WorkApp(): ReactElement {
     }
   }, [search])
 
-  /** 重新测量滚动高度、导航锚点与当前位置 */
-  const measure = useCallback((): void => {
-    const element = scrollRef.current
-    if (element === null) return
-    const nextAnchors: NavigatorAnchor[] = []
-    const containerTop = element.getBoundingClientRect().top
-    for (const item of userMessages) {
-      const node = messageRefs.current.get(item.id)
-      if (node === undefined) continue
-      nextAnchors.push({
-        id: item.id,
-        offsetTop: node.getBoundingClientRect().top - containerTop + element.scrollTop,
-        height: node.getBoundingClientRect().height
-      })
-    }
-    const top = element.scrollTop
-    const height = element.scrollHeight
-    const viewport = element.clientHeight
-    const key = `${top}|${height}|${viewport}|${nextAnchors.map((a) => `${a.id}:${Math.round(a.offsetTop)}`).join(',')}`
-    if (key === metricsKey.current) return
-    metricsKey.current = key
-    setScrollTop(top)
-    setContentHeight(height)
-    setViewportHeight(viewport)
-    setAnchors(nextAnchors)
-  }, [userMessages])
-
-  // 消息变化/布局变化后测量（下一帧，等 DOM 完成排版）
-  useLayoutEffect(() => {
-    const frame = window.requestAnimationFrame(measure)
-    return () => window.cancelAnimationFrame(frame)
-  }, [state.messages, measure])
-
-  // 新消息：用户停在底部附近时自动跟随
-  useLayoutEffect(() => {
-    const element = scrollRef.current
-    if (element === null) return
-    if (!nearBottom.current) return
-    element.scrollTop = element.scrollHeight
-  }, [state.messages])
-
-  const handleScroll = useCallback((): void => {
-    const element = scrollRef.current
-    if (element === null) return
-    nearBottom.current =
-      element.scrollHeight - element.scrollTop - element.clientHeight < 80
-    measure()
-  }, [measure])
-
-  const handleSend = useCallback(
-    async (text: string, files: PickedFile[]): Promise<boolean> => {
-      const api = workBridge()
-      if (!api?.requestSend) {
-        dispatch({
-          type: 'mirror',
-          event: {
-            kind: 'notice',
-            code: 'work_unavailable',
-            message: '当前版本不支持工作模式，请重启应用后再试～',
-            level: 'warn'
-          }
-        })
-        return false
-      }
-      if (streamingIdsRef.current.has(activeConversationRef.current)) {
-        dispatch({
-          type: 'mirror',
-          event: {
-            kind: 'notice',
-            code: 'busy_conversation',
-            message: '这个对话正在回复中，等它结束后再发～',
-            level: 'warn'
-          }
-        })
-        return false
-      }
-      const attachments = files.map((file) => ({ path: file.path, name: file.name }))
-      try {
-        const result = await api.requestSend({
-          requestId: makeRequestId(),
-          text,
-          attachments,
-          options: { search },
-          sessionId: activeConversationRef.current || undefined
-        })
-        if (!result.ok) {
-          dispatch({
-            type: 'mirror',
-            event: {
-              kind: 'notice',
-              code: 'send_failed',
-              message: reasonText(result.reason),
-              level: 'warn'
-            }
-          })
-          return false
-        }
-        nearBottom.current = true
-        return true
-      } catch (err) {
-        console.warn('[work] 发送失败：', err)
-        dispatch({
-          type: 'mirror',
-          event: {
-            kind: 'notice',
-            code: 'send_failed',
-            message: reasonText(),
-            level: 'warn'
-          }
-        })
-        return false
-      }
-    },
-    [search]
-  )
-
-  const handleInterrupt = useCallback((): void => {
-    workBridge()?.interrupt(activeConversationRef.current || undefined)
-  }, [])
-
-  const scrollToMessage = useCallback(
-    (id: string, block: ScrollLogicalPosition = 'start'): void => {
-      const node = messageRefs.current.get(id)
-      if (node === undefined) return
-      node.scrollIntoView({ behavior: 'smooth', block })
-      setFlashId(id)
-      window.setTimeout(() => setFlashId((current) => (current === id ? null : current)), 700)
-    },
-    []
-  )
-
-  const handleJump = useCallback(
-    (id: string): void => {
-      scrollToMessage(id)
-    },
-    [scrollToMessage]
-  )
-
-  // 历史时间点击：居中显示，避免目标贴视口边缘被裁掉
-  const locateChatHistoryItem = useCallback(
-    (item: ComposerHistoryItem): void => {
-      scrollToMessage(item.id, 'center')
-    },
-    [scrollToMessage]
-  )
-
-  const markCopied = useCallback((id: string): void => {
-    setCopiedId(id)
-    window.setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 1500)
-  }, [])
-
-  /** 复制整条：助手复制 Markdown 源文，用户复制纯文本 */
-  const copyMessage = useCallback(
-    async (message: WorkMessage): Promise<void> => {
-      if (await copyTextToClipboard(message.text)) markCopied(message.id)
-    },
-    [markCopied]
-  )
-
-  /** 复制选中文本（右键时捕获，避免菜单点击后选区丢失） */
-  const copySelection = useCallback(
-    async (message: WorkMessage, selection: string): Promise<void> => {
-      if (await copyTextToClipboard(selection)) markCopied(message.id)
-    },
-    [markCopied]
-  )
-
-  const deleteMessage = useCallback(
-    (message: WorkMessage): void => {
-      if (message.dbId === undefined) return
-      workBridge()?.deleteMessage?.({
-        dbId: message.dbId,
-        sessionId: activeConversationRef.current || undefined
-      })
-    },
-    []
-  )
-
-  const openContextMenu = useCallback(
-    (event: ReactMouseEvent, message: WorkMessage): void => {
-      event.preventDefault()
-      const selection = window.getSelection()?.toString() ?? ''
-      setContextMenu({
-        x: event.clientX,
-        y: event.clientY,
-        messageId: message.id,
-        selection
-      })
-    },
-    []
-  )
-
-  // 右键菜单：点击空白 / Esc / 滚动即关闭
-  useEffect(() => {
-    if (contextMenu === null) return
-    const close = (): void => setContextMenu(null)
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', onKeyDown)
-    window.addEventListener('scroll', close, true)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('scroll', close, true)
-    }
-  }, [contextMenu])
-
-  // 标签溢出菜单：点击空白 / Esc 关闭
-  useEffect(() => {
-    if (!tabsMenuOpen) return
-    const close = (): void => setTabsMenuOpen(false)
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [tabsMenuOpen])
-
-  // +N 下拉菜单是 DOM，原生网页视图永远在 DOM 之上：菜单打开时临时隐藏视图
-  useEffect(() => {
-    workBridge()?.browserOverlay?.(tabsMenuOpen)
-  }, [tabsMenuOpen])
-
-  const browsing = browser.activeId !== null
-  const activeTab = browser.tabs.find((tab) => tab.id === browser.activeId)
-  const visibleTabs = useMemo(() => {
-    const limit = 3
-    const visible = browser.tabs.slice(0, limit)
-    const active = browser.tabs.find((tab) => tab.id === browser.activeId)
-    if (active !== undefined && !visible.some((tab) => tab.id === active.id)) {
-      if (visible.length >= limit) visible[limit - 1] = active
-      else visible.push(active)
-    }
-    return visible
-  }, [browser.tabs, browser.activeId])
-  const hiddenTabs = browser.tabs.filter(
-    (tab) => !visibleTabs.some((item) => item.id === tab.id)
-  )
-
-  const browserOpen = useCallback((url: string, label?: string): void => {
-    workBridge()?.browserOpen?.({ url, label })
-  }, [])
-
-  const browserClose = useCallback((id: string): void => {
-    workBridge()?.browserClose?.(id)
-  }, [])
-
-  const browserActivate = useCallback((id: string | null): void => {
-    workBridge()?.browserActivate?.(id)
-  }, [])
-
-  const browserAction = useCallback((action: WorkBrowserAction): void => {
-    workBridge()?.browserAction?.(action)
-  }, [])
-
-  /** 正文链接点击 → 内嵌浏览器新标签；bridge 不可用时保持默认（主进程会走系统浏览器） */
-  const handleMarkdownClick = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>): void => {
-      const target = event.target as HTMLElement
-      const anchor = target.closest('a')
-      if (anchor === null) return
-      const href = anchor.href
-      if (!/^https?:\/\//i.test(href)) return
-      if (!workBridge()?.browserOpen) return
-      event.preventDefault()
-      browserOpen(href, anchor.getAttribute('title') ?? undefined)
-    },
-    [browserOpen]
-  )
 
   const setMessageRef = useCallback(
     (id: string) =>
@@ -1076,7 +594,7 @@ export default function WorkApp(): ReactElement {
               onDismissNotice={() => dispatch({ type: 'clear-notice' })}
               history={chatHistory}
               scopeKey={`${activeConversationId ?? 'draft'}:${taskOpen ? 'task' : 'chat'}`}
-              onLocateHistory={locateChatHistoryItem}
+              onLocateHistory={locateHistoryItem}
             />
           </div>
         </div>
