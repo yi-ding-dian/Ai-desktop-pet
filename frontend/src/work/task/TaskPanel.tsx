@@ -4,7 +4,7 @@
  * 布局：左侧任务列表 + 右侧消息流（我右 / 模型左），底部输入条。
  * 数据：任务状态来自主进程 agent 域（多 Session），面板挂载时补拉，之后靠推送刷新。
  *
- * 展示细节拆在同目录：TaskList（左栏）/ AgentFlow（消息流）/ TaskHero（新任务）
+ * 展示细节拆在同目录：TaskList（左栏）/ AgentFlow（消息流）/ NewTaskPanel（新任务）
  * / ComposerBar（输入条）/ HoverCard（悬浮预览）。
  */
 import {
@@ -14,63 +14,37 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
   type ReactElement
 } from 'react'
 import type {
-  AgentAttachment,
-  AgentLlmStatus,
   AgentState,
-  AgentStep,
   AgentTaskDraftPayload,
   AgentTaskSummary,
-  ExecutionMode,
-  PickedFile
+  ExecutionMode
 } from '../../../electron/ipc/channels'
-import { getPetBridge } from '../../shared/pet-bridge'
-import {
-  MAX_ATTACHMENTS,
-  filesBridge,
-  filesFromFileList,
-  looksLikeAbsolutePath,
-  unsupportedReason
-} from '../../modules/chat/file-support'
-import { copyText } from '../shared/clipboard'
-import { formatCost, formatMoney, formatWorkspacePath } from '../shared/format-value'
+import { MAX_ATTACHMENTS, unsupportedReason } from '../../modules/chat/file-support'
 import { groupByTime } from '../shared/time'
-import { attachmentKind } from '../message/AttachmentStrip'
 import LinkPreviewCard from '../conversation/LinkPreviewCard'
 import { useLinkHover } from '../conversation/useLinkHover'
-import AgentFlow from './AgentFlow'
-import ComposerBar from './ComposerBar'
-import HoverCard, { type HoverCardState } from './HoverCard'
-import { buildTaskHistory } from './input-history'
-import type { ComposerHistoryItem } from '../message/chat-history'
-import TaskHero from './TaskHero'
-import TaskList from './TaskList'
-import TaskModeSelector from './TaskModeSelector'
-
-/** 左侧任务列表宽度（可拖动） */
-const SIDEBAR_KEY = 'pet.task.sidebarWidth'
-const SIDEBAR_DEFAULT = 216
-const SIDEBAR_MIN = 140
-const SIDEBAR_MAX = 360
-
-function agentBridge(): ReturnType<typeof getPetBridge>['agent'] | undefined {
-  try {
-    return getPetBridge().agent
-  } catch {
-    return undefined
-  }
-}
-
-const THINKING_MENU_LABELS: Record<string, string> = {
-  low: 'low · 省 token',
-  high: 'high · 默认',
-  max: 'max · 复杂任务'
-}
+import AgentFlow from './flow/AgentFlow'
+import ComposerBar from './input/ComposerBar'
+import HoverCard from './flow/HoverCard'
+import { buildTaskHistory } from './input/input-history'
+import NewTaskPanel from './new-task/NewTaskPanel'
+import TaskList from './list/TaskList'
+import TaskModeSelector from './new-task/TaskModeSelector'
+import { agentBridge } from './agent-bridge'
+import { errorText } from './error-text'
+import { useTaskDeletion } from './list/useTaskDeletion'
+import { useTaskAttachments } from './useTaskAttachments'
+import { useTaskExecution } from './useTaskExecution'
+import { useTaskFlow } from './useTaskFlow'
+import { useTaskSidebar } from './useTaskSidebar'
+import { useTaskWorkspace } from './useTaskWorkspace'
+import TaskStatusBar from './status/TaskStatusBar'
+import { useTaskStatus } from './status/useTaskStatus'
+import TaskContextMenu, { type TaskMenu } from './TaskContextMenu'
 
 const STATUS_TEXT: Record<AgentState['status'], string> = {
   idle: '待命',
@@ -98,11 +72,6 @@ export interface TaskPanelProps {
 }
 
 /** 去掉 IPC 包装后的可读错误（invoke reject 会带 "Error invoking remote method ..." 前缀） */
-function errorText(err: unknown): string {
-  const raw = (err as Error)?.message ?? String(err)
-  return raw.replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '')
-}
-
 export default function TaskPanel({
   focusTaskId = null,
   onFocusHandled,
@@ -111,18 +80,8 @@ export default function TaskPanel({
   onDraftHandled
 }: TaskPanelProps = {}): ReactElement {
   const [state, setState] = useState<AgentState | null>(null)
-  /** 顶部：当前模型 + 账户余额（主进程 10 分钟轮询） */
-  const [llmStatus, setLlmStatus] = useState<AgentLlmStatus | null>(null)
-  const [refreshingLlm, setRefreshingLlm] = useState(false)
-  /** 思考强度菜单 / 保存中 / 「下次生效」提示 */
-  const [thinkingOpen, setThinkingOpen] = useState(false)
-  const [savingThinking, setSavingThinking] = useState(false)
-  const [thinkingNotice, setThinkingNotice] = useState<{
-    text: string
-    error: boolean
-  } | null>(null)
-  const thinkingRef = useRef<HTMLDivElement | null>(null)
-  const thinkingNoticeTimer = useRef<number | null>(null)
+  /** 顶部：模型/余额/思考强度（2026-10-26 抽到 useTaskStatus） */
+  const status = useTaskStatus(state)
   /** 新任务页选中的执行模式（记住上次选择） */
   const [composeMode, setComposeMode] = useState<ExecutionMode>(() => {
     try {
@@ -133,61 +92,73 @@ export default function TaskPanel({
     }
   })
   const [tasks, setTasks] = useState<AgentTaskSummary[]>([])
-  /** 默认工作区（config.toml [agent]；空 = 平台默认）；不再恢复"上次工作区" */
-  const [workspace, setWorkspace] = useState('')
-  /** 手输/选择后的工作区校验状态（开始与设为默认都要求 valid） */
-  const [workspaceCheck, setWorkspaceCheck] = useState<{
-    status: 'checking' | 'valid' | 'invalid'
-    error: string | null
-  }>({ status: 'checking', error: null })
-  const wsTimerRef = useRef<number | null>(null)
-  /** 校验请求序号：输入变化后旧请求的结果直接丢弃 */
-  const wsSeqRef = useRef(0)
-  const [wsNotice, setWsNotice] = useState<string | null>(null)
   const [task, setTask] = useState('')
   const [error, setError] = useState<string | null>(null)
+  /** 工作区：默认加载、校验、选择目录、设为默认（2026-10-26 抽到 useTaskWorkspace） */
+  const {
+    workspace,
+    setWorkspace,
+    workspaceCheck,
+    wsNotice,
+    clearWsTimer,
+    checkWorkspace,
+    ensureWorkspace,
+    handleWorkspaceChange,
+    handleWorkspaceBlur,
+    pickWorkspace,
+    setWorkspaceAsDefault
+  } = useTaskWorkspace({ onError: setError })
   const [compose, setCompose] = useState(true)
   const [reply, setReply] = useState('')
   const [now, setNow] = useState(() => Date.now())
-  const [showJump, setShowJump] = useState(false)
-  const [copiedId, setCopiedId] = useState<string | null>(null)
-  /** 本轮附件（不复制，主进程按原路径读取） */
-  const [attachments, setAttachments] = useState<PickedFile[]>([])
-  const [previews, setPreviews] = useState<Record<string, string>>({})
-  const [fileNotice, setFileNotice] = useState<string | null>(null)
+  /** 本轮附件：选择/拖入/粘贴/预览（2026-10-26 抽到 useTaskAttachments） */
+  const {
+    attachments,
+    previews,
+    fileNotice,
+    setFileNotice,
+    setAttachments,
+    setPreviews,
+    toAgentAttachments,
+    addFiles,
+    pickFiles,
+    removeAttachment,
+    clearAttachments,
+    addFileObjects,
+    handleDropFiles,
+    handlePasteFiles
+  } = useTaskAttachments()
   /** 左侧列表宽度与折叠态 */
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
-    try {
-      const raw = Number(localStorage.getItem(SIDEBAR_KEY))
-      return Number.isFinite(raw) && raw >= SIDEBAR_MIN && raw <= SIDEBAR_MAX ? raw : SIDEBAR_DEFAULT
-    } catch {
-      return SIDEBAR_DEFAULT
-    }
-  })
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const sidebarDragRef = useRef<{ startX: number; startWidth: number; width: number } | null>(null)
-  /** 悬浮预览卡片（本地路径；网页链接走 useLinkHover，与对话模式一致） */
-  const [hoverCard, setHoverCard] = useState<HoverCardState | null>(null)
+  const sidebar = useTaskSidebar()
   /** 引用/来源链接卡片：来源来自联网工具（AgentState.sources） */
   const linkHover = useLinkHover(state?.sources, state?.summary)
+  /** 消息流交互：滚动/展开/复制/悬浮卡片/历史定位（2026-10-26 抽到 useTaskFlow） */
+  const {
+    scrollRef,
+    stickRef,
+    showJump,
+    flashId,
+    copiedId,
+    expanded,
+    hoverCard,
+    clearHoverCard,
+    markCopied,
+    handleCopyStep,
+    handleFlowHover,
+    handleFlowOut,
+    handleFlowClick,
+    handleScroll,
+    jumpToBottom,
+    locateHistoryItem,
+    toggleExpanded,
+    resetHighlight
+  } = useTaskFlow({ linkHover, onNotice: setFileNotice })
   /** 右键菜单（任务 = 删除；选中文字 = 复制） */
-  const [menu, setMenu] = useState<
-    | { kind: 'task'; taskId: string; x: number; y: number }
-    | { kind: 'text'; text: string; x: number; y: number }
-    | { kind: 'command'; text: string; x: number; y: number }
-    | null
-  >(null)
-  /** 思考块/工具行的展开覆盖（未设置时：思考运行中=展开、结束后收起；工具默认收起） */
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-  const stickRef = useRef(true)
+  const [menu, setMenu] = useState<TaskMenu | null>(null)
   /** 已处理过的草稿 id（防止重渲染/重复事件把同一份文件启动两次） */
   const handledDraftRef = useRef<string | null>(null)
   /** 处理过草稿后保持 true：压住 getState/状态推送的「切到已有任务」，避免把草稿页藏掉 */
   const draftActiveRef = useRef(false)
-  /** 历史定位后的短暂高亮锚点与定时器 */
-  const [flashId, setFlashId] = useState<string | null>(null)
-  const flashTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     const api = agentBridge()
@@ -203,8 +174,8 @@ export default function TaskPanel({
     })
     void api
       .getLlmStatus()
-      .then((status) => {
-        if (alive) setLlmStatus(status)
+      .then((llm) => {
+        if (alive) status.onLlmStatus(llm)
       })
       .catch(() => {
         /* 余额是软功能：拿不到就不显示 */
@@ -214,37 +185,12 @@ export default function TaskPanel({
       if (snapshot.status !== 'idle' && !draftActiveRef.current) setCompose(false)
     })
     const offTasks = api.onTasks((list) => setTasks(list))
-    const offLlm = api.onLlmStatus((status) => setLlmStatus(status))
+    const offLlm = api.onLlmStatus((llm) => status.onLlmStatus(llm))
     return () => {
       alive = false
       offState()
       offTasks()
       offLlm()
-    }
-  }, [])
-
-  // 默认工作区：新任务每次从这里开始；配置无效 → 行内提示，不静默换目录
-  useEffect(() => {
-    const api = agentBridge()
-    if (!api?.getDefaultWorkspace) {
-      setWorkspaceCheck({ status: 'invalid', error: '任务模式不可用：请重启应用' })
-      return
-    }
-    let alive = true
-    void api
-      .getDefaultWorkspace()
-      .then((path) => {
-        if (!alive) return
-        setWorkspace(path)
-        // 主进程解析默认工作区时已经做过存在性/目录校验
-        setWorkspaceCheck({ status: 'valid', error: null })
-      })
-      .catch((err) => {
-        if (!alive) return
-        setWorkspaceCheck({ status: 'invalid', error: errorText(err) })
-      })
-    return () => {
-      alive = false
     }
   }, [])
 
@@ -280,456 +226,54 @@ export default function TaskPanel({
     if (el) el.scrollTop = el.scrollHeight
   }, [state])
 
-  const toAgentAttachments = useCallback(
-    (): AgentAttachment[] =>
-      attachments.map((file) => ({
-        path: file.path,
-        name: file.name,
-        kind: attachmentKind(file.name)
-      })),
-    [attachments]
-  )
+  // 任务删除（单条/批量）：列表由主进程 pushTasks 刷新，这里只负责调用与错误提示
+  const closeTaskMenu = useCallback((): void => setMenu(null), [])
+  const { deleteTask, deleteTasks } = useTaskDeletion({
+    onStart: closeTaskMenu,
+    onError: setError
+  })
 
-  const addFiles = useCallback((files: PickedFile[]): void => {
-    if (files.length === 0) return
-    const rejected = files.filter((file) => unsupportedReason(file) !== null)
-    if (rejected.length > 0) {
-      setFileNotice(`「${rejected[0].name}」这个类型暂时看不了`)
-      window.setTimeout(() => setFileNotice(null), 3000)
-    }
-    const usable = files.filter((file) => unsupportedReason(file) === null)
-    if (usable.length === 0) return
-    setAttachments((current) => {
-      const merged = [...current]
-      for (const file of usable) {
-        if (merged.some((item) => item.path === file.path)) continue
-        if (merged.length >= MAX_ATTACHMENTS) {
-          setFileNotice(`一次最多带 ${MAX_ATTACHMENTS} 个文件`)
-          window.setTimeout(() => setFileNotice(null), 3000)
-          break
-        }
-        merged.push(file)
-      }
-      return merged
-    })
-    for (const file of usable) {
-      if (attachmentKind(file.name) !== 'image') continue
-      void agentBridge()
-        ?.previewImage(file.path)
-        .then((dataUrl) => {
-          if (!dataUrl) return
-          setPreviews((current) => ({ ...current, [file.path]: dataUrl }))
-        })
-    }
-  }, [])
-
-  const pickFiles = useCallback(async (): Promise<void> => {
-    const bridge = filesBridge()
-    if (!bridge?.pick) {
-      setFileNotice('文件选择不可用：请重启应用')
-      return
-    }
-    const picked = await bridge.pick()
-    addFiles(picked)
-  }, [addFiles])
-
-  const removeAttachment = useCallback((path: string): void => {
-    setAttachments((current) => current.filter((item) => item.path !== path))
-    setPreviews((current) => {
-      const next = { ...current }
-      delete next[path]
-      return next
-    })
-  }, [])
-
-  const clearAttachments = useCallback((): void => {
-    setAttachments([])
-    setPreviews({})
-  }, [])
-
-  /** 拖入/粘贴的 File 对象 → 附件（有本地路径直接 stat；内存图片落盘后加） */
-  const addFileObjects = useCallback(
-    async (files: File[]): Promise<void> => {
-      const picked = await filesFromFileList(files)
-      if (picked.length === 0) {
-        setFileNotice('没有识别到可添加的文件（网页里的文件请先保存到本地）')
-        window.setTimeout(() => setFileNotice(null), 3000)
-        return
-      }
-      addFiles(picked)
-    },
-    [addFiles]
-  )
-
-  const handleDropFiles = useCallback(
-    (event: ReactDragEvent<HTMLDivElement>): void => {
-      event.preventDefault()
-      const files = Array.from(event.dataTransfer.files)
-      if (files.length === 0) return
-      void addFileObjects(files)
-    },
-    [addFileObjects]
-  )
-
-  const handlePasteFiles = useCallback(
-    (text: string): boolean => {
-      if (!looksLikeAbsolutePath(text)) return false
-      const bridge = filesBridge()
-      if (!bridge?.stat) return false
-      void bridge.stat(text.trim()).then((file) => {
-        if (file) addFiles([file])
-      })
-      return true
-    },
-    [addFiles]
-  )
-
-  const saveSidebarWidth = useCallback((width: number): void => {
-    try {
-      localStorage.setItem(SIDEBAR_KEY, String(width))
-    } catch {
-      /* 隐私模式忽略 */
-    }
-  }, [])
-
-  const onSidebarResizeStart = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>): void => {
-      event.preventDefault()
-      sidebarDragRef.current = {
-        startX: event.clientX,
-        startWidth: sidebarWidth,
-        width: sidebarWidth
-      }
-      const move = (e: PointerEvent): void => {
-        const drag = sidebarDragRef.current
-        if (!drag) return
-        const next = Math.min(SIDEBAR_MAX, Math.max(60, drag.startWidth + e.clientX - drag.startX))
-        drag.width = next
-        setSidebarWidth(next)
-      }
-      const up = (): void => {
-        window.removeEventListener('pointermove', move)
-        const drag = sidebarDragRef.current
-        sidebarDragRef.current = null
-        if (!drag) return
-        if (drag.width < SIDEBAR_MIN) {
-          // 拖到靠近最左边：吸附折叠
-          setSidebarCollapsed(true)
-          setSidebarWidth(SIDEBAR_DEFAULT)
-          saveSidebarWidth(SIDEBAR_DEFAULT)
-        } else {
-          setSidebarCollapsed(false)
-          setSidebarWidth(drag.width)
-          saveSidebarWidth(drag.width)
-        }
-      }
-      window.addEventListener('pointermove', move)
-      window.addEventListener('pointerup', up, { once: true })
-    },
-    [sidebarWidth, saveSidebarWidth]
-  )
-
-  const expandSidebar = useCallback((): void => {
-    setSidebarCollapsed(false)
-    setSidebarWidth(SIDEBAR_DEFAULT)
-    saveSidebarWidth(SIDEBAR_DEFAULT)
-  }, [saveSidebarWidth])
-
-  const deleteTask = useCallback(async (id: string): Promise<void> => {
-    const api = agentBridge()
-    if (!api) return
-    setMenu(null)
-    const result = await api.deleteTask(id)
-    if (!result.ok) {
-      setError(result.error ?? '删除失败')
-    }
-  }, [])
-
-  // 批量删除（2026-10-26，与对话左栏同款）：逐条调用现有接口，列表由主进程 pushTasks 刷新。
-  // 串行执行，避免几十个删除同时挤压主进程；失败的条数汇总提示。
-  const deleteTasks = useCallback(async (ids: string[]): Promise<void> => {
-    if (ids.length === 0) return
-    if (!window.confirm(`删除选中的 ${ids.length} 个任务？`)) return
-    const api = agentBridge()
-    if (!api) return
-    let failed = 0
-    for (const id of ids) {
-      try {
-        const result = await api.deleteTask(id)
-        if (!result.ok) failed += 1
-      } catch {
-        failed += 1
-      }
-    }
-    if (failed > 0) setError(`有 ${failed} 个任务删除失败`)
-  }, [])
-
-  const markCopied = useCallback((id: string): void => {
-    setCopiedId(id)
-    window.setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 1500)
-  }, [])
-
-  const handleCopyStep = useCallback(
-    (id: string, text: string): void => {
-      copyText(text)
-      markCopied(id)
-    },
-    [markCopied]
-  )
-
-  useEffect(() => {
-    if (!menu) return
-    const close = (): void => setMenu(null)
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setMenu(null)
-    }
-    window.addEventListener('pointerdown', close)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('pointerdown', close)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [menu])
-
-  const handleFlowHover = useCallback((event: ReactMouseEvent<HTMLDivElement>): void => {
-    const target = event.target as HTMLElement
-    const link = target.closest('a')
-    if (link) {
-      const href = link.getAttribute('href') ?? ''
-      if (href.startsWith('http://') || href.startsWith('https://')) {
-        // 与对话模式同一套卡片（站点/日期/标题/摘要）
-        linkHover.onMouseOver(event)
-        return
-      }
-    }
-    const code = target.closest('code')
-    if (code) {
-      const text = (code.textContent ?? '').trim()
-      if (looksLikeAbsolutePath(text)) {
-        const rect = code.getBoundingClientRect()
-        setHoverCard({ kind: 'path', text, x: rect.left, y: rect.top })
-        return
-      }
-    }
-    setHoverCard(null)
-  }, [linkHover])
-
-  /** 离开链接时收起卡片（与对话模式同一套判定：指针是否仍在同一个 a 内） */
-  const handleFlowOut = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>): void => {
-      linkHover.onMouseOut(event)
-    },
-    [linkHover]
-  )
-
-  const handleFlowClick = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>): void => {
-      linkHover.clear()
-      const target = event.target as HTMLElement
-      if (target.closest('a')) return
-      const code = target.closest('code')
-      if (!code) return
-      const text = (code.textContent ?? '').trim()
-      if (!looksLikeAbsolutePath(text)) return
-      event.preventDefault()
-      try {
-        void getPetBridge().system.openPath(text)
-      } catch {
-        /* 旧 preload：静默降级 */
-      }
-    },
-    [linkHover]
-  )
-
-  const handleScroll = useCallback((): void => {
-    const el = scrollRef.current
-    if (!el) return
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 56
-    stickRef.current = near
-    setShowJump(!near)
-  }, [])
-
-  const jumpToBottom = useCallback((): void => {
-    const el = scrollRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-    stickRef.current = true
-    setShowJump(false)
-  }, [])
-
-  // 切任务/卸载：清掉高亮定时器
-  useEffect(() => {
-    return () => {
-      if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current)
-    }
-  }, [])
   // 切换任务：清掉上一条历史选中文本、附件和定位高亮
   useEffect(() => {
-    setFlashId(null)
+    resetHighlight()
     setReply('')
     clearAttachments()
     setFileNotice(null)
-    if (flashTimerRef.current !== null) {
-      window.clearTimeout(flashTimerRef.current)
-      flashTimerRef.current = null
-    }
-  }, [state?.id, clearAttachments])
+  }, [state?.id, clearAttachments, resetHighlight])
 
-  /** 历史条目的时间点击：滚到消息流里的原文并短暂高亮；同时暂停自动跟到底 */
-  const locateHistoryItem = useCallback((item: ComposerHistoryItem): void => {
-    const scroller = scrollRef.current
-    if (!scroller) return
-    const target = scroller.querySelector<HTMLElement>(
-      `[data-step-id="${CSS.escape(item.id)}"]`
-    )
-    if (!target) {
-      setFileNotice('这条消息太久了，已不在当前视图里')
-      window.setTimeout(() => setFileNotice(null), 3_000)
-      return
-    }
-    setFileNotice(null)
-    stickRef.current = false
-    setShowJump(true)
-    target.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    setFlashId(item.id)
-    if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current)
-    flashTimerRef.current = window.setTimeout(() => {
-      setFlashId(null)
-      flashTimerRef.current = null
-    }, 1_300)
-  }, [])
+  /** 切换任务后恢复「跟随到底」 */
+  const stickToBottom = useCallback((): void => {
+    stickRef.current = true
+  }, [stickRef])
 
-  const toggleExpanded = useCallback((step: AgentStep): void => {
-    setExpanded((current) => {
-      const fallback = step.kind === 'thinking' && step.status === 'running'
-      const wasOpen = current[step.id] ?? fallback
-      return { ...current, [step.id]: !wasOpen }
-    })
-  }, [])
-
-  const clearWsTimer = useCallback((): void => {
-    if (wsTimerRef.current === null) return
-    window.clearTimeout(wsTimerRef.current)
-    wsTimerRef.current = null
-  }, [])
-
-  useEffect(() => () => clearWsTimer(), [clearWsTimer])
-
-  /** 校验工作区（与主进程 agentService.start 同一套规则）；返回是否可用 */
-  const checkWorkspace = useCallback(async (raw: string): Promise<boolean> => {
-    const api = agentBridge()
-    const text = raw.trim()
-    if (!api) {
-      setWorkspaceCheck({ status: 'invalid', error: '任务模式不可用：请重启应用' })
-      return false
-    }
-    if (!text) {
-      wsSeqRef.current += 1
-      setWorkspaceCheck({ status: 'invalid', error: '工作区不能为空' })
-      return false
-    }
-    const seq = wsSeqRef.current + 1
-    wsSeqRef.current = seq
-    setWorkspaceCheck({ status: 'checking', error: null })
-    try {
-      const result = await api.validateWorkspace(text)
-      if (wsSeqRef.current !== seq) return false
-      if (result.ok) {
-        setWorkspaceCheck({ status: 'valid', error: null })
-        return true
-      }
-      setWorkspaceCheck({ status: 'invalid', error: result.error ?? '工作区不可用' })
-      return false
-    } catch (err) {
-      if (wsSeqRef.current !== seq) return false
-      setWorkspaceCheck({ status: 'invalid', error: errorText(err) })
-      return false
-    }
-  }, [])
-
-  /** 输入路径：去资源管理器「复制为路径」带的首尾引号，400ms 防抖校验 */
-  const handleWorkspaceChange = useCallback(
-    (value: string): void => {
-      const trimmed = value.trim()
-      const next =
-        trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
-          ? trimmed.slice(1, -1)
-          : value
-      setWorkspace(next)
-      setError(null)
-      clearWsTimer()
-      wsSeqRef.current += 1 // 让在途的旧校验结果失效
-      if (!next.trim()) {
-        setWorkspaceCheck({ status: 'invalid', error: '工作区不能为空' })
-        return
-      }
-      setWorkspaceCheck({ status: 'checking', error: null })
-      wsTimerRef.current = window.setTimeout(() => {
-        wsTimerRef.current = null
-        void checkWorkspace(next)
-      }, 400)
-    },
-    [checkWorkspace, clearWsTimer]
-  )
-
-  const handleWorkspaceBlur = useCallback((): void => {
-    clearWsTimer()
-    void checkWorkspace(workspace)
-  }, [checkWorkspace, clearWsTimer, workspace])
-
-  /** 开始/设为默认前的兜底：valid 直接用，否则现场校验 */
-  const ensureWorkspace = useCallback(async (): Promise<boolean> => {
-    if (workspaceCheck.status === 'valid') return true
-    return checkWorkspace(workspace)
-  }, [checkWorkspace, workspace, workspaceCheck.status])
-
-  /** 真正启动任务（草稿和手动「开始」共用；失败时保留输入与附件） */
-  const startWith = useCallback(
-    async (text: string, files: PickedFile[], targetWorkspace: string): Promise<void> => {
-      const api = agentBridge()
-      if (!api) {
-        setError('任务模式不可用：请重启应用')
-        return
-      }
-      const trimmed = text.trim() || (files.length > 0 ? '帮我看看这些文件' : '')
-      if (!trimmed) {
-        setError('先说说要做什么')
-        return
-      }
-      clearWsTimer()
-      const workspaceOk = await checkWorkspace(targetWorkspace)
-      if (!workspaceOk) return
-      setError(null)
-      let result: { ok: boolean; error?: string }
-      try {
-        result = await api.start({
-          task: trimmed,
-          workspace: targetWorkspace,
-          attachments: files.map((file) => ({
-            path: file.path,
-            name: file.name,
-            kind: attachmentKind(file.name)
-          })),
-          mode: composeMode
-        })
-      } catch (err) {
-        setError(errorText(err))
-        return
-      }
-      if (!result.ok) {
-        setError(result.error ?? '启动失败')
-        return
-      }
-      setTask('')
-      clearAttachments()
-      setCompose(false)
-    },
-    [composeMode, clearAttachments, checkWorkspace, clearWsTimer]
-  )
-
-  const start = useCallback(async (): Promise<void> => {
-    await startWith(task, attachments, workspace)
-  }, [startWith, task, attachments, workspace])
+  // 任务执行：启动/发送/切换/审批/回答/计划（2026-10-26 抽到 useTaskExecution）
+  const {
+    startWith,
+    start,
+    send,
+    selectTask,
+    approve,
+    changeMode,
+    answerQuestion,
+    executePlan
+  } = useTaskExecution({
+    composeMode,
+    task,
+    reply,
+    workspace,
+    attachments,
+    state,
+    checkWorkspace,
+    clearWsTimer,
+    clearAttachments,
+    toAgentAttachments,
+    onError: setError,
+    onReplyChange: setReply,
+    onTaskChange: setTask,
+    onComposeChange: setCompose,
+    onFileNotice: setFileNotice,
+    stickToBottom
+  })
 
   // 宠物窗带文件的消息：预填草稿 + 用默认工作区自动开始；工作区无效时保留草稿并报错
   useEffect(() => {
@@ -779,117 +323,6 @@ export default function TaskPanel({
     }
   }, [])
 
-  const send = useCallback(async (): Promise<void> => {
-    const api = agentBridge()
-    const text = reply.trim()
-    if (!api || !text) return
-    setError(null)
-    const result = await api.followUp({ text, attachments: toAgentAttachments() })
-    if (!result.ok) {
-      setError(result.error ?? '发送失败')
-      return
-    }
-    setReply('')
-    clearAttachments()
-  }, [reply, toAgentAttachments, clearAttachments])
-
-  /** 手动选目录：只对当前草稿生效；要长期使用需另点「设为默认」 */
-  const pickWorkspace = useCallback(async (): Promise<void> => {
-    const api = agentBridge()
-    if (!api) return
-    try {
-      const picked = await api.pickWorkspace()
-      if (!picked) return
-      clearWsTimer()
-      wsSeqRef.current += 1
-      setWorkspace(picked)
-      setError(null)
-      void checkWorkspace(picked)
-    } catch (err) {
-      setError(errorText(err))
-    }
-  }, [checkWorkspace, clearWsTimer])
-
-  /** 把当前目录写回 config.toml，下次新任务仍从这里开始 */
-  const setWorkspaceAsDefault = useCallback(async (): Promise<void> => {
-    const api = agentBridge()
-    const target = workspace.trim()
-    if (!api || !target) return
-    clearWsTimer()
-    if (!(await ensureWorkspace())) return
-    try {
-      const result = await api.setDefaultWorkspace(target)
-      if (!result.ok) {
-        setWorkspaceCheck({
-          status: 'invalid',
-          error: result.error ?? '保存默认工作区失败'
-        })
-        return
-      }
-    } catch (err) {
-      setWorkspaceCheck({ status: 'invalid', error: errorText(err) })
-      return
-    }
-    setWsNotice(`已把「${target}」设为默认工作区`)
-    window.setTimeout(() => setWsNotice(null), 4000)
-  }, [workspace, ensureWorkspace, clearWsTimer])
-
-  const selectTask = useCallback(async (id: string): Promise<void> => {
-    const api = agentBridge()
-    if (!api) return
-    const result = await api.select(id)
-    if (!result.ok) {
-      setError(result.error ?? '切换失败')
-      return
-    }
-    setError(null)
-    setCompose(false)
-    // 重新选同一个任务时 state.id 不变，也要清掉上次留下的历史选中文本/附件
-    setReply('')
-    clearAttachments()
-    setFileNotice(null)
-    stickRef.current = true
-  }, [clearAttachments])
-
-  const approve = useCallback(
-    (allow: boolean): void => {
-      const approval = state?.approval
-      if (!approval) return
-      agentBridge()?.approve({ id: approval.id, allow })
-    },
-    [state?.approval]
-  )
-
-  const changeMode = useCallback(
-    async (mode: ExecutionMode): Promise<void> => {
-      const api = agentBridge()
-      const id = state?.id
-      if (!api || !id) return
-      const result = await api.setMode({ id, mode })
-      if (!result.ok) setError(result.error ?? '切换模式失败')
-    },
-    [state?.id]
-  )
-
-  const answerQuestion = useCallback(async (id: string, answer: string): Promise<void> => {
-    const api = agentBridge()
-    if (!api) return
-    const result = await api.answerQuestion({ id, answer })
-    if (!result.ok) setError(result.error ?? '提交失败')
-  }, [])
-
-  const executePlan = useCallback(
-    async (mode: 'standard' | 'auto'): Promise<void> => {
-      const api = agentBridge()
-      const id = state?.id
-      if (!api || !id) return
-      setError(null)
-      const result = await api.executePlan({ id, mode })
-      if (!result.ok) setError(result.error ?? '执行失败')
-    },
-    [state?.id]
-  )
-
   // 通知点击：切到指定任务
   useEffect(() => {
     if (!focusTaskId) return
@@ -911,133 +344,20 @@ export default function TaskPanel({
   const flow = (state?.steps ?? []).filter((step) => step.kind !== 'todo').slice(-200)
   const history = useMemo(() => buildTaskHistory(state), [state])
 
-  /** 手动刷新余额（10 分钟自动刷新由主进程负责） */
-  const refreshLlmStatus = useCallback(async (): Promise<void> => {
-    const api = agentBridge()
-    if (!api || refreshingLlm) return
-    setRefreshingLlm(true)
-    try {
-      setLlmStatus(await api.refreshLlmStatus())
-    } catch {
-      /* 余额是软功能：失败保持旧值 */
-    } finally {
-      setRefreshingLlm(false)
-    }
-  }, [refreshingLlm])
-
-  const showThinkingNotice = useCallback((text: string, error = false): void => {
-    if (thinkingNoticeTimer.current !== null) {
-      window.clearTimeout(thinkingNoticeTimer.current)
-    }
-    setThinkingNotice({ text, error })
-    thinkingNoticeTimer.current = window.setTimeout(
-      () => {
-        thinkingNoticeTimer.current = null
-        setThinkingNotice(null)
-      },
-      error ? 4_000 : 2_500
-    )
-  }, [])
-
-  useEffect(
-    () => () => {
-      if (thinkingNoticeTimer.current !== null) {
-        window.clearTimeout(thinkingNoticeTimer.current)
-        thinkingNoticeTimer.current = null
-      }
-    },
-    []
-  )
-
-  // 思考强度菜单：点外面 / Esc 关闭
-  useEffect(() => {
-    if (!thinkingOpen) return
-    const onPointerDown = (event: PointerEvent): void => {
-      if (!thinkingRef.current?.contains(event.target as Node)) setThinkingOpen(false)
-    }
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setThinkingOpen(false)
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [thinkingOpen])
-
-  /** 切换下次新任务的思考强度（当前任务不变） */
-  const chooseThinkingLevel = useCallback(
-    async (level: string): Promise<void> => {
-      const api = agentBridge()
-      const current = llmStatus?.thinkingLevel
-      setThinkingOpen(false)
-      if (!api || savingThinking || !current || level === current) return
-      setSavingThinking(true)
-      try {
-        const result = await api.setThinkingLevel(level as 'low' | 'high' | 'max')
-        if (!result.ok) showThinkingNotice(result.error ?? '切换失败', true)
-        else showThinkingNotice('下次新任务生效')
-      } catch (err) {
-        showThinkingNotice(errorText(err), true)
-      } finally {
-        setSavingThinking(false)
-      }
-    },
-    [llmStatus?.thinkingLevel, savingThinking, showThinkingNotice]
-  )
-
-  const activeModel = state?.model || llmStatus?.model || ''
-  const modelTitle = state?.model ? '当前任务使用的模型' : '当前配置的模型'
-  const taskCost = state?.usage.cost ?? 0
-  const balanceTotal = llmStatus?.total ?? null
-  const balanceText = !llmStatus
-    ? '余额 …'
-    : balanceTotal === null
-      ? refreshingLlm
-        ? '余额 …'
-        : '余额 —'
-      : `余额 ${formatMoney(balanceTotal, llmStatus.currency)}`
-  const balanceStale = Boolean(llmStatus?.code)
-  const balanceLow =
-    balanceTotal !== null &&
-    (llmStatus?.currency ?? '').toUpperCase() === 'CNY' &&
-    balanceTotal < 5
-  const balanceTitle = [
-    balanceTotal !== null && llmStatus
-      ? `余额 ${formatMoney(balanceTotal, llmStatus.currency)}` +
-        (llmStatus.toppedUp !== null || llmStatus.granted !== null
-          ? `（充值 ${
-              llmStatus.toppedUp !== null
-                ? formatMoney(llmStatus.toppedUp, llmStatus.currency)
-                : '—'
-            } / 赠送 ${
-              llmStatus.granted !== null
-                ? formatMoney(llmStatus.granted, llmStatus.currency)
-                : '—'
-            }）`
-          : '')
-      : '',
-    llmStatus?.message ?? '',
-    '每 10 分钟自动刷新，点击立即刷新'
-  ]
-    .filter((line) => line.length > 0)
-    .join('\n')
-
   return (
     <div className="task-layout">
       <TaskList
         groups={groups}
-        collapsed={sidebarCollapsed}
-        width={sidebarWidth}
+        collapsed={sidebar.collapsed}
+        width={sidebar.width}
         compose={compose}
         activeId={state?.id}
         onNew={() => setCompose(true)}
-        onExpand={expandSidebar}
+        onExpand={sidebar.expand}
         onSelect={(id) => void selectTask(id)}
         onContextMenu={(taskId, x, y) => setMenu({ kind: 'task', taskId, x, y })}
         onDeleteMany={(ids) => void deleteTasks(ids)}
-        onResizeStart={onSidebarResizeStart}
+        onResizeStart={sidebar.onResizeStart}
       />
 
       <div
@@ -1051,7 +371,7 @@ export default function TaskPanel({
         }}
       >
         {showHero ? (
-          <TaskHero
+          <NewTaskPanel
             task={task}
             workspace={workspace}
             mode={composeMode}
@@ -1091,99 +411,25 @@ export default function TaskPanel({
                   <TaskModeSelector mode={state.mode} onChange={(mode) => void changeMode(mode)} compact />
                 ) : null}
               </div>
-              <div className="task-head-meta">
-                {state?.workspace ? (
-                  <span className="task-workspace" title={state.workspace}>
-                    {formatWorkspacePath(state.workspace)}
-                  </span>
-                ) : null}
-                {llmStatus?.showModel && activeModel ? (
-                  <div className="task-thinking" ref={thinkingRef}>
-                    {llmStatus.thinkingLevels.length > 0 ? (
-                      <button
-                        type="button"
-                        className="task-model task-thinking-btn"
-                        title={`${modelTitle}；思考强度 ${llmStatus.thinkingLevel}（点击切换，下次新任务生效）`}
-                        aria-haspopup="menu"
-                        aria-expanded={thinkingOpen}
-                        onClick={() => setThinkingOpen((open) => !open)}
-                      >
-                        <span>{activeModel}</span>
-                        <span className="task-thinking-level">
-                          · {llmStatus.thinkingLevel}
-                        </span>
-                        <span className="task-thinking-caret" aria-hidden="true">
-                          ▾
-                        </span>
-                      </button>
-                    ) : (
-                      <span className="task-model task-model-static" title={modelTitle}>
-                        {activeModel}
-                      </span>
-                    )}
-                    {thinkingOpen ? (
-                      <div className="task-thinking-menu" role="menu">
-                        <div className="task-thinking-menu-head">思考强度 · 下次新任务生效</div>
-                        {llmStatus.thinkingLevels.map((level) => (
-                          <button
-                            key={level}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={level === llmStatus.thinkingLevel}
-                            className={`task-thinking-item${
-                              level === llmStatus.thinkingLevel
-                                ? ' task-thinking-item-active'
-                                : ''
-                            }`}
-                            disabled={savingThinking}
-                            onClick={() => void chooseThinkingLevel(level)}
-                          >
-                            <span>{THINKING_MENU_LABELS[level] ?? level}</span>
-                            {level === llmStatus.thinkingLevel ? (
-                              <span className="task-thinking-check">✓</span>
-                            ) : null}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {thinkingNotice ? (
-                      <span
-                        className={`task-thinking-note${
-                          thinkingNotice.error ? ' task-thinking-note-error' : ''
-                        }`}
-                        role="status"
-                      >
-                        {thinkingNotice.text}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-                {llmStatus?.showCost && taskCost > 0 ? (
-                  <span
-                    className="task-cost"
-                    title="按 DeepSeek 官方价估算的本次任务累计费用（高峰/低谷自动折算）"
-                  >
-                    本次 ≈{formatCost(taskCost)}
-                  </span>
-                ) : null}
-                {llmStatus?.showBalance ? (
-                  <button
-                    type="button"
-                    className={`task-balance${balanceLow ? ' task-balance-low' : ''}${
-                      balanceStale ? ' task-balance-stale' : ''
-                    }${refreshingLlm ? ' task-balance-busy' : ''}`}
-                    title={balanceTitle}
-                    aria-label="刷新账户余额"
-                    aria-busy={refreshingLlm}
-                    onClick={() => void refreshLlmStatus()}
-                  >
-                    {balanceText}
-                    <span className="task-balance-refresh" aria-hidden="true">
-                      ↻
-                    </span>
-                  </button>
-                ) : null}
-              </div>
+              <TaskStatusBar
+                workspace={state?.workspace ?? ''}
+                llmStatus={status.llmStatus}
+                refreshingLlm={status.refreshingLlm}
+                thinkingOpen={status.thinkingOpen}
+                savingThinking={status.savingThinking}
+                thinkingNotice={status.thinkingNotice}
+                thinkingRef={status.thinkingRef}
+                activeModel={status.activeModel}
+                modelTitle={status.modelTitle}
+                taskCost={status.taskCost}
+                balanceText={status.balanceText}
+                balanceTitle={status.balanceTitle}
+                balanceLow={status.balanceLow}
+                balanceStale={status.balanceStale}
+                onToggleThinking={status.toggleThinking}
+                onChooseThinking={(level) => void status.chooseThinkingLevel(level)}
+                onRefresh={() => void status.refreshLlmStatus()}
+              />
               <div className="task-head-actions">
                 <button type="button" className="task-btn" onClick={() => setCompose(true)}>
                   新任务
@@ -1197,7 +443,7 @@ export default function TaskPanel({
               onScroll={handleScroll}
               onMouseOver={handleFlowHover}
               onMouseOut={handleFlowOut}
-              onMouseLeave={() => setHoverCard(null)}
+              onMouseLeave={clearHoverCard}
               onClick={handleFlowClick}
             >
               <AgentFlow
@@ -1218,7 +464,7 @@ export default function TaskPanel({
                 status={state?.status}
                 mode={state?.mode}
                 canExecutePlan={Boolean(state?.resumable)}
-                showCost={llmStatus?.showCost === true}
+                showCost={status.llmStatus?.showCost === true}
                 flashId={flashId}
                 onAnswer={(id, answer) => void answerQuestion(id, answer)}
                 onExecutePlan={(mode) => void executePlan(mode)}
@@ -1276,39 +522,11 @@ export default function TaskPanel({
       </div>
 
       {menu ? (
-        <div
-          className="task-menu"
-          style={{ left: menu.x, top: menu.y }}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          {menu.kind === 'task' ? (
-            <button type="button" className="task-menu-item" onClick={() => void deleteTask(menu.taskId)}>
-              删除任务
-            </button>
-          ) : menu.kind === 'command' ? (
-            <button
-              type="button"
-              className="task-menu-item"
-              onClick={() => {
-                copyText(menu.text)
-                setMenu(null)
-              }}
-            >
-              复制命令
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="task-menu-item"
-              onClick={() => {
-                copyText(menu.text)
-                setMenu(null)
-              }}
-            >
-              复制
-            </button>
-          )}
-        </div>
+        <TaskContextMenu
+          menu={menu}
+          onClose={closeTaskMenu}
+          onDeleteTask={(id) => void deleteTask(id)}
+        />
       ) : null}
     </div>
   )

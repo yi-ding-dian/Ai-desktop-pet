@@ -1,15 +1,15 @@
 /** 任务进行中的输入条：附件、历史、追问、发送/中止。 */
 import { useRef, type DragEvent as ReactDragEvent, type ReactElement } from 'react'
-import type { PickedFile } from '../../../electron/ipc/channels'
-import { Textarea } from '../../shared/ui/components/Textarea'
-import { clipboardFileList } from '../../modules/chat/file-support'
-import AttachmentStrip from '../message/AttachmentStrip'
+import type { PickedFile } from '../../../../electron/ipc/channels'
+import { Textarea } from '../../../shared/ui/components/Textarea'
+import { clipboardFileList } from '../../../modules/chat/file-support'
+import AttachmentStrip from '../../message/AttachmentStrip'
 import {
   ComposerHistoryButton,
   ComposerHistoryPopover,
   useComposerHistory
-} from '../message/ComposerHistory'
-import type { ComposerHistoryItem } from '../message/chat-history'
+} from '../../message/ComposerHistory'
+import type { ComposerHistoryItem } from '../../message/chat-history'
 
 function PaperclipIcon(): ReactElement {
   return (

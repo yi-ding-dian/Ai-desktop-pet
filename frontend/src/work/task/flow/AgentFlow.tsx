@@ -6,12 +6,12 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement
 } from 'react'
-import { renderMarkdownWithCitations } from '../../board/markdown'
-import type { AgentState, AgentStep, AgentTodoItem } from '../../../electron/ipc/channels'
-import { formatCost, formatTokens } from '../shared/format-value'
-import { formatClockTime } from '../shared/time'
-import { handleMarkdownClick } from '../shared/link'
-import { TASK_START_ID } from './input-history'
+import { renderMarkdownWithCitations } from '../../../board/markdown'
+import type { AgentState, AgentStep, AgentTodoItem } from '../../../../electron/ipc/channels'
+import { formatCost, formatTokens } from '../../shared/format-value'
+import { formatClockTime } from '../../shared/time'
+import { handleMarkdownClick } from '../../shared/link'
+import { TASK_START_ID } from '../input/input-history'
 
 /** 消息底部：时间 · token · 复制（与对话模式一致，时间常显、按钮悬浮浮现） */
 function MessageMeta({

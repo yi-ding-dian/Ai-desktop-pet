@@ -2,7 +2,7 @@
  * 「已发送消息」派生纯函数离线自测（npm run test:work-task）。
  */
 import assert from 'node:assert/strict'
-import type { AgentState, AgentStep } from '../../../electron/ipc/channels'
+import type { AgentState, AgentStep } from '../../../../electron/ipc/channels'
 import { TASK_START_ID, buildTaskHistory } from './input-history'
 
 function step(overrides: Partial<AgentStep> & Pick<AgentStep, 'id' | 'kind' | 'title'>): AgentStep {

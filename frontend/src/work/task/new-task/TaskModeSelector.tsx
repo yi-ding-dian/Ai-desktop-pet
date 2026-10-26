@@ -1,6 +1,6 @@
 /** 执行模式选择（2026-10-24）：标准 / 自动 / 计划。 */
 import type { ReactElement } from 'react'
-import type { ExecutionMode } from '../../../electron/ipc/channels'
+import type { ExecutionMode } from '../../../../electron/ipc/channels'
 
 export const MODE_LABELS: Record<ExecutionMode, string> = {
   standard: '标准',

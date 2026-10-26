@@ -1,8 +1,8 @@
 /** 新任务页：任务输入、附件、工作区、执行模式与开始按钮。 */
 import type { DragEvent as ReactDragEvent, ReactElement } from 'react'
-import type { ExecutionMode, PickedFile } from '../../../electron/ipc/channels'
-import AttachmentStrip from '../message/AttachmentStrip'
-import { clipboardFileList } from '../../modules/chat/file-support'
+import type { ExecutionMode, PickedFile } from '../../../../electron/ipc/channels'
+import AttachmentStrip from '../../message/AttachmentStrip'
+import { clipboardFileList } from '../../../modules/chat/file-support'
 import TaskModeSelector, { MODE_HINTS } from './TaskModeSelector'
 
 function PaperclipIcon(): ReactElement {
@@ -21,7 +21,7 @@ function FolderIcon(): ReactElement {
   )
 }
 
-export interface TaskHeroProps {
+export interface NewTaskPanelProps {
   task: string
   workspace: string
   mode: ExecutionMode
@@ -51,7 +51,7 @@ export interface TaskHeroProps {
   onStart: () => void
 }
 
-export default function TaskHero({
+export default function NewTaskPanel({
   task,
   workspace,
   mode,
@@ -74,7 +74,7 @@ export default function TaskHero({
   onWorkspaceChange,
   onWorkspaceBlur,
   onStart
-}: TaskHeroProps): ReactElement {
+}: NewTaskPanelProps): ReactElement {
   return (
     <div className="task-hero">
       <div className="task-hero-title">你好，要做什么？</div>

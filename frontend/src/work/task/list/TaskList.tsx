@@ -1,25 +1,14 @@
 /** 任务页左侧列表：按时间分组、可拖动宽度、可吸附折叠。 */
 import {
   useEffect,
-  useMemo,
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactElement
 } from 'react'
-import type { AgentTaskSummary } from '../../../electron/ipc/channels'
-import { MODE_LABELS } from './TaskModeSelector'
-import { relativeTime, type TimeGroup } from '../shared/time'
-
-/** 还在跑/排队的任务：删除会中止它，管理模式下不允许勾选（与对话页「回复中不可删」一致） */
-function isActiveTask(status: AgentTaskSummary['status']): boolean {
-  return (
-    status === 'queued' ||
-    status === 'preparing' ||
-    status === 'running' ||
-    status === 'waiting' ||
-    status === 'planned'
-  )
-}
+import type { AgentTaskSummary } from '../../../../electron/ipc/channels'
+import { MODE_LABELS } from '../new-task/TaskModeSelector'
+import { relativeTime, type TimeGroup } from '../../shared/time'
+import { useTaskSelection } from './useTaskSelection'
 
 export interface TaskListProps {
   groups: TimeGroup<AgentTaskSummary>[]
@@ -61,70 +50,16 @@ export default function TaskList({
   }, [])
 
   // 管理模式（2026-10-26，与对话左栏同款）：运行中的任务不可选；列表推送刷新后剔除失效项
-  const [selectMode, setSelectMode] = useState(false)
-  const [selected, setSelected] = useState<Set<string>>(() => new Set())
-  const selectableIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const group of groups) {
-      for (const item of group.items) {
-        if (!isActiveTask(item.status)) ids.add(item.id)
-      }
-    }
-    return ids
-  }, [groups])
-
-  useEffect(() => {
-    setSelected((prev) => {
-      const next = new Set([...prev].filter((id) => selectableIds.has(id)))
-      return next.size === prev.size ? prev : next
-    })
-  }, [selectableIds])
-
-  useEffect(() => {
-    if (!selectMode) return
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        setSelectMode(false)
-        setSelected(new Set())
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [selectMode])
-
-  const exitSelectMode = (): void => {
-    setSelectMode(false)
-    setSelected(new Set())
-  }
-
-  const toggleItem = (id: string): void => {
-    if (!selectableIds.has(id)) return
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const toggleGroup = (group: TimeGroup<AgentTaskSummary>): void => {
-    const ids = group.items.map((item) => item.id).filter((id) => selectableIds.has(id))
-    const allSelected = ids.length > 0 && ids.every((id) => selected.has(id))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      for (const id of ids) {
-        if (allSelected) next.delete(id)
-        else next.add(id)
-      }
-      return next
-    })
-  }
-
-  const toggleAll = (): void => {
-    const ids = [...selectableIds]
-    const allSelected = ids.length > 0 && ids.every((id) => selected.has(id))
-    setSelected(allSelected ? new Set() : new Set(ids))
-  }
+  const {
+    selectMode,
+    selected,
+    selectableIds,
+    enter: enterSelectMode,
+    exit: exitSelectMode,
+    toggleItem,
+    toggleGroup,
+    toggleAll
+  } = useTaskSelection(groups)
 
   return (
     <aside
@@ -155,7 +90,7 @@ export default function TaskList({
               type="button"
               className={`conv-batch-toggle${selectMode ? ' conv-batch-toggle-on' : ''}`}
               title={selectMode ? '退出管理' : '任务管理'}
-              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+              onClick={() => (selectMode ? exitSelectMode() : enterSelectMode())}
             >
               管理
             </button>
