@@ -30,6 +30,7 @@ import { createTools, describeToolCall, type ApprovalDescription } from './tools
 import { decideToolCall } from './policy'
 import { MAX_PARALLEL_TASKS, findRunnableIndex, type QueueItem } from './queue'
 import { resolveWorkspace } from './workspace'
+import { lastAssistantFailure } from './model-failure'
 import { loadSessions, saveSessions, type PersistedSession, type PersistedState } from './store'
 import {
   deleteTranscript,
@@ -737,6 +738,13 @@ export class AgentService {
       await agent.prompt(text, images && images.length > 0 ? images : undefined)
       // 中止可能发生在 await 期间：状态被 cancel() 改成 cancelled 时不覆盖
       if ((session.state.status as AgentState['status']) === 'cancelled') return
+      // pi-agent 把 API/鉴权错误放在最后一条 assistant 消息的 stopReason=error 上正常返回，
+      // 不抛异常；不检查会把失败误标成「已完成」，界面也不会提示（2026-10-26 DeepSeek 401）。
+      const failure = readTurnFailure(agent)
+      if (failure) {
+        this.failTurn(session, failure)
+        return
+      }
       session.state.summary = this.translator.extractSummary(agent)
       session.state.status = session.state.mode === 'plan' ? 'planned' : 'done'
       session.state.endedAt = Date.now()
@@ -750,15 +758,7 @@ export class AgentService {
       this.scheduleSave()
     } catch (err) {
       if ((session.state.status as AgentState['status']) === 'cancelled') return
-      session.state.status = 'failed'
-      session.state.error = sanitizeError((err as Error)?.message ?? String(err))
-      session.state.endedAt = Date.now()
-      finalizeRunningSteps(session.state.steps, session.state.endedAt)
-      this.markFinished(session)
-      this.audit('failed', { id: session.state.id, error: session.state.error })
-      this.push(true)
-      this.pushTasks()
-      this.scheduleSave()
+      this.failTurn(session, (err as Error)?.message ?? String(err))
     } finally {
       this.clearTaskTimer(session)
       // 本轮结束（含中止/失败）把模型上下文落盘：重启后据此续聊
@@ -767,6 +767,19 @@ export class AgentService {
       this.releaseExtraAgents()
       this.releaseExecution(session)
     }
+  }
+
+  /** 一轮失败收尾：异常与 stopReason=error 共用，保证状态/错误文案/推送一致。 */
+  private failTurn(session: Session, message: string): void {
+    session.state.status = 'failed'
+    session.state.error = sanitizeError(message)
+    session.state.endedAt = Date.now()
+    finalizeRunningSteps(session.state.steps, session.state.endedAt)
+    this.markFinished(session)
+    this.audit('failed', { id: session.state.id, error: session.state.error })
+    this.push(true)
+    this.pushTasks()
+    this.scheduleSave()
   }
 
   /** 把模型上下文落盘（裁剪规则在 transcript.ts）。 */
@@ -1119,6 +1132,14 @@ export class AgentService {
     clearTimeout(session.taskTimer)
     session.taskTimer = null
   }
+}
+
+/**
+ * 读取本轮模型请求的失败原因（pi-agent 以 stopReason=error 正常返回，不抛异常）。
+ * 只看最后一条 assistant，避免把历史轮次的错误当成当前失败。
+ */
+function readTurnFailure(agent: Agent): string | null {
+  return lastAssistantFailure(agent.state?.messages ?? [])
 }
 
 /** 单例（与 backendManager 一致的生活周期） */
