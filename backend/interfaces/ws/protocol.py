@@ -73,6 +73,8 @@ class AttachmentRefData(EventData):
 
     path: str
     name: str = ""
+    #: 正文引用名（图片1 / 文件1.pdf）：模型据此把正文标记与附件对上
+    ref: str = ""
 
 
 class UserMessageOptions(EventData):

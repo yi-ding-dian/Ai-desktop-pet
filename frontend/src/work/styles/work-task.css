@@ -580,6 +580,8 @@
 .task-composer {
   flex: none;
   display: flex;
+  flex-direction: column;
+  gap: 10px;
   padding: 12px 24px 16px;
   border-top: 1px solid var(--ui-border-soft);
   background: var(--ui-bg-soft);
@@ -588,6 +590,66 @@
 .task-composer .work-input-shell {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* composer 已是纵向 gap 布局：子项自带的 margin 会叠加，这里清零 */
+.task-composer .task-attach-strip,
+.task-composer .task-notice {
+  margin-bottom: 0;
+}
+
+/* 长命令常驻状态条（2026-10-26）：滚到别处也能看到正在跑什么、跑了多久 */
+
+.task-running-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 38%, transparent);
+  border-radius: 8px;
+  background: var(--ui-accent-soft);
+  font-size: 11.5px;
+}
+
+.task-running-label {
+  flex: none;
+  color: var(--ui-accent);
+  font-weight: 600;
+}
+
+.task-running-cmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-fg-dim);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+}
+
+.task-running-time {
+  flex: none;
+  color: var(--ui-accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.task-running-action {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  background: var(--ui-panel);
+  color: var(--ui-fg-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.task-running-action:hover {
+  border-color: var(--ui-accent);
+  color: var(--ui-fg);
 }
 
 /* 历史定位：目标消息短暂高亮，不改变气泡自身圆角 */
@@ -1064,6 +1126,21 @@
   white-space: nowrap;
 }
 
+/* 运行中：强调色 + 旋转圈，长命令不至于看起来像卡死（2026-10-26） */
+
+.task-tool-meta-running {
+  color: var(--ui-accent);
+  font-weight: 600;
+}
+
+.task-tool-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+  vertical-align: -1px;
+}
+
 .task-tool-detail {
   margin: 2px 0 6px;
   padding: 8px 10px;
@@ -1412,6 +1489,13 @@
 .task-question-option:hover {
   border-color: var(--ui-accent);
   background: var(--ui-hover);
+}
+
+.task-question-option-on {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-weight: 600;
 }
 
 .task-question-option-other {

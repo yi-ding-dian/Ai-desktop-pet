@@ -40,6 +40,8 @@ class FileRef:
 
     path: str
     name: str = ""
+    #: 正文引用名（图片1 / 文件1.pdf）：只用于提示词里的对应关系，限长防注入
+    ref: str = ""
 
     @property
     def display_name(self) -> str:
@@ -73,6 +75,8 @@ class FileAttachment:
     chars: int = 0
     image_url: str | None = None
     mime: str | None = None
+    #: 正文引用名（图片1 / 文件1.pdf），与 FileRef.ref 一致
+    ref: str = ""
 
     @property
     def is_image(self) -> bool:
@@ -160,6 +164,7 @@ def read_attachments(
                     name=name,
                     image_url=f"data:{image_mime};base64,{encoded}",
                     mime=image_mime,
+                    ref=ref.ref,
                 )
             )
             continue
@@ -258,7 +263,7 @@ def read_attachments(
                 f"可以少发几个、换小文件，或在设置 → 文件里调高上限。",
             )
 
-        result.append(FileAttachment(name=name, text=text, chars=chars))
+        result.append(FileAttachment(name=name, text=text, chars=chars, ref=ref.ref))
 
     return result
 

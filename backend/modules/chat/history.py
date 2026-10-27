@@ -62,6 +62,14 @@ class HistoryStore:
         ).fetchone()
         return row is not None
 
+    def has_message(self, session_id: str, role: str, content: str) -> bool:
+        """会话里是否已有同角色、同内容的消息（本地气泡台词补录去重用）。"""
+        row = self._conn.execute(
+            "SELECT 1 FROM messages WHERE session_id = ? AND role = ? AND content = ? LIMIT 1",
+            (session_id, role, content),
+        ).fetchone()
+        return row is not None
+
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         """读会话元数据（id/title/created_at/ended_at）；不存在返回 None。"""
         row = self._conn.execute(

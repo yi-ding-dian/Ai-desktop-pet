@@ -5,7 +5,7 @@
  * 打断当前对话。只发请求，消息渲染由镜像事件回填。
  */
 import { useCallback } from 'react'
-import type { PickedFile } from '../../../../electron/ipc/channels'
+import type { AttachedFile } from '../../input/inline-ref'
 import type { WorkAction } from '../../store'
 import { reasonText } from '../format'
 import { makeRequestId } from '../../request-id'
@@ -23,7 +23,7 @@ export interface WorkSendOptions {
 }
 
 export interface WorkSendControls {
-  handleSend: (text: string, files: PickedFile[]) => Promise<boolean>
+  handleSend: (text: string, files: AttachedFile[]) => Promise<boolean>
   handleInterrupt: () => void
 }
 
@@ -35,7 +35,7 @@ export function useWorkSend({
   stickToBottom
 }: WorkSendOptions): WorkSendControls {
   const handleSend = useCallback(
-    async (text: string, files: PickedFile[]): Promise<boolean> => {
+    async (text: string, files: AttachedFile[]): Promise<boolean> => {
       const api = workBridge()
       if (!api?.requestSend) {
         dispatch({
@@ -61,7 +61,11 @@ export function useWorkSend({
         })
         return false
       }
-      const attachments = files.map((file) => ({ path: file.path, name: file.name }))
+      const attachments = files.map((file) => ({
+        path: file.path,
+        name: file.name,
+        ...(file.ref ? { ref: file.ref } : {})
+      }))
       try {
         const result = await api.requestSend({
           requestId: makeRequestId(),

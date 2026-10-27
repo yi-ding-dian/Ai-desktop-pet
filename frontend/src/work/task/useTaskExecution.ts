@@ -8,10 +8,10 @@ import { useCallback } from 'react'
 import type {
   AgentAttachment,
   AgentState,
-  ExecutionMode,
-  PickedFile
+  ExecutionMode
 } from '../../../electron/ipc/channels'
 import { attachmentKind } from '../input/AttachmentStrip'
+import type { AttachedFile } from '../input/inline-ref'
 import { agentBridge } from './agent-bridge'
 import { errorText } from './error-text'
 
@@ -20,7 +20,7 @@ export interface TaskExecutionOptions {
   task: string
   reply: string
   workspace: string
-  attachments: PickedFile[]
+  attachments: AttachedFile[]
   state: AgentState | null
   checkWorkspace: (raw: string) => Promise<boolean>
   clearWsTimer: () => void
@@ -36,7 +36,7 @@ export interface TaskExecutionOptions {
 }
 
 export interface TaskExecutionControls {
-  startWith: (text: string, files: PickedFile[], targetWorkspace: string) => Promise<void>
+  startWith: (text: string, files: AttachedFile[], targetWorkspace: string) => Promise<void>
   start: () => Promise<void>
   send: () => Promise<void>
   selectTask: (id: string) => Promise<void>
@@ -66,7 +66,7 @@ export function useTaskExecution({
 }: TaskExecutionOptions): TaskExecutionControls {
   /** 真正启动任务（草稿和手动「开始」共用；失败时保留输入与附件） */
   const startWith = useCallback(
-    async (text: string, files: PickedFile[], targetWorkspace: string): Promise<void> => {
+    async (text: string, files: AttachedFile[], targetWorkspace: string): Promise<void> => {
       const api = agentBridge()
       if (!api) {
         onError('任务模式不可用：请重启应用')
@@ -89,7 +89,8 @@ export function useTaskExecution({
           attachments: files.map((file) => ({
             path: file.path,
             name: file.name,
-            kind: attachmentKind(file.name)
+            kind: attachmentKind(file.name),
+            ref: file.ref
           })),
           mode: composeMode
         })

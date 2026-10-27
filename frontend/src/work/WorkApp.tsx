@@ -372,15 +372,18 @@ export default function WorkApp(): ReactElement {
         saved = null
       }
       const inList = saved !== null && (items?.some((item) => item.id === saved) ?? false)
-      // 没有保存过选择时，优先最近的普通对话；只有宠物会话/空列表才落到宠物会话
-      const fallbackId =
-        items?.find((item) => item.kind !== 'pet')?.id ?? items?.[0]?.id ?? null
-      const id = inList
-        ? (saved as string)
-        : (fallbackId ??
-          (items === null ? saved : null) ??
-          globalThis.crypto?.randomUUID?.() ??
-          `c_${Date.now().toString(36)}`)
+      // 启动默认打开「宠物会话」（2026-10-27）：宠物窗固定复用 pet-primary，
+      // 普通对话是用户手动新建/切换才进入，不再让上次的临时会话抢默认入口。
+      const petSession = items?.find((item) => item.kind === 'pet')
+      const fallbackId = petSession?.id ?? items?.[0]?.id ?? null
+      const id =
+        petSession?.id ??
+        (inList
+          ? (saved as string)
+          : (fallbackId ??
+            (items === null ? saved : null) ??
+            globalThis.crypto?.randomUUID?.() ??
+            `c_${Date.now().toString(36)}`))
       activateConversation(id)
       dispatch({ type: 'reset' })
       await requestHistory(id)

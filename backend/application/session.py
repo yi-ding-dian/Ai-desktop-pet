@@ -98,6 +98,20 @@ class Session:
         """取最近 N 轮消息（时间顺序，注入 LLM 上下文用）。"""
         return list(self.history)
 
+    def has_message(self, role: str, content: str) -> bool:
+        """会话里是否已有同角色、同内容的消息。
+
+        本地气泡台词（如启动称呼提问）每次启动都会请求补录，这里用来去重：
+        有就不写，避免重启一次多一条相同消息。优先查库（覆盖完整历史），
+        无库时退回内存窗口。
+        """
+        if self._store is not None:
+            try:
+                return self._store.has_message(self.id, role, content)
+            except Exception:  # 读库失败：退回内存判断，不阻断补录
+                logger.exception("补录去重查库失败 session={}", self.id)
+        return any(item.role == role and item.content == content for item in self.history)
+
     def reload_history(self) -> None:
         """从 SQLite 重建注入 LLM 的内存上下文（删除单条消息后用）。
 

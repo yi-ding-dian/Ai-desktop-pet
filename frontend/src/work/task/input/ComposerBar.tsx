@@ -1,9 +1,15 @@
 /** 任务进行中的输入条：附件、历史、追问、发送/中止。 */
 import { useRef, type DragEvent as ReactDragEvent, type ReactElement } from 'react'
-import type { PickedFile } from '../../../../electron/ipc/channels'
+import type { AgentStep } from '../../../../electron/ipc/channels'
 import { Textarea } from '../../../shared/ui/components/Textarea'
 import { clipboardFileList } from '../../../modules/chat/file-support'
 import AttachmentStrip from '../../input/AttachmentStrip'
+import {
+  insertRefToken,
+  refToken,
+  removeRefToken,
+  type AttachedFile
+} from '../../input/inline-ref'
 import {
   ComposerHistoryButton,
   ComposerHistoryPopover,
@@ -36,12 +42,24 @@ function StopIcon(): ReactElement {
   )
 }
 
+/** 运行条计时：mm:ss（长命令比「47s」更直观） */
+function formatRunningTime(step: AgentStep, now: number): string {
+  const seconds = Math.max(0, Math.round(((step.endedAt ?? now) - step.startedAt) / 1000))
+  const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
+  const ss = String(seconds % 60).padStart(2, '0')
+  return `${mm}:${ss}`
+}
+
 export interface ComposerBarProps {
   value: string
   busy: boolean
   resumable?: boolean
   status?: string
-  attachments: PickedFile[]
+  /** 当前正在运行的工具步骤（长命令时在输入框上方常驻显示） */
+  runningStep?: AgentStep | null
+  /** 计时基准（每秒刷新，运行条据此显示已运行时长） */
+  now?: number
+  attachments: AttachedFile[]
   previews: Record<string, string>
   notice: string | null
   error: string | null
@@ -52,13 +70,15 @@ export interface ComposerBarProps {
   /** 点击历史条目的时间：定位到消息流里的原文 */
   onLocateHistory: (item: ComposerHistoryItem) => void
   onValueChange: (value: string) => void
-  onDrop: (event: ReactDragEvent<HTMLDivElement>) => void
+  onDrop: (event: ReactDragEvent<HTMLDivElement>) => Promise<AttachedFile[]>
   onRemoveAttachment: (path: string) => void
   /** 粘贴的是本机绝对路径时返回 true（并异步读取文件） */
   onPaste: (text: string) => boolean
-  /** 剪贴板里的文件/图片对象（与拖拽共用附件逻辑） */
-  onPasteFiles: (files: File[]) => void
-  onPickFiles: () => void
+  /** 剪贴板里的文件/图片对象（与拖拽共用附件逻辑），返回新增附件 */
+  onPasteFiles: (files: File[]) => Promise<AttachedFile[]>
+  onPickFiles: () => Promise<AttachedFile[]>
+  /** 点击运行条：定位到消息流里正在跑的那一行 */
+  onLocateStep?: (step: AgentStep) => void
   onSend: () => void
   onStop: () => void
 }
@@ -68,6 +88,8 @@ export default function ComposerBar({
   busy,
   resumable,
   status,
+  runningStep = null,
+  now = Date.now(),
   attachments,
   previews,
   notice,
@@ -81,6 +103,7 @@ export default function ComposerBar({
   onPaste,
   onPasteFiles,
   onPickFiles,
+  onLocateStep,
   onSend,
   onStop
 }: ComposerBarProps): ReactElement {
@@ -101,9 +124,50 @@ export default function ComposerBar({
     onSend()
   }
 
+  /** 新增附件后，把 [图片1] / [文件1.pdf] 插到光标处 */
+  const insertFiles = (added: AttachedFile[]): void => {
+    if (added.length === 0) return
+    const token = added.map((file) => refToken(file.ref ?? file.name)).join(' ')
+    insertRefToken(textareaRef.current, token, value, onValueChange)
+  }
+
+  /** 删除缩略图时同步删掉正文里的引用标记 */
+  const removeAttachment = (path: string): void => {
+    const ref = attachments.find((file) => file.path === path)?.ref
+    onRemoveAttachment(path)
+    if (ref) onValueChange(removeRefToken(value, refToken(ref)))
+  }
+
   return (
-    <div className="task-composer" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
-      <AttachmentStrip files={attachments} previews={previews} onRemove={onRemoveAttachment} />
+    <div
+      className="task-composer"
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => void onDrop(event).then(insertFiles)}
+    >
+      {runningStep ? (
+        <div className="task-running-bar">
+          <span className="task-spinner" aria-hidden="true" />
+          <span className="task-running-label">正在执行</span>
+          <code
+            className="task-running-cmd"
+            title={runningStep.command ?? runningStep.title}
+          >
+            {runningStep.command ?? runningStep.title}
+          </code>
+          <span className="task-running-time">{formatRunningTime(runningStep, now)}</span>
+          <button
+            type="button"
+            className="task-running-action"
+            onClick={() => onLocateStep?.(runningStep)}
+          >
+            定位
+          </button>
+          <button type="button" className="task-running-action" onClick={onStop}>
+            中止
+          </button>
+        </div>
+      ) : null}
+      <AttachmentStrip files={attachments} previews={previews} onRemove={removeAttachment} />
       {error || notice ? <div className="task-notice">{error ?? notice}</div> : null}
       <div className="work-input-shell">
         <ComposerHistoryButton controls={historyControls} />
@@ -141,7 +205,7 @@ export default function ComposerBar({
             const files = clipboardFileList(event)
             if (files.length > 0) {
               event.preventDefault()
-              onPasteFiles(files)
+              void onPasteFiles(files).then(insertFiles)
               return
             }
             const text = event.clipboardData.getData('text')
@@ -154,7 +218,7 @@ export default function ComposerBar({
             className="work-attach"
             title="添加文件 / 图片"
             aria-label="添加文件"
-            onClick={onPickFiles}
+            onClick={() => void onPickFiles().then(insertFiles)}
           >
             <PaperclipIcon />
           </button>

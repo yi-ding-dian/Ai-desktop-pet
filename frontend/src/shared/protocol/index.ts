@@ -45,6 +45,8 @@ export type ClientRole = 'pet' | 'settings'
 export interface AttachmentRef {
   path: string
   name?: string
+  /** 正文引用名（图片1 / 文件1.pdf）：模型据此把正文标记和附件对上 */
+  ref?: string
 }
 
 /**

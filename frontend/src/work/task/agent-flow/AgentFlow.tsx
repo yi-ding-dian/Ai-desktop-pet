@@ -1,5 +1,6 @@
 /** 任务消息流：用户回合 / 思考 / 工具调用 / 回合统计 / 回答 / 待办 / 审批。 */
 import {
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -99,6 +100,16 @@ function ThinkingBlock({
 }
 
 /** 工具调用：流程里的细行，点开看命令与结果 */
+const AUTO_OPEN_SECONDS = 10
+
+/** 运行时长：mm:ss（长命令比「47s」更易读） */
+function formatElapsed(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds))
+  const mm = String(Math.floor(total / 60)).padStart(2, '0')
+  const ss = String(total % 60).padStart(2, '0')
+  return `${mm}:${ss}`
+}
+
 function ToolRow({
   step,
   open,
@@ -115,12 +126,29 @@ function ToolRow({
   const running = step.status === 'running'
   const seconds = Math.max(0, ((step.endedAt ?? now) - step.startedAt) / 1000)
   const icon = running ? '▸' : step.status === 'failed' ? '✗' : '✓'
+  // 长命令超过 10s 自动展开详情（每秒的「已运行 N 秒…」看得见），
+  // 用户手动收起后本次运行不再自动展开；结束后恢复默认折叠。
+  const [autoOpen, setAutoOpen] = useState(false)
+  const userCollapsedRef = useRef(false)
+  useEffect(() => {
+    if (!running) {
+      setAutoOpen(false)
+      userCollapsedRef.current = false
+      return
+    }
+    if (seconds >= AUTO_OPEN_SECONDS && !userCollapsedRef.current) setAutoOpen(true)
+  }, [running, seconds])
+  const showDetail = open || autoOpen
   return (
-    <div className={`task-tool task-tool-${step.status}`}>
+    <div className={`task-tool task-tool-${step.status}`} data-step-id={step.id}>
       <button
         type="button"
         className="task-tool-head"
-        onClick={onToggle}
+        onClick={() => {
+          if (autoOpen) userCollapsedRef.current = true
+          setAutoOpen(false)
+          onToggle()
+        }}
         title={step.command ?? step.detail ?? ''}
         onContextMenu={(event) => {
           if (!step.command) return
@@ -130,16 +158,16 @@ function ToolRow({
         }}
       >
         <span className="task-tool-icon" aria-hidden="true">
-          {icon}
+          {running ? <span className="task-spinner task-tool-spinner" /> : icon}
         </span>
         <span className="task-tool-title">{step.title}</span>
         {step.command ? <span className="task-tool-cmd">{step.command}</span> : null}
-        <span className="task-tool-meta">
-          {running ? `运行 ${Math.round(seconds)}s` : `${seconds.toFixed(1)}s`}
+        <span className={`task-tool-meta${running ? ' task-tool-meta-running' : ''}`}>
+          {running ? `运行中 ${formatElapsed(seconds)}` : `${seconds.toFixed(1)}s`}
           {step.tokens ? ` · ${formatTokens(step.tokens.input)}/${formatTokens(step.tokens.output)}` : ''}
         </span>
       </button>
-      {open && step.detail ? <pre className="task-tool-detail">{step.detail}</pre> : null}
+      {showDetail && step.detail ? <pre className="task-tool-detail">{step.detail}</pre> : null}
     </div>
   )
 }
@@ -247,7 +275,7 @@ function RoundStats({ step, showCost }: { step: AgentStep; showCost: boolean }):
   )
 }
 
-/** 提问卡：模型问你 2–4 选一，或自己输入“其他”。 */
+/** 提问卡：模型问你 2–4 选一。点选项只选中，可补充说明，点「回答」才提交。 */
 function QuestionCard({
   question,
   onAnswer
@@ -255,11 +283,12 @@ function QuestionCard({
   question: NonNullable<AgentState['question']>
   onAnswer?: (id: string, answer: string) => void
 }): ReactElement {
-  const [other, setOther] = useState('')
-  const [showOther, setShowOther] = useState(false)
+  // 2026-10-26：不再点选项即提交——用户常常选完还想补一句，直接提交会抢跑。
+  const [selected, setSelected] = useState<string | null>(null)
+  const [extra, setExtra] = useState('')
+  const answer = [selected, extra.trim()].filter(Boolean).join('\n补充：')
   const submit = (): void => {
-    const text = other.trim()
-    if (text) onAnswer?.(question.id, text)
+    if (answer) onAnswer?.(question.id, answer)
   }
   return (
     <div className="task-question">
@@ -275,46 +304,41 @@ function QuestionCard({
           <button
             key={option}
             type="button"
-            className="task-question-option"
-            onClick={() => onAnswer?.(question.id, option)}
+            className={`task-question-option${selected === option ? ' task-question-option-on' : ''}`}
+            aria-pressed={selected === option}
+            onClick={() => setSelected(option)}
           >
             {option}
           </button>
         ))}
+      </div>
+      <div className="task-question-other">
+        <input
+          className="task-question-input"
+          value={extra}
+          placeholder={
+            selected
+              ? '补充说明（可选），会和上面的选择一起发给小兔'
+              : '也可以直接输入你的答案'
+          }
+          onChange={(event) => setExtra(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+              event.preventDefault()
+              submit()
+            }
+          }}
+        />
         <button
           type="button"
-          className="task-question-option task-question-option-other"
-          onClick={() => setShowOther((value) => !value)}
+          className="task-btn task-btn-primary"
+          disabled={answer.length === 0}
+          onClick={submit}
         >
-          其他…
+          回答
         </button>
       </div>
-      {showOther ? (
-        <div className="task-question-other">
-          <input
-            className="task-question-input"
-            value={other}
-            autoFocus
-            placeholder="输入你的答案"
-            onChange={(event) => setOther(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                event.preventDefault()
-                submit()
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="task-btn task-btn-primary"
-            disabled={other.trim().length === 0}
-            onClick={submit}
-          >
-            提交
-          </button>
-        </div>
-      ) : null}
-      <div className="task-approval-hint">任务会一直等你回答（最长 30 分钟）</div>
+      <div className="task-approval-hint">选好可以再补充说明，点「回答」后小兔才会继续</div>
     </div>
   )
 }

@@ -1,6 +1,7 @@
-/** 附件条：图片显示缩略图 + 下方文件名，其它显示文件图标 + 文件名。 */
+/** 附件条：图片显示缩略图 + 引用名（图片1 / 文件1.pdf），其它显示文件图标 + 引用名。 */
 import type { ReactElement } from 'react'
-import type { AgentAttachment, PickedFile } from '../../../electron/ipc/channels'
+import type { AgentAttachment } from '../../../electron/ipc/channels'
+import type { AttachedFile } from './inline-ref'
 
 export function attachmentKind(name: string): AgentAttachment['kind'] {
   const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
@@ -24,7 +25,7 @@ export default function AttachmentStrip({
   previews,
   onRemove
 }: {
-  files: PickedFile[]
+  files: AttachedFile[]
   previews: Record<string, string>
   onRemove: (path: string) => void
 }): ReactElement | null {
@@ -32,7 +33,11 @@ export default function AttachmentStrip({
   return (
     <div className="task-attach-strip">
       {files.map((file) => (
-        <div className="task-attach" key={file.path} title={file.path}>
+        <div
+          className="task-attach"
+          key={file.path}
+          title={file.ref ? `${file.ref} · ${file.path}` : file.path}
+        >
           {previews[file.path] ? (
             <img className="task-attach-img" src={previews[file.path]} alt={file.name} />
           ) : (
@@ -40,7 +45,7 @@ export default function AttachmentStrip({
               {fileGlyph(file.name)}
             </span>
           )}
-          <span className="task-attach-name">{file.name}</span>
+          <span className="task-attach-name">{file.ref ?? file.name}</span>
           <button
             type="button"
             className="task-attach-remove"

@@ -154,6 +154,8 @@ export interface AgentAttachment {
   name: string
   /** 仅用于界面显示；主进程会按扩展名重新判定 */
   kind: 'image' | 'text' | 'other'
+  /** 正文引用名（图片1 / 文件1.pdf）：用户可写「这是什么 [图片1]」 */
+  ref?: string
 }
 
 /** 面板渲染所需的完整状态（主进程节流推送） */

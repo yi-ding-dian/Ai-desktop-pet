@@ -19,6 +19,7 @@ import {
 } from 'react'
 import type {
   AgentState,
+  AgentStep,
   AgentTaskDraftPayload,
   AgentTaskSummary,
   ExecutionMode
@@ -58,7 +59,8 @@ const STATUS_TEXT: Record<AgentState['status'], string> = {
   cancelled: '已中止'
 }
 
-const MODE_KEY = 'pet.task.mode'
+/** 新任务页选中的执行模式（默认计划：先只读交流，用户明确要动手再点「按此执行」） */
+const DEFAULT_COMPOSE_MODE: ExecutionMode = 'plan'
 
 export interface TaskPanelProps {
   /** 通知点击后要切到的任务 id */
@@ -82,15 +84,14 @@ export default function TaskPanel({
   const [state, setState] = useState<AgentState | null>(null)
   /** 顶部：模型/余额/思考强度（2026-10-26 抽到 useTaskStatus） */
   const status = useTaskStatus(state)
-  /** 新任务页选中的执行模式（记住上次选择） */
-  const [composeMode, setComposeMode] = useState<ExecutionMode>(() => {
-    try {
-      const saved = localStorage.getItem(MODE_KEY)
-      return saved === 'auto' || saved === 'plan' || saved === 'standard' ? saved : 'standard'
-    } catch {
-      return 'standard'
-    }
-  })
+  /**
+   * 新任务页选中的执行模式。
+   *
+   * 2026-10-26 起不再用 localStorage 记住上次选择：之前记住「计划」后，
+   * 之后每个新任务都沿用，用户以为程序有 bug。默认值固定为计划（只读），
+   * 本会话内手动切换仍立即生效。
+   */
+  const [composeMode, setComposeMode] = useState<ExecutionMode>(DEFAULT_COMPOSE_MODE)
   const [tasks, setTasks] = useState<AgentTaskSummary[]>([])
   const [task, setTask] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -316,11 +317,6 @@ export default function TaskPanel({
 
   const chooseComposeMode = useCallback((mode: ExecutionMode): void => {
     setComposeMode(mode)
-    try {
-      localStorage.setItem(MODE_KEY, mode)
-    } catch {
-      /* 隐私模式下写不进去，不影响本次使用 */
-    }
   }, [])
 
   // 通知点击：切到指定任务
@@ -343,6 +339,15 @@ export default function TaskPanel({
   const showHero = compose || !state || state.status === 'idle'
   const flow = (state?.steps ?? []).filter((step) => step.kind !== 'todo').slice(-200)
   const history = useMemo(() => buildTaskHistory(state), [state])
+  /** 当前正在跑的命令/工具（输入框上方常驻状态条用） */
+  const runningStep = useMemo<AgentStep | null>(() => {
+    const steps = state?.steps ?? []
+    for (let index = steps.length - 1; index >= 0; index -= 1) {
+      const step = steps[index]
+      if (step.kind === 'tool' && step.status === 'running') return step
+    }
+    return null
+  }, [state])
 
   return (
     <div className="task-layout">
@@ -384,8 +389,8 @@ export default function TaskPanel({
             onDrop={handleDropFiles}
             onRemoveAttachment={removeAttachment}
             onPaste={handlePasteFiles}
-            onPasteFiles={(files) => void addFileObjects(files)}
-            onPickFiles={() => void pickFiles()}
+            onPasteFiles={addFileObjects}
+            onPickFiles={pickFiles}
             onPickWorkspace={() => void pickWorkspace()}
             onSetDefaultWorkspace={() => void setWorkspaceAsDefault()}
             workspaceValid={workspaceCheck.status === 'valid'}
@@ -489,6 +494,8 @@ export default function TaskPanel({
               busy={busy}
               resumable={state?.resumable}
               status={state?.status}
+              runningStep={runningStep}
+              now={now}
               attachments={attachments}
               previews={previews}
               notice={fileNotice}
@@ -500,8 +507,11 @@ export default function TaskPanel({
               onDrop={handleDropFiles}
               onRemoveAttachment={removeAttachment}
               onPaste={handlePasteFiles}
-              onPasteFiles={(files) => void addFileObjects(files)}
-              onPickFiles={() => void pickFiles()}
+              onPasteFiles={addFileObjects}
+              onPickFiles={pickFiles}
+              onLocateStep={(step) =>
+                locateHistoryItem({ id: step.id, text: step.title, at: step.startedAt })
+              }
               onSend={() => void send()}
               onStop={() => {
                 const id = state?.id

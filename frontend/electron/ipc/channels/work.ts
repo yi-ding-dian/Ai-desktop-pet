@@ -20,7 +20,7 @@ export interface WorkTurnOptions {
 export interface WorkSendRequestPayload {
   requestId: string
   text: string
-  attachments: { path: string; name: string }[]
+  attachments: { path: string; name: string; ref?: string }[]
   options: WorkTurnOptions
   /** 目标对话 id；缺省 = 当前连接会话（旧客户端兼容） */
   sessionId?: string

@@ -149,7 +149,8 @@ export function setupWorkPetSide(client: WsClient): () => void {
     const trimmed = payload.text.trim()
     const attachments = payload.attachments.map((item) => ({
       path: item.path,
-      name: item.name
+      name: item.name,
+      ...(item.ref ? { ref: item.ref } : {})
     }))
     if (!trimmed && attachments.length === 0) {
       bridge.work?.sendResult?.({ requestId: payload.requestId, ok: false, reason: 'empty' })

@@ -39,6 +39,8 @@ export interface TeachingBubbleItem {
 export interface UserAttachment {
   path: string
   name: string
+  /** 正文引用名（图片1 / 文件1.pdf） */
+  ref?: string
 }
 
 /**
@@ -207,7 +209,11 @@ export function sendUserMessage(
   // ② 照常发往后端（消息本身不受教学模式影响）；附件只传路径/显示名
   // localId 同时作为 client_id 发给后端：message_saved 回传 DB 行 id 时按它挂回消息
   const localId = makeLocalId()
-  const refs = attachments?.map((item) => ({ path: item.path, name: item.name }))
+  const refs = attachments?.map((item) => ({
+    path: item.path,
+    name: item.name,
+    ...(item.ref ? { ref: item.ref } : {})
+  }))
   // 教学模式中自动带上 teaching 选项（后端据此追加"老师口吻、分章节讲解"的临时提示）；
   // 与工作模式的单轮开关（search）合并，避免互相覆盖
   const mergedOptions: UserMessageOptions = {

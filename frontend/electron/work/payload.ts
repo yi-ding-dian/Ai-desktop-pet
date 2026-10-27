@@ -11,19 +11,21 @@ export function normalizeSendPayload(raw: unknown): WorkSendRequestPayload | nul
   if (typeof value.text !== 'string') return null
   const attachments = Array.isArray(value.attachments)
     ? value.attachments
-        .map((item) =>
-          typeof item === 'object' && item !== null
-            ? {
-                path: typeof (item as Record<string, unknown>).path === 'string'
-                  ? ((item as Record<string, unknown>).path as string)
-                  : '',
-                name: typeof (item as Record<string, unknown>).name === 'string'
-                  ? ((item as Record<string, unknown>).name as string)
-                  : ''
-              }
-            : null
+        .map((item) => {
+          if (typeof item !== 'object' || item === null) return null
+          const entry = item as Record<string, unknown>
+          const path = typeof entry.path === 'string' ? entry.path : ''
+          const ref = typeof entry.ref === 'string' ? entry.ref.trim().slice(0, 80) : ''
+          return {
+            path,
+            name: typeof entry.name === 'string' ? entry.name : '',
+            ...(ref ? { ref } : {})
+          }
+        })
+        .filter(
+          (item): item is { path: string; name: string; ref?: string } =>
+            item !== null && item.path.length > 0
         )
-        .filter((item): item is { path: string; name: string } => item !== null && item.path.length > 0)
     : []
   const optionsRaw =
     typeof value.options === 'object' && value.options !== null

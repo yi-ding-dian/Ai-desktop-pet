@@ -88,6 +88,10 @@ export interface Session {
   roundCache: number
   /** 本轮模型生成时长合计（ms；turn_start → message_end，不含工具执行） */
   roundGenMs: number
+  /** 本轮是否调用过 todo（计划模式下据此判断「真的产出了计划」，纯聊天不进 planned） */
+  roundPlanned: boolean
+  /** 标准模式下本任务是否已确认过「动手」（首次写/改/删强制确认一次） */
+  firstWriteConfirmed: boolean
   /** 当前这一轮模型调用的起始时刻（0 = 未在生成中） */
   turnStartedAt: number
   pending: PendingApproval | null
@@ -190,6 +194,8 @@ export function createSession(
     roundOutput: 0,
     roundCache: 0,
     roundGenMs: 0,
+    roundPlanned: false,
+    firstWriteConfirmed: false,
     turnStartedAt: 0,
     pending: null,
     pendingQuestion: null,
@@ -280,6 +286,8 @@ export function restoreSession(record: {
     roundOutput: 0,
     roundCache: 0,
     roundGenMs: 0,
+    roundPlanned: false,
+    firstWriteConfirmed: false,
     turnStartedAt: 0,
     pending: null,
     pendingQuestion: null,

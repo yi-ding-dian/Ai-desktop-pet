@@ -11,7 +11,7 @@ export const MODE_LABELS: Record<ExecutionMode, string> = {
 export const MODE_HINTS: Record<ExecutionMode, string> = {
   standard: '工作区内读/写/删免确认；工作区外写/删需确认；命令每次确认',
   auto: '除致命系统操作外全部自动执行',
-  plan: '只读调研，只产出计划，不动文件不执行命令'
+  plan: '只读：先交流/调研，明确要做才出计划，不动文件不执行命令'
 }
 
 const MODES: ExecutionMode[] = ['standard', 'auto', 'plan']

@@ -29,6 +29,7 @@ from backend.interfaces.ws.protocol import (
     RenameConversationData,
     UserMessageData,
 )
+from backend.modules.chat.history import PET_SESSION_ID
 from backend.modules.files import FileRef
 from backend.shared.errors import ErrorCode
 
@@ -82,7 +83,13 @@ def register_chat_handlers(
             ctx.request_close(1008, "auth failed")
             return
 
-        session = sessions.start(ctx.session_id)
+        # 宠物窗固定复用「宠物会话」（2026-10-27）：hello 不带 session_id 时
+        # 若按缺省生成新会话，每次启动都会多出一条「新会话」，本地气泡台词补录进去后
+        # 还会出现在工作窗对话列表里。设置窗（settings）不聊天，保持原行为即可。
+        target_session_id = ctx.session_id or (
+            PET_SESSION_ID if data.client_role == "pet" else None
+        )
+        session = sessions.start(target_session_id)
         ctx.session_id = session.id
         ctx.authed = True
         ctx.client_role = data.client_role
@@ -115,7 +122,8 @@ def register_chat_handlers(
         data = cast(UserMessageData, msg.data)
         text = data.text.strip()
         attachments = [
-            FileRef(path=a.path, name=a.name) for a in data.attachments
+            FileRef(path=a.path, name=a.name, ref=(a.ref or "")[:80])
+            for a in data.attachments
         ]
         # 纯附件（选了文件没打字）是合法输入；文字和附件都为空才报错。
         if not text and not attachments:
@@ -285,6 +293,11 @@ def register_chat_handlers(
         data = cast(NoteAssistantMessageData, msg.data)
         text = (data.text or "").strip()
         if not text:
+            return
+        # 每次启动都会请求补录同一句本地气泡台词：会话里已有就跳过，
+        # 气泡照常显示，历史里不重复堆积（2026-10-27）。
+        if session.has_message("assistant", text):
+            logger.debug("补录助手台词：会话已有相同内容，跳过 session={}", session.id)
             return
         session.append_message("assistant", text)
         logger.info("补录助手台词（本地气泡）session={} len={}", session.id, len(text))

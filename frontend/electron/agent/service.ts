@@ -27,7 +27,7 @@ import {
 } from './pi'
 import { priceForModel } from './pricing'
 import { createTools, describeToolCall, type ApprovalDescription } from './tools'
-import { decideToolCall } from './policy'
+import { decideToolCall, MUTATION_TOOL_NAMES } from './policy'
 import { MAX_PARALLEL_TASKS, findRunnableIndex, type QueueItem } from './queue'
 import { resolveWorkspace } from './workspace'
 import { lastAssistantFailure } from './model-failure'
@@ -349,6 +349,8 @@ export class AgentService {
     const mode: ExecutionMode = payload.mode === 'auto' ? 'auto' : 'standard'
     const switched = this.setMode({ id: session.state.id, mode })
     if (!switched.ok) return switched
+    // 用户已经点过「按此执行」，这一次动手不再重复弹首次确认
+    session.firstWriteConfirmed = true
     return this.enqueueContinue(
       session,
       '用户已批准上面的计划。请按计划开始执行：先用 todo 更新进度，再逐步完成；完成后给出改了什么/怎么验证/剩余风险。'
@@ -441,6 +443,8 @@ export class AgentService {
 
     session.mode = mode
     session.state.mode = mode
+    // 换了模式就重新给一次「首次动手」确认（从计划切到标准时尤其需要）
+    session.firstWriteConfirmed = false
     this.audit('mode-change', { id: session.state.id, mode })
     if (session.agent) {
       const message = {
@@ -594,12 +598,26 @@ export class AgentService {
       tools,
       history,
       beforeToolCall: async ({ toolCall, args }) => {
-        const decision = decideToolCall({
+        let decision = decideToolCall({
           mode: session.state.mode,
           toolName: toolCall.name,
           args,
           workspace
         })
+        // 标准模式：本任务第一次写/改/删强制确认一次（2026-10-26）。
+        // 用户只是在讨论时，模型不该默默改文件；确认后本任务内不再打扰。
+        if (
+          decision.action === 'allow' &&
+          session.state.mode === 'standard' &&
+          !session.firstWriteConfirmed &&
+          MUTATION_TOOL_NAMES.has(toolCall.name)
+        ) {
+          decision = {
+            action: 'confirm',
+            dangerous: false,
+            reason: '这是本任务第一次动手修改文件；确认后本任务内写/改/删不再询问。'
+          }
+        }
         if (decision.action === 'allow') return undefined
         if (decision.action === 'deny') {
           this.audit('tool-denied', {
@@ -617,6 +635,12 @@ export class AgentService {
           preview: [decision.reason, desc.preview].filter(Boolean).join('\n\n') || undefined
         })
         if (allowed) {
+          if (
+            session.state.mode === 'standard' &&
+            MUTATION_TOOL_NAMES.has(toolCall.name)
+          ) {
+            session.firstWriteConfirmed = true
+          }
           this.audit('tool-auto', {
             id: session.state.id,
             tool: toolCall.name,
@@ -728,6 +752,7 @@ export class AgentService {
     session.state.status = 'running'
     // 每轮重新累计生成时长（首轮与继续追问共用）
     session.roundGenMs = 0
+    session.roundPlanned = false
     session.turnStartedAt = 0
     this.push(true)
     this.clearTaskTimer(session)
@@ -746,7 +771,10 @@ export class AgentService {
         return
       }
       session.state.summary = this.translator.extractSummary(agent)
-      session.state.status = session.state.mode === 'plan' ? 'planned' : 'done'
+      // 计划模式只有本轮真的用 todo 列了步骤才停在「待执行」；
+      // 纯聊天/答疑正常结束为 done，避免每句话都弹「计划已完成」卡。
+      session.state.status =
+        session.state.mode === 'plan' && session.roundPlanned ? 'planned' : 'done'
       session.state.endedAt = Date.now()
       this.markFinished(session)
       this.audit(session.state.status === 'planned' ? 'planned' : 'done', {

@@ -230,8 +230,18 @@ class ChatPipeline:
                 text_files = [item for item in prepared if not item.is_image]
                 image_files = [item for item in prepared if item.is_image]
                 block = build_attachment_block(text_files)
+                # 图片按随附顺序编号，正文里的 [图片1] 靠这个说明对上具体是哪张
+                image_labels = [
+                    (
+                        f"第{index}张 = [{item.ref}]"
+                        + (f"（原文件 {item.name}）" if item.name != item.ref else "")
+                    )
+                    if item.ref
+                    else f"第{index}张 = {item.name}"
+                    for index, item in enumerate(image_files, 1)
+                ]
                 content = build_attachment_user_content(
-                    user_text, block, image_names=[item.name for item in image_files]
+                    user_text, block, image_names=image_labels
                 )
                 images = tuple(
                     item.image_url for item in image_files if item.image_url is not None

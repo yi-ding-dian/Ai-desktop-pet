@@ -17,7 +17,8 @@ from typing import Any
 from backend.application.chat_pipeline import ChatPipeline
 from backend.application.session import SessionManager
 from backend.interfaces.ws.dispatcher import build_dispatcher
-from backend.interfaces.ws.protocol import parse_client_message
+from backend.interfaces.ws.protocol import PROTOCOL_VERSION, parse_client_message
+from backend.modules.chat.history import PET_SESSION_ID
 from backend.modules.memory.profile import ProfileStore
 from backend.shared.db import connect_db
 from fakes import EchoLLMProvider
@@ -173,5 +174,50 @@ def test_note_assistant_message_ignored_without_session(tmp_path: Path) -> None:
         await dispatch(dispatcher, ctx, "note_assistant_message", {"text": "你好"})
         assert sessions.count() == 0  # 不得因补录创建空会话
         assert ctx.errors == []
+
+    asyncio.run(scenario())
+
+
+def test_note_assistant_message_dedupes_same_text(tmp_path: Path) -> None:
+    """同一句本地气泡台词每次启动都会补录：会话里已有就不再写（2026-10-27）。"""
+    sessions = SessionManager()
+    session = sessions.start("s_test")
+    dispatcher, _, _ = make_dispatcher(tmp_path, sessions=sessions)
+
+    async def scenario() -> None:
+        ctx = FakeCtx()
+        for _ in range(3):
+            await dispatch(
+                dispatcher, ctx, "note_assistant_message", {"text": "你好呀~你叫什么名字呢？"}
+            )
+        contents = [m.content for m in session.recent_messages()]
+        assert contents.count("你好呀~你叫什么名字呢？") == 1
+
+    asyncio.run(scenario())
+
+
+def test_hello_pet_reuses_pet_session(tmp_path: Path) -> None:
+    """宠物窗 hello 不带 session_id 时固定复用 pet-primary，不再每次新建会话。"""
+    sessions = SessionManager()
+    dispatcher, _, _ = make_dispatcher(tmp_path, sessions=sessions)
+
+    async def scenario() -> None:
+        first = FakeCtx(session_id=None)
+        await dispatch(
+            dispatcher,
+            first,
+            "hello",
+            {"token": "t", "protocol_version": PROTOCOL_VERSION, "app_version": "test"},
+        )
+        second = FakeCtx(session_id=None)
+        await dispatch(
+            dispatcher,
+            second,
+            "hello",
+            {"token": "t", "protocol_version": PROTOCOL_VERSION, "app_version": "test"},
+        )
+        assert first.session_id == PET_SESSION_ID
+        assert second.session_id == PET_SESSION_ID
+        assert sessions.count() == 1
 
     asyncio.run(scenario())

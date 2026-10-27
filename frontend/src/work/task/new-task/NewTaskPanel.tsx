@@ -1,7 +1,13 @@
 /** 新任务页：任务输入、附件、工作区、执行模式与开始按钮。 */
-import type { DragEvent as ReactDragEvent, ReactElement } from 'react'
-import type { ExecutionMode, PickedFile } from '../../../../electron/ipc/channels'
+import { useRef, type DragEvent as ReactDragEvent, type ReactElement } from 'react'
+import type { ExecutionMode } from '../../../../electron/ipc/channels'
 import AttachmentStrip from '../../input/AttachmentStrip'
+import {
+  insertRefToken,
+  refToken,
+  removeRefToken,
+  type AttachedFile
+} from '../../input/inline-ref'
 import { clipboardFileList } from '../../../modules/chat/file-support'
 import TaskModeSelector, { MODE_HINTS } from './TaskModeSelector'
 
@@ -26,19 +32,19 @@ export interface NewTaskPanelProps {
   workspace: string
   mode: ExecutionMode
   onModeChange: (mode: ExecutionMode) => void
-  attachments: PickedFile[]
+  attachments: AttachedFile[]
   previews: Record<string, string>
   error: string | null
   /** 轻提示（如"已设为默认工作区"），不是错误 */
   notice?: string | null
   onTaskChange: (value: string) => void
-  onDrop: (event: ReactDragEvent<HTMLDivElement>) => void
+  onDrop: (event: ReactDragEvent<HTMLDivElement>) => Promise<AttachedFile[]>
   onRemoveAttachment: (path: string) => void
   /** 粘贴的是本机绝对路径时返回 true（并异步读取文件） */
   onPaste: (text: string) => boolean
-  /** 剪贴板里的文件/图片对象（与拖拽共用附件逻辑） */
-  onPasteFiles: (files: File[]) => void
-  onPickFiles: () => void
+  /** 剪贴板里的文件/图片对象（与拖拽共用附件逻辑），返回新增附件 */
+  onPasteFiles: (files: File[]) => Promise<AttachedFile[]>
+  onPickFiles: () => Promise<AttachedFile[]>
   onPickWorkspace: () => void
   onSetDefaultWorkspace: () => void
   /** 工作区是否已通过主进程校验（开始与设为默认都要求 true） */
@@ -75,6 +81,24 @@ export default function NewTaskPanel({
   onWorkspaceBlur,
   onStart
 }: NewTaskPanelProps): ReactElement {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  /** 新增附件后，把 [图片1] / [文件1.pdf] 插到光标处 */
+  const insertFiles = (added: AttachedFile[]): void => {
+    if (added.length === 0) return
+    const token = added
+      .map((file) => refToken(file.ref ?? file.name))
+      .join(' ')
+    insertRefToken(textareaRef.current, token, task, onTaskChange)
+  }
+
+  /** 删除缩略图时同步删掉正文里的引用标记，避免指向不存在的附件 */
+  const removeAttachment = (path: string): void => {
+    const ref = attachments.find((file) => file.path === path)?.ref
+    onRemoveAttachment(path)
+    if (ref) onTaskChange(removeRefToken(task, refToken(ref)))
+  }
+
   return (
     <div className="task-hero">
       <div className="task-hero-title">你好，要做什么？</div>
@@ -82,10 +106,11 @@ export default function NewTaskPanel({
       <div
         className="task-hero-card"
         onDragOver={(event) => event.preventDefault()}
-        onDrop={onDrop}
+        onDrop={(event) => void onDrop(event).then(insertFiles)}
       >
-        <AttachmentStrip files={attachments} previews={previews} onRemove={onRemoveAttachment} />
+        <AttachmentStrip files={attachments} previews={previews} onRemove={removeAttachment} />
         <textarea
+          ref={textareaRef}
           className="task-hero-input"
           value={task}
           placeholder="比如：看一下系统盘哪些文件可以清理"
@@ -101,7 +126,7 @@ export default function NewTaskPanel({
             const files = clipboardFileList(event)
             if (files.length > 0) {
               event.preventDefault()
-              onPasteFiles(files)
+              void onPasteFiles(files).then(insertFiles)
               return
             }
             const text = event.clipboardData.getData('text')
@@ -115,7 +140,7 @@ export default function NewTaskPanel({
               className="work-attach"
               title="添加文件 / 图片"
               aria-label="添加文件"
-              onClick={onPickFiles}
+              onClick={() => void onPickFiles().then(insertFiles)}
             >
               <PaperclipIcon />
             </button>

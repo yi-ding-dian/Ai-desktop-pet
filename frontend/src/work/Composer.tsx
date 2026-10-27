@@ -20,12 +20,21 @@ import { Textarea } from '../shared/ui/components/Textarea'
 import {
   MAX_ATTACHMENTS,
   SUPPORTED_FILE_HINT,
+  attachmentKindOf,
   clipboardFileList,
   filesBridge,
   filesFromFileList,
   looksLikeAbsolutePath,
   unsupportedReason
 } from '../modules/chat/file-support'
+import {
+  createRefCounters,
+  insertRefToken,
+  nextAttachmentRef,
+  refToken,
+  removeRefToken,
+  type AttachedFile
+} from './input/inline-ref'
 import {
   ComposerHistoryButton,
   ComposerHistoryPopover,
@@ -38,7 +47,7 @@ export interface ComposerProps {
   streaming: boolean
   search: boolean
   onSearchChange: (value: boolean) => void
-  onSend: (text: string, attachments: PickedFile[]) => Promise<boolean>
+  onSend: (text: string, attachments: AttachedFile[]) => Promise<boolean>
   onStop: () => void
   notice: WorkNotice | null
   onDismissNotice: () => void
@@ -63,12 +72,16 @@ export default function Composer({
   onLocateHistory
 }: ComposerProps): ReactElement {
   const [input, setInput] = useState('')
-  const [attachments, setAttachments] = useState<PickedFile[]>([])
+  const [attachments, setAttachments] = useState<AttachedFile[]>([])
   const [localNotice, setLocalNotice] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const dragDepth = useRef(0)
   const sendingRef = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  /** 与 attachments 同步的即时列表（addFiles 要同步返回新增项） */
+  const attachmentsRef = useRef<AttachedFile[]>([])
+  /** 引用编号：删除不重排，切换会话时归零 */
+  const countersRef = useRef(createRefCounters())
   const historyControls = useComposerHistory({
     value: input,
     onValueChange: setInput,
@@ -83,6 +96,8 @@ export default function Composer({
   useEffect(() => {
     setInput('')
     setAttachments([])
+    attachmentsRef.current = []
+    countersRef.current = createRefCounters()
     setLocalNotice(null)
     setDragActive(false)
     dragDepth.current = 0
@@ -94,8 +109,8 @@ export default function Composer({
   }, [])
 
   const addFiles = useCallback(
-    (files: PickedFile[]): void => {
-      if (files.length === 0) return
+    (files: PickedFile[]): AttachedFile[] => {
+      if (files.length === 0) return []
       const supported: PickedFile[] = []
       const rejected: PickedFile[] = []
       for (const file of files) {
@@ -106,26 +121,51 @@ export default function Composer({
         const names = rejected.slice(0, 3).map((file) => file.name).join('、')
         showLocal(`「${names}」暂时看不了～${SUPPORTED_FILE_HINT}`)
       }
-      if (supported.length === 0) return
-      const room = Math.max(0, MAX_ATTACHMENTS - attachments.length)
-      if (room === 0) {
-        showLocal(`一次最多带 ${MAX_ATTACHMENTS} 个文件`)
-        return
-      }
-      if (supported.length > room) {
-        showLocal(`一次最多带 ${MAX_ATTACHMENTS} 个文件，先放前 ${room} 个～`)
-      }
-      const accepted = supported.slice(0, room)
-      setAttachments((previous) => {
-        const next = [...previous]
-        for (const file of accepted) {
-          if (!next.some((item) => item.path === file.path)) next.push(file)
+      if (supported.length === 0) return []
+      const merged = [...attachmentsRef.current]
+      const added: AttachedFile[] = []
+      let full = false
+      for (const file of supported) {
+        if (merged.some((item) => item.path === file.path)) continue
+        if (merged.length >= MAX_ATTACHMENTS) {
+          full = true
+          break
         }
-        return next
-      })
+        const withRef: AttachedFile = {
+          ...file,
+          ref: nextAttachmentRef(file.name, attachmentKindOf(file), countersRef.current)
+        }
+        merged.push(withRef)
+        added.push(withRef)
+      }
+      if (full) showLocal(`一次最多带 ${MAX_ATTACHMENTS} 个文件`)
+      if (added.length > 0) {
+        attachmentsRef.current = merged
+        setAttachments(merged)
+      }
+      return added
     },
-    [attachments.length, showLocal]
+    [showLocal]
   )
+
+  /** 新增附件后，把 [图片1] / [文件1.pdf] 插到光标处 */
+  const insertFiles = useCallback(
+    (added: AttachedFile[]): void => {
+      if (added.length === 0) return
+      const token = added.map((file) => refToken(file.ref ?? file.name)).join(' ')
+      insertRefToken(textareaRef.current, token, input, setInput)
+    },
+    [input]
+  )
+
+  /** 删除附件时同步删掉正文里的引用标记 */
+  const removeAttachment = (file: AttachedFile): void => {
+    const next = attachmentsRef.current.filter((item) => item.path !== file.path)
+    attachmentsRef.current = next
+    setAttachments(next)
+    const ref = file.ref
+    if (ref) setInput((previous) => removeRefToken(previous, refToken(ref)))
+  }
 
   const handlePick = useCallback(async (): Promise<void> => {
     const bridge = filesBridge()
@@ -134,12 +174,12 @@ export default function Composer({
       return
     }
     try {
-      addFiles(await bridge.pick())
+      insertFiles(addFiles(await bridge.pick()))
     } catch (err) {
       console.warn('[work] 选择文件失败：', err)
       showLocal('打开文件选择框失败，再试一次好吗？')
     }
-  }, [addFiles, showLocal])
+  }, [addFiles, insertFiles, showLocal])
 
   const handlePaste = useCallback(
     async (event: ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
@@ -152,7 +192,7 @@ export default function Composer({
           showLocal('没有识别到可添加的文件（网页里的文件请先保存到本地）～')
           return
         }
-        addFiles(picked)
+        insertFiles(addFiles(picked))
         return
       }
       const raw = event.clipboardData.getData('text/plain').trim()
@@ -169,12 +209,12 @@ export default function Composer({
           setInput((previous) => (previous ? `${previous}${raw}` : raw))
           return
         }
-        addFiles([file])
+        insertFiles(addFiles([file]))
       } catch {
         setInput((previous) => (previous ? `${previous}${raw}` : raw))
       }
     },
-    [addFiles, showLocal]
+    [addFiles, insertFiles, showLocal]
   )
 
   const handleDrop = useCallback(
@@ -201,9 +241,9 @@ export default function Composer({
       const picked = checked.filter(
         (item): item is PickedFile => item !== null && item !== undefined
       )
-      addFiles(picked)
+      insertFiles(addFiles(picked))
     },
-    [addFiles, showLocal]
+    [addFiles, insertFiles, showLocal]
   )
 
   const submit = useCallback(async (): Promise<void> => {
@@ -218,6 +258,8 @@ export default function Composer({
       if (!ok) return
       setInput('')
       setAttachments([])
+      attachmentsRef.current = []
+      countersRef.current = createRefCounters()
     } finally {
       sendingRef.current = false
     }
@@ -264,17 +306,17 @@ export default function Composer({
       {attachments.length > 0 ? (
         <div className="work-attachments">
           {attachments.map((file) => (
-            <span className="work-attachment" key={file.path} title={file.path}>
-              <span className="work-attachment-name">{file.name}</span>
+            <span
+              className="work-attachment"
+              key={file.path}
+              title={file.ref ? `${file.ref} · ${file.path}` : file.path}
+            >
+              <span className="work-attachment-name">{file.ref ?? file.name}</span>
               <button
                 type="button"
                 className="work-attachment-remove"
-                aria-label={`移除 ${file.name}`}
-                onClick={() =>
-                  setAttachments((previous) =>
-                    previous.filter((item) => item.path !== file.path)
-                  )
-                }
+                aria-label={`移除 ${file.ref ?? file.name}`}
+                onClick={() => removeAttachment(file)}
               >
                 ×
               </button>

@@ -119,6 +119,8 @@ export class AgentEventTranslator {
         break
       }
       case 'tool_execution_start': {
+        // 计划模式：模型用 todo 列出步骤才算「产出了计划」（纯聊天不弹按此执行卡）
+        if (event.toolName === 'todo') session.roundPlanned = true
         const desc = describeToolCall(event.toolName, event.args, session.state.workspace)
         this.handlers.audit('tool', {
           id: session.state.id,

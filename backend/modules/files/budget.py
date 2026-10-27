@@ -40,7 +40,13 @@ def build_attachment_block(attachments: Sequence[FileAttachment]) -> str:
         if attachment.is_image:
             continue
         name = html.escape(attachment.name, quote=True)
-        blocks.append(f'<attachment name="{name}">\n{attachment.text}\n</attachment>')
+        # 正文引用名（图片1 / 文件1.pdf）：模型据此把「这是什么 [文件1.pdf]」对上附件
+        ref = (
+            f' ref="[{html.escape(attachment.ref[:80], quote=True)}]"'
+            if attachment.ref
+            else ""
+        )
+        blocks.append(f'<attachment{ref} name="{name}">\n{attachment.text}\n</attachment>')
     return "\n\n".join(blocks)
 
 

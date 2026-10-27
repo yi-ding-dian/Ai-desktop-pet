@@ -43,12 +43,13 @@ const READ_TOOLS = new Set([
   'ask_user'
 ])
 
-/** 结构化写/删工具：走路径判定 */
-const MUTATION_TOOLS = new Set(['write_file', 'edit_file', 'delete_path'])
+/** 结构化写/删工具：走路径判定（service 也用它判断「首次动手」） */
+export const MUTATION_TOOL_NAMES = new Set(['write_file', 'edit_file', 'delete_path'])
 
 const PLAN_DENY =
   '当前是计划模式，只能读取和规划，不能写文件、改文件、删除或执行命令。' +
-  '请把计划列给用户，等用户点「按此执行」后再动手。'
+  '如果用户只是在讨论或提问，正常回答即可，不要为了绕过限制硬凑计划；' +
+  '用户明确要动手时，把计划列给用户，等用户点「按此执行」后再执行。'
 
 export function decideToolCall(input: PolicyInput): PolicyDecision {
   const { mode, toolName, args, workspace } = input
@@ -57,7 +58,7 @@ export function decideToolCall(input: PolicyInput): PolicyDecision {
   if (READ_TOOLS.has(toolName)) return { action: 'allow' }
   if (mode === 'plan') return { action: 'deny', reason: PLAN_DENY }
 
-  if (MUTATION_TOOLS.has(toolName)) {
+  if (MUTATION_TOOL_NAMES.has(toolName)) {
     return decideMutation(mode, toolName, String(a.path ?? ''), workspace)
   }
 
