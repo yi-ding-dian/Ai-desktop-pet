@@ -1,0 +1,137 @@
+name: Release
+
+# 推 vX.Y.Z tag 后自动构建并发布 Release。
+# 后端用 PyInstaller、前端用 electron-builder，两者都不支持跨平台交叉打包，
+# 因此 Linux 与 Windows 各用一台对应系统的 runner 分别构建。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: 构建 Linux 产物
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 安装后端依赖与 PyInstaller
+        run: pip install -e "backend[dev]" openai keyring pyinstaller
+
+      - name: 打包后端（PyInstaller）
+        run: pyinstaller --noconfirm --clean --distpath frontend/resources --workpath deploy/.pyinstaller-build deploy/backend.spec
+
+      - name: 构建前端
+        working-directory: frontend
+        run: npm run build
+
+      - name: 打包 Linux 安装包（AppImage + deb）
+        working-directory: frontend
+        run: npx electron-builder --linux AppImage deb --publish never
+
+      - name: 上传 Linux 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          if-no-files-found: error
+          path: |
+            deploy/release/*.AppImage
+            deploy/release/*.deb
+
+  build-windows:
+    name: 构建 Windows 产物
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 安装后端依赖与 PyInstaller
+        run: pip install -e "backend[dev]" openai keyring pyinstaller
+
+      - name: 打包后端（PyInstaller）
+        run: pyinstaller --noconfirm --clean --distpath frontend/resources --workpath deploy/.pyinstaller-build deploy/backend.spec
+
+      - name: 构建前端
+        working-directory: frontend
+        run: npm run build
+
+      - name: 打包 Windows 安装包（NSIS + portable）
+        working-directory: frontend
+        run: npx electron-builder --win nsis portable --publish never
+
+      - name: 上传 Windows 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          if-no-files-found: error
+          path: |
+            deploy/release/*-setup.exe
+            deploy/release/*-portable.exe
+
+  release:
+    name: 发布到 GitHub Releases
+    needs:
+      - build-linux
+      - build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: 创建 Release 并上传产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          NOTES="$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" \
+            | sed -E 's/^v[0-9]+\.[0-9]+\.[0-9]+：//')"
+          if [ -n "$NOTES" ]; then
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+              && gh release edit "$GITHUB_REF_NAME" --notes "$NOTES" \
+              || gh release create "$GITHUB_REF_NAME" --notes "$NOTES"
+          else
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+              || gh release create "$GITHUB_REF_NAME" --generate-notes
+          fi
+          find release-assets -type f -exec gh release upload "$GITHUB_REF_NAME" --clobber {} +

@@ -1,0 +1,8 @@
+{
+  "items": [
+    "ai-desktop-pet-${version}-x86_64.AppImage",
+    "ai-desktop-pet-${version}-amd64.deb",
+    "ai-desktop-pet-${version}-x64-setup.exe",
+    "ai-desktop-pet-${version}-x64-portable.exe"
+  ]
+}
